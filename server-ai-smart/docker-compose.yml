@@ -1,0 +1,60 @@
+# Chạy AI Server độc lập để phát triển.
+#
+# Backend nói chuyện với service này qua AI_SERVER_URL. Nếu Backend cũng chạy
+# bằng Docker Compose, cho hai bên vào chung một mạng và đặt
+# AI_SERVER_URL=http://ai-server:8000
+
+services:
+  ai-server:
+    build:
+      context: .
+      args:
+        RUNTIME: cpu
+    container_name: smartface-ai-server
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Chỉ bind localhost. AI Server KHÔNG được expose ra internet (docs/02 mục 6.2).
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Model nằm ngoài image để nâng cấp không cần build lại.
+      - ./models:/app/models
+    networks:
+      - smartface
+
+    # Nạp model chiếm vài trăm MB. Đặt trần để một rò rỉ bộ nhớ không kéo sập
+    # cả máy chủ đang chạy Backend cùng chỗ.
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # Bản GPU. Chạy: docker compose --profile gpu up ai-server-gpu
+  ai-server-gpu:
+    profiles: ["gpu"]
+    build:
+      context: .
+      args:
+        RUNTIME: gpu
+    container_name: smartface-ai-server-gpu
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PROVIDERS: CUDAExecutionProvider,CPUExecutionProvider
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./models:/app/models
+    networks:
+      - smartface
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+networks:
+  smartface:
+    driver: bridge

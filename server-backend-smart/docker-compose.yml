@@ -1,0 +1,130 @@
+# ============================================================================
+#  Môi trường `local` — docs/02-kien-truc-he-thong.md mục 12.1
+#  Dựng đủ hạ tầng để chạy Backend mà không cần cloud.
+# ============================================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: smartface-postgres
+    environment:
+      POSTGRES_USER: smartface
+      POSTGRES_PASSWORD: smartface
+      POSTGRES_DB: smartface
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U smartface']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: smartface-redis
+    command: redis-server --appendonly yes
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: smartface-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - '9000:9000'
+      - '9001:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # Tạo sẵn bucket rồi thoát.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_started
+    entrypoint: >
+      /bin/sh -c "
+      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done;
+      mc mb --ignore-existing local/smartface;
+      echo 'Bucket smartface đã sẵn sàng';
+      "
+
+  api:
+    build: .
+    container_name: smartface-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 3000
+      DATABASE_URL: postgresql://smartface:smartface@postgres:5432/smartface?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: smartface
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_FORCE_PATH_STYLE: 'true'
+      AI_SERVER_URL: http://ai-server:8000
+      AI_SERVER_INTERNAL_KEY: dev-internal-key
+      JWT_SECRET: dev-only-change-me
+      JWT_ALGORITHM: HS256
+      OTP_DEBUG_RETURN: 'true'
+      SMS_PROVIDER: console
+      # Pod API không xử lý job — xem docs/02 mục 12.2.
+      WORKER_ENABLED: 'false'
+      CORS_ORIGINS: http://localhost:5173,http://localhost:3001
+    ports:
+      - '3000:3000'
+    command: sh -c "npx prisma migrate deploy && node dist/main"
+
+  worker:
+    build: .
+    container_name: smartface-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://smartface:smartface@postgres:5432/smartface?schema=public
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: smartface
+      S3_ACCESS_KEY: minioadmin
+      S3_SECRET_KEY: minioadmin
+      S3_FORCE_PATH_STYLE: 'true'
+      AI_SERVER_URL: http://ai-server:8000
+      AI_SERVER_INTERNAL_KEY: dev-internal-key
+      JWT_SECRET: dev-only-change-me
+      JWT_ALGORITHM: HS256
+      SMS_PROVIDER: console
+      WORKER_ENABLED: 'true'
+    command: node dist/worker
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:

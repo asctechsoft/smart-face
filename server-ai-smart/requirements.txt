@@ -1,0 +1,23 @@
+# AI Server — thư viện chạy production.
+#
+# Ghim phiên bản chính xác: model nhận diện rất nhạy với thay đổi phiên bản
+# onnxruntime / numpy. Nâng cấp phải đo lại FAR/FRR (docs/02 mục 6.4).
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+pydantic==2.10.4
+pydantic-settings==2.7.0
+python-multipart==0.0.20
+
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+Pillow==11.1.0
+
+# insightface kéo theo RetinaFace/SCRFD + ArcFace + landmark 2d106/3d68.
+insightface==0.7.3
+
+# CPU mặc định. Muốn GPU: gỡ dòng dưới, cài onnxruntime-gpu==1.20.1
+# (xem Dockerfile, build arg RUNTIME=gpu).
+onnxruntime==1.20.1
+
+prometheus-client==0.21.1

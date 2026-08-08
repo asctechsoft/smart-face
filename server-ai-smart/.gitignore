@@ -1,0 +1,13 @@
+.env
+
+# Model nặng vài trăm MB, tải bằng scripts/download_models.py
+models/
+!models/.gitkeep
+
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.venv/
+venv/
+*.egg-info/

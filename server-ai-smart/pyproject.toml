@@ -1,0 +1,26 @@
+[project]
+name = "smartface-ai-server"
+version = "1.0.0"
+description = "Dịch vụ nhận diện khuôn mặt nội bộ cho hệ thống chấm công SmartFace"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "S", "C4", "SIM", "RUF"]
+ignore = [
+    "S101",   # assert dùng trong test
+    "RUF001", # dấu tiếng Việt bị nhận nhầm là ký tự nhập nhằng
+    "RUF002",
+    "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S", "E501"]
+"scripts/*" = ["S310", "T201"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
