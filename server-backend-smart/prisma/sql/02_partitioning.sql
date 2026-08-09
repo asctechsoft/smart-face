@@ -36,7 +36,17 @@ $$ LANGUAGE plpgsql;
 
 -- ---------------------------------------------------------------------------
 -- Tạo sẵn partition cho 12 tháng tới kể từ tháng hiện tại.
--- Chỉ chạy được khi attendance_log ĐÃ là partitioned table (PARTITION BY RANGE (work_date)).
+--
+-- Chỉ chạy được khi attendance_log ĐÃ là partitioned table, tức đã được dựng lại
+-- với PARTITION BY RANGE ("workDate").
+--
+-- ⚠ Cột là "workDate" (camelCase, PHẢI đóng ngoặc kép) — không phải `work_date`.
+--   schema.prisma chỉ @@map tên BẢNG sang snake_case, tên CỘT giữ nguyên camelCase.
+--   Xem cảnh báo đặt tên ở đầu 01_immutability_and_rls.sql.
+--
+-- ⚠ Việc CHUYỂN bảng thường sang partitioned KHÔNG nằm trong tệp này — nó cần đổi
+--   khoá chính thành (id, "workDate") và kéo theo hai khoá ngoại đang trỏ vào
+--   attendance_log(id). Quy trình đầy đủ: docs/14-so-do-quan-he-bang-du-lieu.md mục 8b.
 -- ---------------------------------------------------------------------------
 -- DO $$
 -- DECLARE

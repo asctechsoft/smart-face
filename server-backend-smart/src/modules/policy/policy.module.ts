@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { PolicyAdminService } from './policy-admin.service';
 import { PolicyController } from './policy.controller';
+import { PolicyRepository } from './policy.repository';
 import { PolicyService } from './policy.service';
 
 /**
@@ -10,7 +11,7 @@ import { PolicyService } from './policy.service';
 @Global()
 @Module({
   controllers: [PolicyController],
-  providers: [PolicyService, PolicyAdminService],
-  exports: [PolicyService, PolicyAdminService],
+  providers: [PolicyRepository, PolicyService, PolicyAdminService],
+  exports: [PolicyRepository, PolicyService, PolicyAdminService],
 })
 export class PolicyModule {}

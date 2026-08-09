@@ -26,6 +26,12 @@ phải được ghi nhận bằng một ADR mới.
 cd BackEnd
 cp .env.example .env
 docker compose up -d postgres redis minio minio-init
+
+# Firebase Auth Emulator — bắt buộc, xem mục 0 bên dưới
+npx firebase emulators:start --only auth &
+export FIREBASE_PROJECT_ID=demo-smartface
+export FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
+
 npm install
 npx prisma migrate dev --name init
 npm run db:guards          # rule bất biến + CHECK + index bổ sung
@@ -36,13 +42,48 @@ npm run start:dev
 ### Cách B — hạ tầng có sẵn
 
 ```bash
-cp .env.example .env       # sửa DATABASE_URL, REDIS_HOST, S3_*
+cp .env.example .env       # sửa DATABASE_URL, REDIS_HOST, S3_*, FIREBASE_*
 npm install
 npx prisma migrate deploy
 npm run db:guards
 npm run seed
 npm run start:dev
 ```
+
+### Bước 0 — Firebase Authentication (bắt buộc)
+
+Danh tính do Firebase quản lý; Backend **không lưu mật khẩu**. Thiếu cấu hình
+Firebase thì ứng dụng **cố tình chết lúc khởi động** thay vì chạy với một lớp xác
+thực rỗng.
+
+**Môi trường phát triển — dùng Auth Emulator, không đụng dự án thật:**
+
+```bash
+npm install -g firebase-tools     # hoặc npx firebase-tools
+firebase emulators:start --only auth
+```
+
+rồi trong `.env`:
+
+```ini
+FIREBASE_PROJECT_ID=demo-smartface
+FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
+```
+
+**Môi trường thật:**
+
+1. [Firebase Console](https://console.firebase.google.com) → tạo project.
+2. **Authentication → Sign-in method** → bật **Email/Password**.
+3. **⚙ Project settings → Service accounts → Generate new private key** → tải tệp JSON.
+4. Điền `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` từ tệp đó
+   (khoá riêng để trên MỘT dòng, giữ nguyên `\n`, bọc trong nháy kép).
+
+> ⚠ `FIREBASE_AUTH_EMULATOR_HOST` **không được** đặt ở production: emulator không
+> kiểm chữ ký ID token, ai cũng tự dựng được token hợp lệ. `validateEnv` chặn
+> ngay lúc khởi động.
+
+> **Không cần bật Phone Authentication.** Xác thực 2 lớp dùng OTP do Backend sinh
+> và gửi qua `SMS_PROVIDER` — xem mục 6.
 
 > `db:guards` chạy **cả hai** tệp trong `prisma/sql/` qua `prisma db execute`,
 > không cần cài `psql`. Bỏ qua bước này thì `attendance_log` và `audit_log`
@@ -74,7 +115,11 @@ Sau khi chạy:
 
 ### Tài khoản seed sẵn
 
-Đăng nhập: `POST /v1/auth/login` với `{ domain, email, password }`.
+Đăng nhập hai bước: đăng nhập với Firebase bằng `{ email, password }`, rồi gọi
+`POST /v1/auth/session` với `{ domain, firebaseIdToken }`.
+
+Seed tạo tài khoản ở **cả hai nơi** (Firebase và `user_account`), nên phải chạy
+với `FIREBASE_PROJECT_ID` đã đặt — thường là emulator ở bước 0.
 
 **Mật khẩu chung cho mọi tài khoản seed: `SmartFaceDev2026`**
 
@@ -118,13 +163,13 @@ BackEnd/
     │   ├── dto/                   # Phân trang, response chuẩn
     │   └── utils/                 # employee-code · geo · time (timezone) · crypto
     ├── infra/
-    │   ├── prisma/                # PrismaService singleton (hot-reload safe)
+    │   ├── prisma/                # PrismaService singleton + BaseRepository + TransactionManager
     │   ├── redis/                 # OTP, nonce, rate limit, cache
     │   ├── storage/               # S3 + presigned URL
-    │   ├── queue/                 # BullMQ + 6 processor + scheduler
+    │   ├── queue/                 # BullMQ + 7 processor + scheduler + JobsRepository
     │   └── logger/                # pino, có traceId, che dữ liệu nhạy cảm
     └── modules/
-        ├── auth/          # Login mật khẩu, TOTP 2FA, JWT, refresh rotation, device binding
+        ├── auth/          # Đổi Firebase ID token lấy phiên, OTP 2 lớp, JWT, refresh rotation, device binding
         ├── tenant/        # Company, tên miền, gói dịch vụ
         ├── employee/      # Hồ sơ, vòng đời, import Excel theo dòng
         ├── biometric/     # Đăng ký mặt đa góc, vân tay (public key)
@@ -145,10 +190,50 @@ BackEnd/
 
 ```
 Controller  →  chỉ nhận request, validate DTO, gọi Service. KHÔNG chứa business logic.
-Service     →  toàn bộ nghiệp vụ.
-Repository  →  LUÔN nhận companyId làm tham số bắt buộc, không có giá trị mặc định.
+Service     →  toàn bộ nghiệp vụ. KHÔNG import PrismaService.
+Repository  →  NƠI DUY NHẤT chạm Prisma. LUÔN nhận companyId làm tham số đầu tiên,
+               bắt buộc, không có giá trị mặc định.
 DTO         →  validate bằng class-validator. Không dùng `any`.
 ```
+
+Mỗi module có đúng một file `<tên>.repository.ts` kế thừa `BaseRepository`
+([src/infra/prisma/base.repository.ts](src/infra/prisma/base.repository.ts)).
+
+**Vì sao gom nhiều bảng vào một repository thay vì một repository mỗi bảng.**
+Ranh giới là AGGREGATE nghiệp vụ, không phải bảng. `RequestRepository` giữ cả
+`leave_request`, `approval_step`, `leave_balance` vì không có thao tác nào chạm
+bảng sau mà không đi từ bảng đầu. Tách ra bảy repository chỉ khiến mọi transaction
+phải nối tay qua bảy đối tượng.
+
+**Transaction.** Service KHÔNG mở transaction bằng `PrismaService.$transaction`
+— dùng `TransactionManager`
+([src/infra/prisma/transaction.manager.ts](src/infra/prisma/transaction.manager.ts)).
+Mọi phương thức ghi của Repository nhận `tx?: Prisma.TransactionClient` ở tham số
+cuối, nên Service ghép nhiều lời gọi vào một transaction mà không cần biết Prisma:
+
+```ts
+await this.transactions.run(async (tx) => {
+  await this.requests.updateStatus(companyId, id, { status: 'REJECTED' }, tx);
+  await this.requests.skipPendingSteps(companyId, id, tx);
+});
+```
+
+`runForTenant(companyId, …)` là biến thể đặt sẵn `app.company_id` cho Row-Level
+Security — lớp phòng thủ thứ hai của `ADR-05` khi RLS được bật.
+
+**`updateMany` thay cho `update`.** Repository sửa bản ghi bằng
+`updateMany({ where: { id, companyId } })` rồi đọc lại, thay vì
+`update({ where: { id } })`. Lý do: `where` của `update` chỉ nhận khoá duy nhất
+nên không nhét được `companyId` vào, và một id đoán đúng sẽ sửa được dữ liệu của
+công ty khác (`BR-09`).
+
+**Ba ngoại lệ có chủ đích, không được nhân thêm:**
+
+| Repository | Không nhận `companyId` vì | Bù lại bằng |
+|---|---|---|
+| `AuthRepository` | chạy TRƯỚC khi biết người gọi thuộc công ty nào — chính nó trả lời câu hỏi đó | ràng buộc `firebaseUid` + `domain` trong `AuthService.createSession` |
+| `AdminRepository` | đối tượng là NỀN TẢNG, không phải một công ty | `@Roles(SYSTEM_ADMIN)` + `recordCrossTenantAccess` (A1) |
+| `JobsRepository` | job nền quét toàn bộ tenant, không có ngữ cảnh người gọi | chỉ khai trong `WorkerModule`, không controller nào với tới; phương thức xuyên tenant mang tiền tố `acrossTenants…` |
 
 ---
 
@@ -353,9 +438,11 @@ Một đường duy nhất: **HR cấp tài khoản**. Mã mời đã bỏ hẳn
 Web:  POST /admin/employees   → trả về { account: { email, temporaryPassword, loginDomain } }
                                   ↑ hiển thị MỘT LẦN cho HR đọc lại cho nhân viên
 
-App:  POST /auth/login  { domain, email, password }
+App:  Firebase SDK: signInWithEmailAndPassword(email, password)
+        → Firebase ID token          ← mật khẩu KHÔNG đi qua Backend
+      POST /auth/session  { domain, firebaseIdToken }
         → nextStep: CHANGE_PASSWORD     ← token bị CHẶN ở mọi API khác
-      POST /auth/password/change
+      POST /auth/password/change  { firebaseIdToken, newPassword }
         → nextStep: SETUP_BIOMETRIC
       POST /biometric/face/enroll/start … submit ×4
         → Home
@@ -364,27 +451,52 @@ App:  POST /auth/login  { domain, email, password }
 **App điều hướng theo `nextStep`, không tự suy luận.** Bốn giá trị:
 `TWO_FACTOR` → `CHANGE_PASSWORD` → `SETUP_BIOMETRIC` → `HOME`.
 
-### Ba chốt cưỡng chế ở server, không phải điều hướng ở App
+### Ai giữ gì
+
+| | Firebase | Backend |
+|---|:--:|:--:|
+| Email + mật khẩu, chống dò mật khẩu, khoá tạm | ✔ | |
+| Phiên làm việc (JWT + refresh xoay vòng) | | ✔ |
+| Ràng buộc thiết bị, thu hồi theo từng thiết bị (AF-16) | | ✔ |
+| Xác thực 2 lớp (OTP) | | ✔ |
+| Vai trò, công ty, phạm vi phòng ban | | ✔ |
+
+Backend vẫn cấp token riêng thay vì dùng thẳng Firebase ID token — lý do đầy đủ ở
+đầu [auth.service.ts](src/modules/auth/auth.service.ts).
+
+### Chốt cưỡng chế ở server, không phải điều hướng ở App
 
 | Chốt | Ở đâu | Chặn gì |
 |---|---|---|
 | `PasswordChangeGuard` | Guard toàn cục, ngay sau `JwtAuthGuard` | Token còn mật khẩu tạm không gọi được API nào ngoài `password/change`, `me`, `logout` |
-| Một mã lỗi cho ba loại sai | `AuthService.login` | Sai tên miền / email không tồn tại / sai mật khẩu đều trả `AUTH_INVALID_CREDENTIALS`, và tốn thời gian như nhau |
-| Khoá tạm | `AuthService.assertPasswordMatches` | Sai 8 lần liên tiếp → khoá 15 phút |
+| Ràng buộc tên miền | `AuthService.createSession` | Nhân viên công ty A gõ tên miền công ty B. Firebase chỉ xác nhận danh tính, đây là nơi DUY NHẤT biết ranh giới công ty |
+| Chỉ nhận uid đã được cấp hồ sơ | `AuthService.createSession` | Người tự đăng ký thẳng qua Firebase SDK → `AUTH_ACCOUNT_NOT_PROVISIONED` |
+| Đòi xác thực còn tươi | `FirebaseService.verifyFreshIdToken` | Thao tác nhạy cảm bằng token cũ. ID token sống 1 giờ nên "hợp lệ" ≠ "vừa nhập mật khẩu" |
 
 `POST /auth/refresh` **không** xoá cờ `mustChangePassword` — nếu không thì chỉ
 cần gọi refresh một lần là thoát được màn hình đổi mật khẩu.
 
 ### Xác thực 2 lớp
 
-Tuỳ chọn, người dùng tự bật, dùng **TOTP** (Google Authenticator) — không phải
-SMS. Bản cài theo RFC 6238, kiểm chứng bằng vector thử chuẩn trong
-[totp.service.spec.ts](src/modules/auth/totp.service.spec.ts).
+Tuỳ chọn, người dùng tự bật, dùng **OTP gửi qua SMS** tới số điện thoại đã xác
+minh riêng (`twoFactorPhone`, tách khỏi số liên lạc trong hồ sơ nhân sự).
+
+Không dùng MFA của Firebase: MFA qua SMS đòi nâng cấp Identity Platform, và từ
+09/2024 mọi tin nhắn của Firebase Phone Auth đòi gói Blaze có gắn thanh toán. Thử
+thách lớp hai do `OtpService` + `SmsService` đảm nhiệm, nên mọi ngưỡng chống lạm
+dụng (`OTP_*`) nằm trong tay mình.
 
 ### Một người làm ở hai công ty
 
 Hai tài khoản riêng, hai mật khẩu riêng. Không có màn hình chọn công ty, không
 có chuyển công ty giữa phiên.
+
+> ⚠ **Giới hạn do Firebase mang lại:** một dự án Firebase (không nâng cấp
+> Identity Platform) coi **email là duy nhất toàn dự án**, trong khi bảng
+> `user_account` vẫn cho phép cùng email ở hai công ty. Nên trên thực tế một
+> email chỉ dùng được ở MỘT công ty — HR công ty thứ hai sẽ nhận `EMP_EMAIL_TAKEN`.
+> Muốn khôi phục hành vi cũ: nâng lên Identity Platform rồi ánh xạ mỗi công ty
+> thành một Firebase tenant.
 
 ---
 
@@ -465,20 +577,47 @@ npm run prisma:studio    # xem dữ liệu
 
 ## 8. Việc còn lại trước khi go-live
 
-Những mục dưới đây **chưa hoàn thiện** trong bản dựng này và cần xử lý trước production:
+Những mục dưới đây **chưa hoàn thiện** trong bản dựng này và cần xử lý trước production.
+Cột "Chặn ở đâu" nói rõ *vì sao chưa xong* — nhiều mục không phải chờ viết code mà chờ
+hạ tầng, dữ liệu khách hàng, hoặc một quyết định đã bị hoãn.
 
-| Hạng mục | Trạng thái | Ghi chú |
-|---|---|---|
-| **AI Server** | Chưa có | Backend đã có `AiGatewayService` + circuit breaker, chỉ cần AI Server nói đúng hợp đồng ở `docs/08` mục 8 |
-| **App Attestation** (`AF-15`) | Khung sẵn, chưa verify thật | Phải gọi API Google Play Integrity / Apple App Attest — tự parse token là vô nghĩa. Giai đoạn 3 |
-| **Row-Level Security** (`ADR-05`) | Script sẵn, đang comment | Bật khi đã tách DB role riêng cho ứng dụng |
-| **Partition `attendance_log`** (`D7`) | Script sẵn, chưa áp | Áp khi bảng còn rỗng, hoặc lên kế hoạch migrate có downtime |
-| **Hiệu chỉnh ngưỡng AI** | Đang dùng giá trị mặc định | ⚠ **Bắt buộc** đo FAR/FRR trên dữ liệu thật của khách hàng trước go-live (`docs/09` checklist) |
-| **Test cách ly tenant** (`NFR-SEC-05`) | Chưa viết | Quét toàn bộ endpoint: đăng nhập tenant A không đọc được dữ liệu tenant B. **Test này FAIL = chặn release** |
-| **Chế độ offline** (`FR-APP-STAT-06`) | Chưa làm | Mâu thuẫn với `BR-01`, cần cơ chế duyệt riêng. Giai đoạn 3 |
-| **Kiosk 1:N** | Chưa làm | Cần bật pgvector; ngưỡng 1:N khắt khe hơn nhiều và phải kiểm tra `margin` |
-| **2FA cho Admin** (`NFR-SEC-11`) | Chưa làm | |
-| **Export theo template tuỳ biến** | Mới có mẫu mặc định | Mapping cột MISA/Fast để trong cấu hình, không viết cứng |
+| Hạng mục | Trạng thái thật | Chặn ở đâu | Bước kế tiếp | Chặn go-live? |
+|---|---|---|---|---|
+| **AI Server** | Đã thi công — [`../server-ai-smart`](../server-ai-smart), đang chạy `ENGINE=stub` | Chưa có model chống giả mạo thật. Engine giả sinh embedding từ mã băm ảnh: cùng một ảnh cho cùng embedding nên luồng chạy thông, nhưng **hai ảnh khác nhau của cùng một người cho điểm gần 0** | `scripts/download_models.py` (buffalo_l tự tải, MiniFASNet lấy thủ công) → `ENGINE=insightface` → nối `AI_SERVER_INTERNAL_KEY` ≥ 32 ký tự. Danh sách đầy đủ ở [`../server-ai-smart/README.md`](../server-ai-smart/README.md) mục 8 | ✅ Có |
+| **App Attestation** (`AF-15`) | Khung sẵn, chưa verify thật | `verifyAttestation()` ([attendance.service.ts](src/modules/attendance/attendance.service.ts)) chỉ kiểm tra token **có tồn tại** rồi trả `null`. Hệ quả dây chuyền: điều kiện `attestationPassed === false` trong `fraud.service.ts` **không bao giờ đúng**, nên bật `DEVICE_REQUIRE_ATTESTATION` hiện chỉ chặn được người không gửi token — gửi chuỗi rác vẫn qua | Gọi thật Google Play Integrity (cần service account GCP + app đã phát hành) và Apple App Attest (Team ID + xác thực chuỗi chứng chỉ). Tự parse token là vô nghĩa. Phụ thuộc app lên store → Giai đoạn 3 | Không |
+| **Row-Level Security** (`ADR-05`) | Script sẵn, khối `DO $$` đang comment trong `prisma/sql/01_immutability_and_rls.sql` | Ba điều kiện chưa đạt: ① DB user hiện là owner → Postgres **tự động BYPASSRLS cho owner**, bật lên không có tác dụng mà tạo cảm giác an toàn giả; ② `user_account`/`audit_log` bị loại trừ vì admin nền tảng có `companyId IS NULL`, policy so bằng `=` trả NULL → admin tự khoá mình ra ngoài; ③ `PrismaService.withTenant()` có sẵn nhưng **chưa nơi nào gọi** — bật RLS bây giờ thì mọi query trả 0 dòng | Theo đúng thứ tự: tách DB role `NOBYPASSRLS` → bọc request qua `withTenant()`/`runForTenant()` → nhánh `app.bypass_rls='on'` cho `SYSTEM_ADMIN` → đổi policy hai bảng trên sang `IS NOT DISTINCT FROM` → bỏ comment → chạy lại e2e cách ly tenant | ✅ Có |
+| **Partition `attendance_log`** (`D7`) | Script sẵn, **chưa áp và chưa nạp vào DB** | `npm run db:guards` chỉ chạy `01_immutability_and_rls.sql` + `02_auth_constraints.sql`, **không chạy `02_partitioning.sql`** — nên hàm `create_attendance_log_partition()` chưa tồn tại trong database. Ngoài ra `AttendanceLog` đang có PK đơn `id`, mà Postgres đòi partition key nằm trong PK → phải đổi thành `(id, workDate)`, kéo theo 2 khoá ngoại từ `FraudFlag`/`AttendanceAdjustment` thành tổ hợp | **Làm ngay khi bảng còn rỗng** — để lâu thành migration có downtime. Các bước chi tiết ở [`../docs/14`](../docs/14-so-do-quan-he-bang-du-lieu.md) mục 8b.5. Nhớ kèm job hằng tháng: thiếu partition tháng hiện tại thì **mọi INSERT chấm công lỗi** | ✅ Có |
+| **Hiệu chỉnh ngưỡng AI** | Đang dùng mặc định `0.45` / `0.70` / `0.60` | Không phải việc code — cần bộ ảnh thật của khách hàng để dựng ma trận similarity genuine/impostor rồi quét ngưỡng. Riêng phần code: `AiModelVersion.defaultMatchThreshold` **không consumer nào đọc**, tất cả chỉ đọc `PolicyKeys` — đổi model không tự kéo theo ngưỡng | Quét `t` từ 0.20→0.80, chọn theo FAR mục tiêu (1:1 = 0,1%; 1:N N≤100 = 0,001%; N≥500 = 0,0001%), **không dùng EER**. Ghi kết quả vào `AiModelVersion`, đặt override qua `CompanyPolicy`. FRR > 10% thì sửa khâu đăng ký/ánh sáng, đừng hạ ngưỡng. Quy trình ở [`../docs/00`](../docs/00-kien-thuc-nen-tang.md) Phần 2 | ✅ Có |
+| **Test cách ly tenant** (`NFR-SEC-05`) | **Đã viết** — [test/tenant-isolation.e2e-spec.ts](test/tenant-isolation.e2e-spec.ts), 4 nhóm kịch bản (GET chéo tenant, list không rò rỉ, leo thang bằng `X-Company-Id`, kiểm vai trò) | Chưa chạy được tự động: không có `.env.test`, không có `globalSetup` dựng schema. Muốn chạy phải tự trỏ `DATABASE_URL` sang DB test + Redis + Firebase emulator (điều kiện ghi ở đầu tệp test) | `.env.test` + `globalSetup` + đưa vào CI. Xem dòng **CI + coverage gate** bên dưới | ✅ Có |
+| **CI + coverage gate** | Chưa có | Repo không có `.github/workflows`, và grep `coverageThreshold` toàn repo = 0 kết quả. Nên câu "test cách ly tenant FAIL = chặn release" (`NFR-SEC-05`) và "payroll ≥ 90%" (`NFR-MAINT-01`) hiện **không có gì cưỡng chế** | Workflow chạy `typecheck` → `test` → `test:e2e`, thêm `coverageThreshold` cho `modules/payroll` | ✅ Có |
+| **Chế độ offline** (`FR-APP-STAT-06`) | Chưa làm — chỉ có cột `attendance_log.isOffline`, không nơi nào ghi/đọc | Mâu thuẫn trực tiếp với `BR-01`: bản ghi offline buộc phải lấy giờ máy, đúng lỗ hổng mà `AF-17`/`AF-18` sinh ra để bịt. Endpoint `POST /v1/attendance/sync-offline` đã đặc tả ở `docs/08` mục 8 nhưng chưa tồn tại | Ép `decision = PENDING_REVIEW` **không phụ thuộc fraud score**, không tự vào bảng công, phải người duyệt (`docs/03` mục 9.1). Ưu tiên *Could* → Giai đoạn 3 | Không |
+| **Kiosk 1:N** | Chưa làm — AI Server đã sẵn `/v1/identify` + `/v1/index/*`, thiếu phía Backend | ① Embedding lưu dạng `Bytes`, pgvector đang comment trong `schema.prisma`; ② không có `PolicyKey` nào cho ngưỡng 1:N lẫn `margin` tối thiểu — không dùng chung `0.45` được vì `FAR_mỗi_so_sánh ≤ FAR_mong_muốn / N`; ③ không có job đẩy embedding lên `/v1/index/upsert`, cũng không nạp lại khi AI Server restart (chỉ mục nằm trong RAM) | Cài pgvector rồi làm theo hướng dẫn ghi sẵn trong `schema.prisma` (`ALTER TABLE face_profile ADD COLUMN embedding vector(512)` + HNSW index). `namespace` **bắt buộc** là `companyId` — trộn hai công ty = nhận nhầm người chéo tenant | Không |
+| **2FA cho Admin** (`NFR-SEC-11`) | Máy móc **đã đủ và có test** (OtpService, SmsService, `twoFactorPhone`, recovery code, 5 endpoint `2fa/*`) — thiếu phần cưỡng chế | 2FA hiện thuần opt-in: `AuthService.createSession` chỉ đọc `twoFactorEnabled`, không đọc `isSystemAdmin` hay vai trò; `resolveNextStep()` cho admin đi thẳng `HOME`; `disableTwoFactor()` không chặn admin tự tắt. Không có guard 2FA nào trong `common/guards/` | Thêm policy key bắt buộc 2FA cho admin → `resolveNextStep()` trả bước thiết lập 2FA → guard kiểu `PasswordChangeGuard` chặn mọi API trừ `2fa/*`, `me`, `logout` → chặn `disableTwoFactor()` với tài khoản admin. ⚠ `SMS_PROVIDER` mặc định là `console`, phải nối eSMS thật trước | Không |
+| **Export theo template tuỳ biến** | Mới có mẫu mặc định, cột viết cứng | DTO **có** nhận `template` và `format` nhưng `export.processor.ts` không đọc → cả hai bị bỏ qua âm thầm; xin `format: 'CSV'` vẫn nhận về `.xlsx`. Grep `MISA`/`Fast` trong `src` = 0 kết quả. (`departmentIds` trước đây cũng bị bỏ qua — **đã sửa**, xem mục 8.1 bên dưới) | Hoặc bỏ hai trường khỏi DTO (đừng hứa cái không làm), hoặc đưa định nghĩa cột (nhãn + thứ tự) vào cấu hình rồi cho processor đọc theo tên template, kèm nhánh CSV | Không |
+
+### 8.1. Phạm vi phòng ban của job chạy nền
+
+`POST /admin/attendance/export` từng cho `MANAGER` xuất bảng công **toàn công ty**:
+endpoint thiếu `@DepartmentScoped()`, và processor chỉ lọc theo `companyId`. Đã sửa —
+nhưng cái bẫy phía sau đáng nhớ vì nó sẽ lặp lại ở mọi job chạy nền tiếp theo:
+
+> **Worker không có JWT.** Nó chạy ở pod khác, sau khi request đã kết thúc. Không có
+> cách nào để nó suy lại "người yêu cầu được xem phòng ban nào". Nên với job chạy nền,
+> `resolveDepartmentScope(ctx)` phải được gọi **lúc nhận request** rồi ghi kết quả vào
+> `params` — xem `resolveExportDepartmentFilter()` ở
+> [attendance-admin.service.ts](src/modules/attendance/attendance-admin.service.ts).
+
+Ba điểm dễ sai khi làm việc tương tự:
+
+- **`null` và `[]` không cùng nghĩa.** `null` = toàn công ty (HR/Admin), `[]` = không
+  phòng ban nào. Lẫn hai giá trị này theo chiều `[] → null` là mở cửa toàn bộ dữ liệu
+  cho đúng người vừa bị chặn.
+- **Client gửi `departmentIds: []` là chuyện bình thường** — Ant Design gửi mảng rỗng
+  khi người dùng xoá hết lựa chọn. Với người có quyền toàn công ty, đó là "không lọc".
+- **Bộ lọc client gửi phải được GIAO với phạm vi**, không phải dùng thay. `ScopeGuard`
+  đã chặn ở tầng trên, nhưng phép giao là lớp thứ hai — rẻ hơn nhiều so với một vụ rò rỉ.
+
+Ràng buộc này được khoá bằng [export-scope.spec.ts](src/modules/attendance/export-scope.spec.ts).
 
 ---
 
@@ -487,6 +626,8 @@ Những mục dưới đây **chưa hoàn thiện** trong bản dựng này và 
 Trích `docs/08` mục 11 — dán vào PR description:
 
 - [ ] Có `TenantGuard`; mọi query lọc theo `companyId` (`BR-09`)
+- [ ] Nếu đẩy job chạy nền: phạm vi phòng ban đã chốt lúc nhận request và ghi vào `params` (mục 8.1)
+- [ ] Truy vấn nằm trong `<module>.repository.ts`, Service **không** import `PrismaService`
 - [ ] Có `@Roles()` (+ `@DepartmentScoped()` nếu `MANAGER` truy cập được)
 - [ ] DTO validate đầy đủ, không dùng `any`
 - [ ] **Không nhận cờ trạng thái xác thực từ client** (`BR-02`)

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { BiometricModule } from '../biometric/biometric.module';
 import { PayrollModule } from '../payroll/payroll.module';
 import { AdminController } from './admin.controller';
+import { AdminRepository } from './admin.repository';
 import { AdminService } from './admin.service';
 
 /**
@@ -22,7 +23,7 @@ import { AdminService } from './admin.service';
 @Module({
   imports: [BiometricModule, PayrollModule],
   controllers: [AdminController],
-  providers: [AdminService],
+  providers: [AdminRepository, AdminService],
   exports: [AdminService],
 })
 export class AdminModule {}

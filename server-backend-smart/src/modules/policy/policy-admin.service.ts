@@ -1,8 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import { AppException } from 'src/common/errors';
 import { eachWorkDate, parseWorkDate, weekdayOf } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import {
   BulkShiftAssignmentDto,
   UpsertBranchDto,
@@ -10,6 +9,7 @@ import {
   UpsertHolidayDto,
   UpsertShiftDto,
 } from './dto/policy.dto';
+import { PolicyRepository, ShiftWithSegments } from './policy.repository';
 import { PolicyService } from './policy.service';
 
 /**
@@ -19,7 +19,8 @@ import { PolicyService } from './policy.service';
 @Injectable()
 export class PolicyAdminService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly policies: PolicyRepository,
+    private readonly transactions: TransactionManager,
     private readonly policy: PolicyService,
   ) {}
 
@@ -28,37 +29,31 @@ export class PolicyAdminService {
   // ---------------------------------------------------------------------------
 
   async listShifts(companyId: string) {
-    return this.prisma.shift.findMany({
-      where: { companyId, deletedAt: null },
-      include: { segments: { orderBy: { order: 'asc' } } },
-      orderBy: [{ isDefault: 'desc' }, { effectiveFrom: 'desc' }],
-    });
+    return this.policies.listShifts(companyId);
   }
 
   async createShift(companyId: string, dto: UpsertShiftDto) {
     this.validateShiftTimes(dto);
 
-    return this.prisma.shift.create({
-      data: {
-        companyId,
-        name: dto.name,
-        type: dto.type,
-        startTime: dto.startTime,
-        endTime: dto.endTime,
-        crossesMidnight: dto.crossesMidnight ?? this.inferCrossesMidnight(dto),
-        breakMinutes: dto.breakMinutes ?? 0,
-        requiredMinutes: dto.requiredMinutes,
-        lateToleranceMinutes: dto.lateToleranceMinutes ?? 0,
-        earlyLeaveToleranceMinutes: dto.earlyLeaveToleranceMinutes ?? 0,
-        isDefault: dto.isDefault ?? false,
-        weekdayMask: dto.weekdayMask ?? 0,
-        effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date(),
-        effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
-        segments: dto.segments
-          ? { create: dto.segments.map((s) => ({ order: s.order, startTime: s.startTime, endTime: s.endTime })) }
-          : undefined,
-      },
-      include: { segments: { orderBy: { order: 'asc' } } },
+    return this.policies.createShift(companyId, {
+      name: dto.name,
+      type: dto.type,
+      startTime: dto.startTime,
+      endTime: dto.endTime,
+      crossesMidnight: dto.crossesMidnight ?? this.inferCrossesMidnight(dto),
+      breakMinutes: dto.breakMinutes ?? 0,
+      requiredMinutes: dto.requiredMinutes,
+      lateToleranceMinutes: dto.lateToleranceMinutes ?? 0,
+      earlyLeaveToleranceMinutes: dto.earlyLeaveToleranceMinutes ?? 0,
+      isDefault: dto.isDefault ?? false,
+      weekdayMask: dto.weekdayMask ?? 0,
+      effectiveFrom: dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date(),
+      effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
+      segments: dto.segments?.map((s) => ({
+        order: s.order,
+        startTime: s.startTime,
+        endTime: s.endTime,
+      })),
     });
   }
 
@@ -70,10 +65,7 @@ export class PolicyAdminService {
    * trước đó vẫn ra đúng giờ ca cũ.
    */
   async updateShift(companyId: string, shiftId: string, dto: UpsertShiftDto) {
-    const existing = await this.prisma.shift.findFirst({
-      where: { id: shiftId, companyId, deletedAt: null },
-      include: { segments: true },
-    });
+    const existing = await this.policies.findShift(companyId, shiftId);
     if (!existing) {
       throw new AppException('POL_SHIFT_NOT_FOUND');
     }
@@ -84,64 +76,26 @@ export class PolicyAdminService {
       (dto.endTime !== undefined && dto.endTime !== existing.endTime) ||
       (dto.breakMinutes !== undefined && dto.breakMinutes !== existing.breakMinutes);
 
-    const usageCount = await this.prisma.shiftAssignment.count({ where: { shiftId } });
+    const usageCount = await this.policies.countShiftAssignments(companyId, shiftId);
 
     if (changesTiming && usageCount > 0) {
-      const effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date();
-
-      return this.prisma.$transaction(async (tx) => {
-        await tx.shift.update({
-          where: { id: shiftId },
-          data: { effectiveTo: effectiveFrom },
-        });
-        return tx.shift.create({
-          data: {
-            companyId,
-            name: dto.name ?? existing.name,
-            type: dto.type ?? existing.type,
-            startTime: dto.startTime ?? existing.startTime,
-            endTime: dto.endTime ?? existing.endTime,
-            crossesMidnight: dto.crossesMidnight ?? existing.crossesMidnight,
-            breakMinutes: dto.breakMinutes ?? existing.breakMinutes,
-            requiredMinutes: dto.requiredMinutes ?? existing.requiredMinutes,
-            lateToleranceMinutes: dto.lateToleranceMinutes ?? existing.lateToleranceMinutes,
-            earlyLeaveToleranceMinutes:
-              dto.earlyLeaveToleranceMinutes ?? existing.earlyLeaveToleranceMinutes,
-            isDefault: dto.isDefault ?? existing.isDefault,
-            weekdayMask: dto.weekdayMask ?? existing.weekdayMask,
-            effectiveFrom,
-            effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
-            segments: dto.segments
-              ? { create: dto.segments.map((s) => ({ order: s.order, startTime: s.startTime, endTime: s.endTime })) }
-              : {
-                  create: existing.segments.map((s) => ({
-                    order: s.order,
-                    startTime: s.startTime,
-                    endTime: s.endTime,
-                  })),
-                },
-          },
-          include: { segments: { orderBy: { order: 'asc' } } },
-        });
-      });
+      return this.createSuccessorShift(companyId, shiftId, dto, existing);
     }
 
     // Đổi thứ không ảnh hưởng số liệu quá khứ (tên, dung sai) → sửa tại chỗ.
-    return this.prisma.$transaction(async (tx) => {
+    return this.transactions.run(async (tx) => {
       if (dto.segments) {
-        await tx.shiftSegment.deleteMany({ where: { shiftId } });
-        await tx.shiftSegment.createMany({
-          data: dto.segments.map((s) => ({
-            shiftId,
-            order: s.order,
-            startTime: s.startTime,
-            endTime: s.endTime,
-          })),
-        });
+        await this.policies.replaceShiftSegments(
+          shiftId,
+          dto.segments.map((s) => ({ order: s.order, startTime: s.startTime, endTime: s.endTime })),
+          tx,
+        );
       }
-      return tx.shift.update({
-        where: { id: shiftId },
-        data: {
+
+      const updated = await this.policies.updateShift(
+        companyId,
+        shiftId,
+        {
           name: dto.name,
           type: dto.type,
           startTime: dto.startTime,
@@ -155,35 +109,75 @@ export class PolicyAdminService {
           weekdayMask: dto.weekdayMask,
           effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : undefined,
         },
-        include: { segments: { orderBy: { order: 'asc' } } },
-      });
+        tx,
+      );
+      if (!updated) {
+        throw new AppException('POL_SHIFT_NOT_FOUND');
+      }
+      return updated;
+    });
+  }
+
+  /** Đóng bản ca hiện tại và mở bản kế nhiệm — cả hai trong một transaction (D6). */
+  private createSuccessorShift(
+    companyId: string,
+    shiftId: string,
+    dto: UpsertShiftDto,
+    existing: ShiftWithSegments,
+  ) {
+    const effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date();
+
+    return this.transactions.run(async (tx) => {
+      await this.policies.closeShift(companyId, shiftId, effectiveFrom, tx);
+
+      return this.policies.createShift(
+        companyId,
+        {
+          name: dto.name ?? existing.name,
+          type: dto.type ?? existing.type,
+          startTime: dto.startTime ?? existing.startTime,
+          endTime: dto.endTime ?? existing.endTime,
+          crossesMidnight: dto.crossesMidnight ?? existing.crossesMidnight,
+          breakMinutes: dto.breakMinutes ?? existing.breakMinutes,
+          requiredMinutes: dto.requiredMinutes ?? existing.requiredMinutes,
+          lateToleranceMinutes: dto.lateToleranceMinutes ?? existing.lateToleranceMinutes,
+          earlyLeaveToleranceMinutes:
+            dto.earlyLeaveToleranceMinutes ?? existing.earlyLeaveToleranceMinutes,
+          isDefault: dto.isDefault ?? existing.isDefault,
+          weekdayMask: dto.weekdayMask ?? existing.weekdayMask,
+          effectiveFrom,
+          effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : null,
+          // Không khai lại phân đoạn thì bản kế nhiệm giữ nguyên ca gãy của bản cũ.
+          segments: (dto.segments ?? existing.segments).map((s) => ({
+            order: s.order,
+            startTime: s.startTime,
+            endTime: s.endTime,
+          })),
+        },
+        tx,
+      );
     });
   }
 
   async deleteShift(companyId: string, shiftId: string) {
-    const shift = await this.prisma.shift.findFirst({ where: { id: shiftId, companyId } });
-    if (!shift) {
+    // D4: soft delete để bảng công quá khứ vẫn truy vết được ca.
+    const deleted = await this.policies.softDeleteShift(companyId, shiftId);
+    if (deleted === 0) {
       throw new AppException('POL_SHIFT_NOT_FOUND');
     }
-    // D4: soft delete để bảng công quá khứ vẫn truy vết được ca.
-    await this.prisma.shift.update({ where: { id: shiftId }, data: { deletedAt: new Date() } });
     return { deleted: true };
   }
 
   /** FR-WEB-HR-04 — phân ca hàng loạt. */
   async bulkAssignShifts(companyId: string, dto: BulkShiftAssignmentDto, createdBy: string) {
-    const shift = await this.prisma.shift.findFirst({
-      where: { id: dto.shiftId, companyId, deletedAt: null },
-    });
+    const shift = await this.policies.findShift(companyId, dto.shiftId);
     if (!shift) {
       throw new AppException('POL_SHIFT_NOT_FOUND');
     }
 
-    const employees = await this.prisma.employee.findMany({
-      where: { id: { in: dto.employeeIds }, companyId, deletedAt: null },
-      select: { id: true },
-    });
-    const validIds = new Set(employees.map((e) => e.id));
+    const validIds = new Set(
+      await this.policies.findEmployeeIdsInCompany(companyId, dto.employeeIds),
+    );
 
     const dates = eachWorkDate(parseWorkDate(dto.from), parseWorkDate(dto.to)).filter(
       (date) => !dto.weekdays?.length || dto.weekdays.includes(weekdayOf(date)),
@@ -193,10 +187,11 @@ export class PolicyAdminService {
     for (const employeeId of dto.employeeIds) {
       if (!validIds.has(employeeId)) continue;
       for (const workDate of dates) {
-        await this.prisma.shiftAssignment.upsert({
-          where: { employeeId_workDate: { employeeId, workDate } },
-          create: { companyId, employeeId, shiftId: dto.shiftId, workDate, createdBy },
-          update: { shiftId: dto.shiftId, createdBy },
+        await this.policies.upsertShiftAssignment(companyId, {
+          employeeId,
+          shiftId: dto.shiftId,
+          workDate,
+          createdBy,
         });
         assigned += 1;
       }
@@ -215,43 +210,24 @@ export class PolicyAdminService {
   // ---------------------------------------------------------------------------
 
   async listHolidays(companyId: string, year?: number) {
-    const where: Prisma.HolidayWhereInput = { companyId };
-    if (year) {
-      where.date = {
-        gte: new Date(Date.UTC(year, 0, 1)),
-        lte: new Date(Date.UTC(year, 11, 31)),
-      };
-    }
-    return this.prisma.holiday.findMany({ where, orderBy: { date: 'asc' } });
+    return this.policies.listHolidays(companyId, year);
   }
 
   async upsertHoliday(companyId: string, dto: UpsertHolidayDto) {
-    const date = parseWorkDate(dto.date);
-    return this.prisma.holiday.upsert({
-      where: { companyId_date: { companyId, date } },
-      create: {
-        companyId,
-        name: dto.name,
-        date,
-        substituteDate: dto.substituteDate ? parseWorkDate(dto.substituteDate) : null,
-        otMultiplier: dto.otMultiplier ?? 3.0,
-        branchIds: dto.branchIds ?? [],
-      },
-      update: {
-        name: dto.name,
-        substituteDate: dto.substituteDate ? parseWorkDate(dto.substituteDate) : null,
-        otMultiplier: dto.otMultiplier ?? undefined,
-        branchIds: dto.branchIds ?? undefined,
-      },
+    return this.policies.upsertHoliday(companyId, {
+      name: dto.name,
+      date: parseWorkDate(dto.date),
+      substituteDate: dto.substituteDate ? parseWorkDate(dto.substituteDate) : null,
+      otMultiplier: dto.otMultiplier,
+      branchIds: dto.branchIds,
     });
   }
 
   async deleteHoliday(companyId: string, holidayId: string) {
-    const holiday = await this.prisma.holiday.findFirst({ where: { id: holidayId, companyId } });
-    if (!holiday) {
+    const deleted = await this.policies.deleteHoliday(companyId, holidayId);
+    if (deleted === 0) {
       throw new AppException('SYS_NOT_FOUND');
     }
-    await this.prisma.holiday.delete({ where: { id: holidayId } });
     return { deleted: true };
   }
 
@@ -260,61 +236,47 @@ export class PolicyAdminService {
   // ---------------------------------------------------------------------------
 
   async listBranches(companyId: string) {
-    return this.prisma.branch.findMany({
-      where: { companyId, deletedAt: null },
-      orderBy: { name: 'asc' },
-    });
+    return this.policies.listBranches(companyId);
   }
 
   async createBranch(companyId: string, dto: UpsertBranchDto) {
     await this.assertBranchQuota(companyId);
-    return this.prisma.branch.create({
-      data: {
-        companyId,
-        name: dto.name,
-        address: dto.address,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
-        radiusMeters: dto.radiusMeters ?? 100,
-        wifiBssids: dto.wifiBssids ?? [],
-        beaconUuids: dto.beaconUuids ?? [],
-        timezone: dto.timezone,
-      },
+    return this.policies.createBranch(companyId, {
+      name: dto.name,
+      address: dto.address,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      radiusMeters: dto.radiusMeters,
+      wifiBssids: dto.wifiBssids,
+      beaconUuids: dto.beaconUuids,
+      timezone: dto.timezone,
     });
   }
 
   async updateBranch(companyId: string, branchId: string, dto: UpsertBranchDto) {
-    const branch = await this.prisma.branch.findFirst({
-      where: { id: branchId, companyId, deletedAt: null },
+    const updated = await this.policies.updateBranch(companyId, branchId, {
+      name: dto.name,
+      address: dto.address,
+      latitude: dto.latitude,
+      longitude: dto.longitude,
+      radiusMeters: dto.radiusMeters,
+      wifiBssids: dto.wifiBssids,
+      beaconUuids: dto.beaconUuids,
+      timezone: dto.timezone,
     });
-    if (!branch) {
+    if (!updated) {
       throw new AppException('POL_BRANCH_NOT_FOUND');
     }
-    return this.prisma.branch.update({
-      where: { id: branchId },
-      data: {
-        name: dto.name,
-        address: dto.address,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
-        radiusMeters: dto.radiusMeters,
-        wifiBssids: dto.wifiBssids,
-        beaconUuids: dto.beaconUuids,
-        timezone: dto.timezone,
-      },
-    });
+    return updated;
   }
 
   /** FR-ADM-TEN-04 — giới hạn gói phải enforce ở Backend, không chỉ ẩn nút ở UI. */
   private async assertBranchQuota(companyId: string): Promise<void> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      include: { plan: true },
-    });
-    const maxBranches = company?.plan?.maxBranches;
+    const plan = await this.policies.findPlanLimits(companyId);
+    const maxBranches = plan?.maxBranches;
     if (!maxBranches) return;
 
-    const current = await this.prisma.branch.count({ where: { companyId, deletedAt: null } });
+    const current = await this.policies.countBranches(companyId);
     if (current >= maxBranches) {
       throw new AppException('PLAN_BRANCH_LIMIT_REACHED', { current, maxBranches });
     }
@@ -325,41 +287,29 @@ export class PolicyAdminService {
   // ---------------------------------------------------------------------------
 
   async listDepartments(companyId: string) {
-    return this.prisma.department.findMany({
-      where: { companyId, deletedAt: null },
-      orderBy: { name: 'asc' },
-      include: { _count: { select: { employees: true } } },
-    });
+    return this.policies.listDepartments(companyId);
   }
 
   async createDepartment(companyId: string, dto: UpsertDepartmentDto) {
-    return this.prisma.department.create({
-      data: {
-        companyId,
-        name: dto.name,
-        branchId: dto.branchId,
-        parentId: dto.parentId,
-        managerId: dto.managerId,
-      },
+    return this.policies.createDepartment(companyId, {
+      name: dto.name,
+      branchId: dto.branchId,
+      parentId: dto.parentId,
+      managerId: dto.managerId,
     });
   }
 
   async updateDepartment(companyId: string, departmentId: string, dto: UpsertDepartmentDto) {
-    const department = await this.prisma.department.findFirst({
-      where: { id: departmentId, companyId, deletedAt: null },
+    const updated = await this.policies.updateDepartment(companyId, departmentId, {
+      name: dto.name,
+      branchId: dto.branchId,
+      parentId: dto.parentId,
+      managerId: dto.managerId,
     });
-    if (!department) {
+    if (!updated) {
       throw new AppException('POL_DEPARTMENT_NOT_FOUND');
     }
-    return this.prisma.department.update({
-      where: { id: departmentId },
-      data: {
-        name: dto.name,
-        branchId: dto.branchId,
-        parentId: dto.parentId,
-        managerId: dto.managerId,
-      },
-    });
+    return updated;
   }
 
   // ---------------------------------------------------------------------------

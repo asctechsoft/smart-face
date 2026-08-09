@@ -9,6 +9,7 @@ import { NotificationProcessor } from './processors/notification.processor';
 import { PayrollProcessor } from './processors/payroll.processor';
 import { RetentionProcessor } from './processors/retention.processor';
 import { SmsProcessor } from './processors/sms.processor';
+import { JobsRepository } from './jobs.repository';
 import { SchedulerService } from './scheduler.service';
 
 /**
@@ -20,6 +21,7 @@ import { SchedulerService } from './scheduler.service';
 @Module({
   imports: [PayrollModule, FraudModule, NotificationModule],
   providers: [
+    JobsRepository,
     SmsProcessor,
     NotificationProcessor,
     PayrollProcessor,

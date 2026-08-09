@@ -1,23 +1,17 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
-import {
-  AttendanceType,
-  DailyStatus,
-  EmployeeStatus,
-  PayrollPeriodStatus,
-  Prisma,
-  RequestStatus,
-} from '@prisma/client';
+import { DailyStatus, PayrollPeriodStatus, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { AppException } from 'src/common/errors';
 import { eachWorkDate, formatWorkDate, parseWorkDate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { JOBS, QUEUES } from 'src/infra/queue/queue.constants';
 import { AuditService } from '../audit/audit.service';
 import { FraudService } from '../fraud/fraud.service';
 import { PolicyKeys, PenaltyRule } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
 import { PayrollEngineService } from './payroll-engine.service';
+import { PayrollRepository } from './payroll.repository';
 import type { TenantContext } from 'src/common/types/request-context';
 
 /**
@@ -31,7 +25,8 @@ export class PayrollService {
   private readonly logger = new Logger(PayrollService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly payrolls: PayrollRepository,
+    private readonly transactions: TransactionManager,
     private readonly engine: PayrollEngineService,
     private readonly policy: PolicyService,
     private readonly fraud: FraudService,
@@ -45,33 +40,23 @@ export class PayrollService {
   // ===========================================================================
 
   async listPeriods(companyId: string) {
-    return this.prisma.payrollPeriod.findMany({
-      where: { companyId },
-      orderBy: { startDate: 'desc' },
-      include: { _count: { select: { summaries: true } } },
-    });
+    return this.payrolls.listPeriods(companyId);
   }
 
   async createPeriod(companyId: string, name: string, startDate: string, endDate: string) {
     const start = parseWorkDate(startDate);
     const end = parseWorkDate(endDate);
 
-    const overlapping = await this.prisma.payrollPeriod.findFirst({
-      where: { companyId, startDate: { lte: end }, endDate: { gte: start } },
-    });
+    const overlapping = await this.payrolls.findOverlappingPeriod(companyId, start, end);
     if (overlapping) {
       throw new AppException('PAY_PERIOD_OVERLAP', { existingPeriod: overlapping.name });
     }
 
-    return this.prisma.payrollPeriod.create({
-      data: { companyId, name, startDate: start, endDate: end },
-    });
+    return this.payrolls.createPeriod(companyId, { name, startDate: start, endDate: end });
   }
 
   async getPeriod(companyId: string, periodId: string) {
-    const period = await this.prisma.payrollPeriod.findFirst({
-      where: { id: periodId, companyId },
-    });
+    const period = await this.payrolls.findPeriod(companyId, periodId);
     if (!period) {
       throw new AppException('PAY_PERIOD_NOT_FOUND');
     }
@@ -108,53 +93,34 @@ export class PayrollService {
     const period = await this.getPeriod(companyId, periodId);
 
     const [missingRecords, pendingRequests, unreviewedFraudFlags, dailies] = await Promise.all([
-      this.prisma.attendanceDaily.count({
-        where: {
-          companyId,
-          workDate: { gte: period.startDate, lte: period.endDate },
-          status: DailyStatus.MISSING_RECORD,
-        },
-      }),
-      this.prisma.leaveRequest.count({
-        where: {
-          companyId,
-          status: RequestStatus.PENDING,
-          startAt: { lte: new Date(period.endDate.getTime() + 86_400_000) },
-          endAt: { gte: period.startDate },
-        },
-      }),
+      this.payrolls.countMissingRecordDays(companyId, period.startDate, period.endDate),
+      this.payrolls.countPendingRequestsInRange(
+        companyId,
+        period.startDate,
+        new Date(period.endDate.getTime() + 86_400_000),
+      ),
       this.fraud.countUnreviewedInRange(companyId, period.startDate, period.endDate),
-      this.prisma.attendanceDaily.groupBy({
-        by: ['employeeId'],
-        where: { companyId, workDate: { gte: period.startDate, lte: period.endDate } },
-        _sum: { standardDays: true },
-      }),
+      this.payrolls.sumStandardDaysByEmployee(companyId, period.startDate, period.endDate),
     ]);
 
     // Phát hiện số công bất thường so với trung vị của công ty.
-    const totals = dailies
-      .map((row) => Number(row._sum.standardDays ?? 0))
-      .sort((a, b) => a - b);
+    const totals = dailies.map((row) => row.standardDays).sort((a, b) => a - b);
     const median = totals.length > 0 ? totals[Math.floor(totals.length / 2)] : 0;
 
     const anomalousIds = dailies
-      .filter((row) => {
-        const value = Number(row._sum.standardDays ?? 0);
-        return median > 0 && (value < median * 0.5 || value > median * 1.5);
-      })
+      .filter(
+        (row) => median > 0 && (row.standardDays < median * 0.5 || row.standardDays > median * 1.5),
+      )
       .map((row) => row.employeeId);
 
-    const anomalousEmployees = await this.prisma.employee.findMany({
-      where: { id: { in: anomalousIds }, companyId },
-      select: { id: true, fullName: true, employeeCode: true },
-    });
+    const anomalousEmployees = await this.payrolls.findEmployeeLabels(companyId, anomalousIds);
     const employeeMap = new Map(anomalousEmployees.map((employee) => [employee.id, employee]));
 
     const anomalies = dailies
       .filter((row) => anomalousIds.includes(row.employeeId))
       .map((row) => {
         const employee = employeeMap.get(row.employeeId);
-        const value = Number(row._sum.standardDays ?? 0);
+        const value = row.standardDays;
         return {
           employeeId: row.employeeId,
           employeeCode: employee?.employeeCode ?? null,
@@ -198,21 +164,26 @@ export class PayrollService {
 
     const summaries = await this.buildSummaries(ctx.companyId, period.startDate, period.endDate);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.payrollSummary.deleteMany({ where: { periodId } });
-      if (summaries.length > 0) {
-        await tx.payrollSummary.createMany({
-          data: summaries.map((summary) => ({ ...summary, companyId: ctx.companyId, periodId })),
-        });
-      }
-      await tx.payrollPeriod.update({
-        where: { id: periodId },
-        data: {
+    await this.transactions.run(async (tx) => {
+      // `buildSummaries` kèm sẵn `employee` để màn hình xem trước hiển thị được.
+      // Ảnh chụp trong DB chỉ nhận đúng các cột của bảng — để lọt trường thừa vào
+      // `createMany` là Prisma ném lỗi ngay lúc chốt kỳ.
+      await this.payrolls.replaceSummaries(
+        ctx.companyId,
+        periodId,
+        summaries.map(({ employee: _employee, ...row }) => row),
+        tx,
+      );
+      await this.payrolls.updatePeriodStatus(
+        ctx.companyId,
+        periodId,
+        {
           status: PayrollPeriodStatus.CLOSED,
           closedAt: new Date(),
           closedBy: ctx.userId,
         },
-      });
+        tx,
+      );
     });
 
     await this.audit.record(ctx, {
@@ -239,14 +210,11 @@ export class PayrollService {
       });
     }
 
-    await this.prisma.payrollPeriod.update({
-      where: { id: periodId },
-      data: {
-        status: PayrollPeriodStatus.REVIEWING,
-        reopenedAt: new Date(),
-        reopenedBy: ctx.userId,
-        reopenReason: reason,
-      },
+    await this.payrolls.updatePeriodStatus(ctx.companyId, periodId, {
+      status: PayrollPeriodStatus.REVIEWING,
+      reopenedAt: new Date(),
+      reopenedBy: ctx.userId,
+      reopenReason: reason,
     });
 
     await this.audit.record(ctx, {
@@ -271,13 +239,11 @@ export class PayrollService {
 
     // Kỳ đã chốt → đọc snapshot bất biến; kỳ đang mở → tính trực tiếp.
     if (period.status === PayrollPeriodStatus.CLOSED) {
-      const summaries = await this.prisma.payrollSummary.findMany({
-        where: { companyId, periodId },
-      });
-      const employees = await this.prisma.employee.findMany({
-        where: { id: { in: summaries.map((row) => row.employeeId) } },
-        select: { id: true, fullName: true, employeeCode: true, departmentId: true },
-      });
+      const summaries = await this.payrolls.findSummaries(companyId, periodId);
+      const employees = await this.payrolls.findEmployeeLabels(
+        companyId,
+        summaries.map((row) => row.employeeId),
+      );
       const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
 
       return {
@@ -300,21 +266,13 @@ export class PayrollService {
    */
   private async buildSummaries(companyId: string, startDate: Date, endDate: Date) {
     const [dailies, penaltyRules, employees, holidays] = await Promise.all([
-      this.prisma.attendanceDaily.findMany({
-        where: { companyId, workDate: { gte: startDate, lte: endDate } },
-      }),
+      this.payrolls.findDailiesInRange(companyId, startDate, endDate),
       this.policy.get<PenaltyRule[]>(companyId, PolicyKeys.PAYROLL_PENALTY_RULES),
-      this.prisma.employee.findMany({
-        where: { companyId, deletedAt: null, status: { not: EmployeeStatus.TERMINATED } },
-        select: { id: true, fullName: true, employeeCode: true, departmentId: true },
-      }),
-      this.prisma.holiday.findMany({
-        where: { companyId, date: { gte: startDate, lte: endDate } },
-        select: { date: true },
-      }),
+      this.payrolls.findPayableEmployees(companyId),
+      this.payrolls.findHolidayDates(companyId, startDate, endDate),
     ]);
 
-    const holidayKeys = new Set(holidays.map((holiday) => formatWorkDate(holiday.date)));
+    const holidayKeys = new Set(holidays.map((date) => formatWorkDate(date)));
     const grouped = new Map<string, typeof dailies>();
     for (const daily of dailies) {
       grouped.set(daily.employeeId, [...(grouped.get(daily.employeeId) ?? []), daily]);
@@ -354,8 +312,7 @@ export class PayrollService {
         unpaidLeaveDays: 0,
         makeupMinutes: rows.reduce((sum, row) => sum + row.makeupMinutes, 0),
         penaltyAmount: this.computePenalty(penaltyRules, lateRows.length, lateMinutesTotal),
-        violationCount:
-          lateRows.length + rows.filter((row) => row.earlyLeaveMinutes > 0).length,
+        violationCount: lateRows.length + rows.filter((row) => row.earlyLeaveMinutes > 0).length,
         breakdown: {
           dayCount: rows.length,
           statusCounts: rows.reduce<Record<string, number>>((acc, row) => {
@@ -382,9 +339,7 @@ export class PayrollService {
 
     if (!applicable) return null;
 
-    return (
-      (applicable.fixedAmount ?? 0) + (applicable.amountPerMinute ?? 0) * lateMinutesTotal
-    );
+    return (applicable.fixedAmount ?? 0) + (applicable.amountPerMinute ?? 0) * lateMinutesTotal;
   }
 
   // ===========================================================================
@@ -394,14 +349,10 @@ export class PayrollService {
   async requestExport(ctx: TenantContext, periodId: string, format: 'XLSX' | 'CSV' = 'XLSX') {
     await this.getPeriod(ctx.companyId, periodId);
 
-    const job = await this.prisma.exportJob.create({
-      data: {
-        companyId: ctx.companyId,
-        createdBy: ctx.userId,
-        kind: 'PAYROLL',
-        status: 'QUEUED',
-        params: { periodId, format } as Prisma.InputJsonValue,
-      },
+    const job = await this.payrolls.createExportJob(ctx.companyId, {
+      createdBy: ctx.userId,
+      kind: 'PAYROLL',
+      params: { periodId, format } as Prisma.InputJsonValue,
     });
 
     await this.exportQueue.add(JOBS.EXPORT_PAYROLL, { exportJobId: job.id });
@@ -434,25 +385,9 @@ export class PayrollService {
     to: Date,
     employeeIds?: string[],
   ): Promise<{ calculated: number; skippedLockedDays: number }> {
-    const employees = await this.prisma.employee.findMany({
-      where: {
-        companyId,
-        deletedAt: null,
-        status: { not: EmployeeStatus.PENDING_ACTIVATION },
-        ...(employeeIds?.length ? { id: { in: employeeIds } } : {}),
-      },
-      select: { id: true },
-    });
+    const employees = await this.payrolls.findCalculableEmployeeIds(companyId, employeeIds);
 
-    const closedPeriods = await this.prisma.payrollPeriod.findMany({
-      where: {
-        companyId,
-        status: PayrollPeriodStatus.CLOSED,
-        startDate: { lte: to },
-        endDate: { gte: from },
-      },
-      select: { startDate: true, endDate: true, name: true },
-    });
+    const closedPeriods = await this.payrolls.findClosedPeriodsInRange(companyId, from, to);
 
     const isLocked = (date: Date) =>
       closedPeriods.some((period) => date >= period.startDate && date <= period.endDate);
@@ -465,8 +400,8 @@ export class PayrollService {
         skippedLockedDays += employees.length;
         continue;
       }
-      for (const employee of employees) {
-        await this.engine.calculateAndPersist(companyId, employee.id, workDate);
+      for (const employeeId of employees) {
+        await this.engine.calculateAndPersist(companyId, employeeId, workDate);
         calculated += 1;
       }
     }
@@ -481,14 +416,10 @@ export class PayrollService {
   }
 
   /** Ngày có bản ghi chấm công nhưng chưa có bảng công — dùng cho job quét đêm. */
-  async findDatesNeedingRecalculation(companyId: string, since: Date): Promise<
-    Array<{ employeeId: string; workDate: Date }>
-  > {
-    const logs = await this.prisma.attendanceLog.findMany({
-      where: { companyId, createdAt: { gte: since }, type: { in: [AttendanceType.CHECK_IN, AttendanceType.CHECK_OUT] } },
-      select: { employeeId: true, workDate: true },
-      distinct: ['employeeId', 'workDate'],
-    });
-    return logs;
+  async findDatesNeedingRecalculation(
+    companyId: string,
+    since: Date,
+  ): Promise<Array<{ employeeId: string; workDate: Date }>> {
+    return this.payrolls.findRecentlyPunchedEmployees(companyId, since);
   }
 }

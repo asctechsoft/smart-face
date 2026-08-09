@@ -84,6 +84,36 @@ export const configuration = () => ({
     issuer: process.env.JWT_ISSUER ?? 'smartface',
   },
 
+  /**
+   * Firebase Authentication — nhà cung cấp danh tính (lớp 1).
+   *
+   * Firebase giữ email + mật khẩu và tự chống dò mật khẩu; Backend KHÔNG còn
+   * lưu `passwordHash`. Xem `FirebaseService` để biết ranh giới trách nhiệm.
+   *
+   * Khoá riêng đọc từ tệp JSON của service account. Trong env nó nằm trên MỘT
+   * dòng với `\n` viết theo kiểu escape, nên phải khôi phục lại xuống dòng thật
+   * — giống cách `jwt.privateKey` ở trên đang làm.
+   */
+  firebase: {
+    projectId: process.env.FIREBASE_PROJECT_ID ?? '',
+    clientEmail: process.env.FIREBASE_CLIENT_EMAIL ?? '',
+    privateKey: (process.env.FIREBASE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+    /**
+     * Trỏ SDK về Auth Emulator để dev/test không tạo tài khoản thật.
+     * Ví dụ: `localhost:9099`. Bỏ trống = gọi Firebase thật.
+     */
+    emulatorHost: process.env.FIREBASE_AUTH_EMULATOR_HOST ?? '',
+    /**
+     * Số giây tối đa kể từ lần người dùng thực sự nhập lại mật khẩu, để một
+     * Firebase ID token còn được coi là "vừa xác thực".
+     *
+     * Dùng cho các thao tác nhạy cảm (đổi mật khẩu, tắt 2FA, reauth). Token
+     * thường sống 1 giờ; nếu chấp nhận cả token cũ thì "xác thực lại" chỉ còn
+     * là hình thức — kẻ cầm máy đang mở sẵn phiên vẫn qua được.
+     */
+    freshAuthWindowSeconds: int(process.env.FIREBASE_FRESH_AUTH_WINDOW_SECONDS, 300),
+  },
+
   otp: {
     length: int(process.env.OTP_LENGTH, 6),
     ttlSeconds: int(process.env.OTP_TTL_SECONDS, 300),

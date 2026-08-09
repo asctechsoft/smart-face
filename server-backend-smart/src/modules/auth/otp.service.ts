@@ -25,6 +25,16 @@ export interface OtpIssueResult {
  * - Chống spam: khoảng cách gửi lại + giới hạn số lần gửi mỗi giờ.
  * - Nhập sai quá số lần cho phép → khoá, không cho gọi verify nữa.
  * - Toàn bộ ngưỡng cấu hình được qua env (FR-ADM-CFG-02).
+ *
+ * ## `subject` là gì
+ *
+ * Là PHẠM VI của một mã OTP, do bên gọi đặt — không nhất thiết là số điện thoại.
+ * Xác thực 2 lớp truyền `2fa:<userId>` để mỗi tài khoản có ngăn riêng, vì hai
+ * người khai chung một số mà đánh khoá theo số thì người này nhập sai năm lần là
+ * người kia bị khoá.
+ *
+ * Service này KHÔNG gửi tin nhắn. Nó trả mã gốc cho bên gọi tự gửi qua kênh nào
+ * tuỳ ý, nên nó cũng không cần biết số điện thoại.
  */
 @Injectable()
 export class OtpService {
@@ -39,14 +49,14 @@ export class OtpService {
    * Sinh và lưu OTP mới.
    * @returns mã gốc để caller gửi SMS — KHÔNG log giá trị này (NFR-OBS-08).
    */
-  async issue(phone: string): Promise<{ code: string; result: OtpIssueResult }> {
-    await this.assertNotLocked(phone);
+  async issue(subject: string): Promise<{ code: string; result: OtpIssueResult }> {
+    await this.assertNotLocked(subject);
 
     // Chống gửi lại quá nhanh (chặn cả ở client lẫn server).
     const resendAfter = this.config.get<number>('otp.resendAfterSeconds', 60);
-    const canSend = await this.redis.consumeOnce(RedisKeys.otpResendLock(phone), resendAfter);
+    const canSend = await this.redis.consumeOnce(RedisKeys.otpResendLock(subject), resendAfter);
     if (!canSend) {
-      const remaining = await this.redis.ttl(RedisKeys.otpResendLock(phone));
+      const remaining = await this.redis.ttl(RedisKeys.otpResendLock(subject));
       throw new AppException('AUTH_OTP_RESEND_TOO_SOON', {
         retryAfterSeconds: Math.max(remaining, 1),
       });
@@ -54,7 +64,7 @@ export class OtpService {
 
     // Giới hạn số lần gửi trong một giờ.
     const maxPerHour = this.config.get<number>('otp.maxSendPerHour', 5);
-    const sendCount = await this.redis.incrementWithTtl(RedisKeys.otpSendCount(phone), 3600);
+    const sendCount = await this.redis.incrementWithTtl(RedisKeys.otpSendCount(subject), 3600);
     if (sendCount > maxPerHour) {
       throw new AppException('AUTH_OTP_SEND_LIMIT', { maxPerHour });
     }
@@ -64,7 +74,7 @@ export class OtpService {
     const code = randomNumericCode(length);
 
     const record: OtpRecord = { codeHash: sha256(code), attempts: 0, createdAt: Date.now() };
-    await this.redis.setJson(RedisKeys.otp(phone), record, ttl);
+    await this.redis.setJson(RedisKeys.otp(subject), record, ttl);
 
     const debugReturn = this.config.get<boolean>('otp.debugReturn', false);
     return {
@@ -78,10 +88,10 @@ export class OtpService {
   }
 
   /** Đối chiếu OTP. Đúng → xoá mã (dùng một lần). */
-  async verify(phone: string, code: string): Promise<void> {
-    await this.assertNotLocked(phone);
+  async verify(subject: string, code: string): Promise<void> {
+    await this.assertNotLocked(subject);
 
-    const record = await this.redis.getJson<OtpRecord>(RedisKeys.otp(phone));
+    const record = await this.redis.getJson<OtpRecord>(RedisKeys.otp(subject));
     if (!record) {
       throw new AppException('AUTH_OTP_EXPIRED');
     }
@@ -90,12 +100,12 @@ export class OtpService {
 
     if (record.codeHash !== sha256(code)) {
       const attempts = record.attempts + 1;
-      const remainingTtl = await this.redis.ttl(RedisKeys.otp(phone));
+      const remainingTtl = await this.redis.ttl(RedisKeys.otp(subject));
 
       if (attempts >= maxAttempts) {
         const lockSeconds = this.config.get<number>('otp.lockSeconds', 900);
-        await this.redis.del(RedisKeys.otp(phone));
-        await this.redis.setJson(RedisKeys.otpLock(phone), { lockedAt: Date.now() }, lockSeconds);
+        await this.redis.del(RedisKeys.otp(subject));
+        await this.redis.setJson(RedisKeys.otpLock(subject), { lockedAt: Date.now() }, lockSeconds);
         throw new AppException('AUTH_OTP_MAX_ATTEMPTS', {
           lockedUntil: new Date(Date.now() + lockSeconds * 1000).toISOString(),
           lockSeconds,
@@ -103,20 +113,20 @@ export class OtpService {
       }
 
       await this.redis.setJson(
-        RedisKeys.otp(phone),
+        RedisKeys.otp(subject),
         { ...record, attempts },
         Math.max(remainingTtl, 1),
       );
       throw new AppException('AUTH_OTP_INVALID', { remainingAttempts: maxAttempts - attempts });
     }
 
-    await this.redis.del(RedisKeys.otp(phone));
+    await this.redis.del(RedisKeys.otp(subject));
   }
 
-  private async assertNotLocked(phone: string): Promise<void> {
-    const locked = await this.redis.getJson<{ lockedAt: number }>(RedisKeys.otpLock(phone));
+  private async assertNotLocked(subject: string): Promise<void> {
+    const locked = await this.redis.getJson<{ lockedAt: number }>(RedisKeys.otpLock(subject));
     if (locked) {
-      const remaining = await this.redis.ttl(RedisKeys.otpLock(phone));
+      const remaining = await this.redis.ttl(RedisKeys.otpLock(subject));
       throw new AppException('AUTH_OTP_MAX_ATTEMPTS', {
         lockedUntil: new Date(Date.now() + Math.max(remaining, 0) * 1000).toISOString(),
         retryAfterSeconds: Math.max(remaining, 1),

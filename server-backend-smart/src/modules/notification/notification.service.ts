@@ -5,7 +5,7 @@ import { Queue } from 'bullmq';
 import { PaginatedResult, PaginationQueryDto } from 'src/common/dto';
 import { buildMeta } from 'src/common/utils';
 import { JOBS, QUEUES } from 'src/infra/queue/queue.constants';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { NotificationRepository } from './notification.repository';
 import { RealtimeGateway } from './realtime.gateway';
 
 export interface NotifyInput {
@@ -32,7 +32,7 @@ export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationRepository,
     private readonly realtime: RealtimeGateway,
     @InjectQueue(QUEUES.NOTIFICATION) private readonly notificationQueue: Queue,
     @InjectQueue(QUEUES.SMS) private readonly smsQueue: Queue,
@@ -40,19 +40,17 @@ export class NotificationService {
 
   /** Gửi cho một nhân viên cụ thể. */
   async notify(input: NotifyInput): Promise<void> {
-    const notification = await this.prisma.notification.create({
-      data: {
-        companyId: input.companyId,
-        employeeId: input.employeeId,
-        departmentId: input.departmentId,
-        type: input.type,
-        title: input.title,
-        body: input.body,
-        data: input.data,
-        channel: input.channel ?? 'PUSH',
-        scheduledAt: input.scheduledAt,
-        createdBy: input.createdBy,
-      },
+    const notification = await this.notifications.create({
+      companyId: input.companyId,
+      employeeId: input.employeeId,
+      departmentId: input.departmentId,
+      type: input.type,
+      title: input.title,
+      body: input.body,
+      data: input.data,
+      channel: input.channel ?? 'PUSH',
+      scheduledAt: input.scheduledAt,
+      createdBy: input.createdBy,
     });
 
     // Realtime tới client đang mở app/web (docs/08 mục 9).
@@ -77,24 +75,24 @@ export class NotificationService {
 
   /** FR-WEB-NOT-01 — thông báo toàn công ty hoặc theo phòng ban. */
   async broadcast(input: Omit<NotifyInput, 'employeeId'>): Promise<{ notificationId: string }> {
-    const notification = await this.prisma.notification.create({
-      data: {
-        companyId: input.companyId,
-        departmentId: input.departmentId,
-        type: input.type,
-        title: input.title,
-        body: input.body,
-        data: input.data,
-        channel: input.channel ?? 'PUSH',
-        scheduledAt: input.scheduledAt,
-        createdBy: input.createdBy,
-      },
+    const notification = await this.notifications.create({
+      companyId: input.companyId,
+      departmentId: input.departmentId,
+      type: input.type,
+      title: input.title,
+      body: input.body,
+      data: input.data,
+      channel: input.channel ?? 'PUSH',
+      scheduledAt: input.scheduledAt,
+      createdBy: input.createdBy,
     });
 
     if (!input.scheduledAt) {
       await this.notificationQueue
         .add(JOBS.BROADCAST_NOTIFICATION, { notificationId: notification.id })
-        .catch((error: Error) => this.logger.warn(`Không đẩy được job broadcast: ${error.message}`));
+        .catch((error: Error) =>
+          this.logger.warn(`Không đẩy được job broadcast: ${error.message}`),
+        );
     }
 
     return { notificationId: notification.id };
@@ -112,43 +110,25 @@ export class NotificationService {
   // ---------------------------------------------------------------------------
 
   async list(companyId: string, employeeId: string, query: PaginationQueryDto) {
-    const where: Prisma.NotificationWhereInput = {
-      companyId,
-      OR: [{ employeeId }, { employeeId: null }],
-    };
-
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.notification.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: query.skip,
-        take: query.take,
-      }),
-      this.prisma.notification.count({ where }),
-    ]);
+    const { items, total } = await this.notifications.listForEmployee(companyId, employeeId, {
+      skip: query.skip,
+      take: query.take,
+    });
 
     return new PaginatedResult(items, buildMeta(query.page, query.pageSize, total));
   }
 
   async countUnread(companyId: string, employeeId: string): Promise<number> {
-    return this.prisma.notification.count({
-      where: { companyId, OR: [{ employeeId }, { employeeId: null }], readAt: null },
-    });
+    return this.notifications.countUnread(companyId, employeeId);
   }
 
   async markRead(companyId: string, employeeId: string, notificationId: string) {
-    await this.prisma.notification.updateMany({
-      where: { id: notificationId, companyId, OR: [{ employeeId }, { employeeId: null }] },
-      data: { readAt: new Date() },
-    });
+    await this.notifications.markRead(companyId, employeeId, notificationId, new Date());
     return { read: true };
   }
 
   async markAllRead(companyId: string, employeeId: string) {
-    const result = await this.prisma.notification.updateMany({
-      where: { companyId, OR: [{ employeeId }, { employeeId: null }], readAt: null },
-      data: { readAt: new Date() },
-    });
-    return { updated: result.count };
+    const updated = await this.notifications.markAllRead(companyId, employeeId, new Date());
+    return { updated };
   }
 }

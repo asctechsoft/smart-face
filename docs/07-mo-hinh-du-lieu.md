@@ -255,14 +255,17 @@ model UserAccount {
   avatarUrl String?
   locale    String   @default("vi")
 
-  passwordHash       String                  // scrypt — xem PasswordService
+  // Firebase Authentication giữ mật khẩu; bảng này KHÔNG lưu mật khẩu dưới bất
+  // kỳ dạng nào. `firebaseUid` là mối nối duy nhất giữa danh tính và nghiệp vụ.
+  //
+  // Không còn: passwordHash, failedLoginCount, lockedUntil — việc chống dò mật
+  // khẩu và khoá tạm do Firebase làm.
+  firebaseUid        String    @unique
   mustChangePassword Boolean   @default(true)
   passwordChangedAt  DateTime?
-  failedLoginCount   Int       @default(0)   // sai 8 lần → khoá 15 phút
-  lockedUntil        DateTime?
 
-  twoFactorEnabled       Boolean   @default(false)   // TOTP, người dùng tự bật
-  twoFactorSecret        String?                     // base32
+  twoFactorEnabled       Boolean   @default(false)   // OTP qua SMS, người dùng tự bật
+  twoFactorPhone         String?                     // số nhận OTP, đã xác minh
   twoFactorConfirmedAt   DateTime?
   twoFactorRecoveryCodes String[]  @default([])      // đã băm
 

@@ -1,8 +1,8 @@
 import { CanActivate, ExecutionContext, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { RedisService } from 'src/infra/redis/redis.service';
+import { AuthRepository } from 'src/modules/auth/auth.repository';
 import { RedisKeys } from 'src/infra/redis/redis.keys';
 import { AppException } from '../errors';
 import { SIGNATURE_REQUIRED_KEY } from '../decorators/public.decorator';
@@ -30,7 +30,7 @@ export class SignatureGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly config: ConfigService,
     private readonly redis: RedisService,
-    private readonly prisma: PrismaService,
+    private readonly devices: AuthRepository,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -90,10 +90,7 @@ export class SignatureGuard implements CanActivate {
       throw new AppException('AUTH_SIGNATURE_INVALID', { reason: 'Token không gắn thiết bị' });
     }
 
-    const device = await this.prisma.deviceBinding.findUnique({
-      where: { userId_deviceId: { userId: ctx.userId, deviceId: ctx.deviceId } },
-      select: { deviceSecretHash: true, isActive: true, revokedAt: true },
-    });
+    const device = await this.devices.findDeviceSignatureKey(ctx.userId, ctx.deviceId);
     if (!device || !device.isActive || device.revokedAt) {
       throw new AppException('FRAUD_UNKNOWN_DEVICE');
     }
@@ -153,8 +150,7 @@ export class SignatureGuard implements CanActivate {
 
     if (enforced) {
       throw new AppException('AUTH_SIGNATURE_INVALID', {
-        reason:
-          'Request multipart phải kèm X-Body-Sha256 để chữ ký ràng buộc được nội dung ảnh.',
+        reason: 'Request multipart phải kèm X-Body-Sha256 để chữ ký ràng buộc được nội dung ảnh.',
       });
     }
 

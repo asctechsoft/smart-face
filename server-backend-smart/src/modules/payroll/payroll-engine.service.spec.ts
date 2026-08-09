@@ -1,9 +1,9 @@
 import { Test } from '@nestjs/testing';
 import { AttendanceType, DailyStatus, ShiftType } from '@prisma/client';
 import { parseWorkDate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { PayrollRepository } from './payroll.repository';
 import { PolicyService } from '../policy/policy.service';
-import { PolicyKeys, POLICY_DEFAULTS } from '../policy/policy.constants';
+import { POLICY_DEFAULTS } from '../policy/policy.constants';
 import { PayrollEngineService } from './payroll-engine.service';
 
 const VN = 'Asia/Ho_Chi_Minh';
@@ -18,13 +18,14 @@ type PunchLog = { id: string; type: AttendanceType; recordedAt: Date };
  */
 describe('PayrollEngineService', () => {
   let engine: PayrollEngineService;
-  let prisma: {
-    attendanceLog: { findMany: jest.Mock };
-    attendanceAdjustment: { findMany: jest.Mock };
-    fraudFlag: { count: jest.Mock };
-    makeupWorkRecord: { aggregate: jest.Mock };
-    leaveRequest: { findMany: jest.Mock };
-    attendanceDaily: { upsert: jest.Mock };
+  let payrolls: {
+    findCountablePunches: jest.Mock;
+    findVoidedLogIds: jest.Mock;
+    findTimeModifications: jest.Mock;
+    countFraudFlagsForDay: jest.Mock;
+    sumMakeupMinutes: jest.Mock;
+    findApprovedRequestsInRange: jest.Mock;
+    upsertDaily: jest.Mock;
   };
   let policy: {
     getTimezone: jest.Mock;
@@ -61,13 +62,14 @@ describe('PayrollEngineService', () => {
   };
 
   beforeEach(async () => {
-    prisma = {
-      attendanceLog: { findMany: jest.fn().mockResolvedValue([]) },
-      attendanceAdjustment: { findMany: jest.fn().mockResolvedValue([]) },
-      fraudFlag: { count: jest.fn().mockResolvedValue(0) },
-      makeupWorkRecord: { aggregate: jest.fn().mockResolvedValue({ _sum: { makeupMinutes: 0 } }) },
-      leaveRequest: { findMany: jest.fn().mockResolvedValue([]) },
-      attendanceDaily: { upsert: jest.fn().mockResolvedValue({}) },
+    payrolls = {
+      findCountablePunches: jest.fn().mockResolvedValue([]),
+      findVoidedLogIds: jest.fn().mockResolvedValue([]),
+      findTimeModifications: jest.fn().mockResolvedValue([]),
+      countFraudFlagsForDay: jest.fn().mockResolvedValue(0),
+      sumMakeupMinutes: jest.fn().mockResolvedValue(0),
+      findApprovedRequestsInRange: jest.fn().mockResolvedValue([]),
+      upsertDaily: jest.fn().mockResolvedValue(undefined),
     };
 
     policy = {
@@ -89,7 +91,7 @@ describe('PayrollEngineService', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         PayrollEngineService,
-        { provide: PrismaService, useValue: prisma },
+        { provide: PayrollRepository, useValue: payrolls },
         { provide: PolicyService, useValue: policy },
       ],
     }).compile();
@@ -106,14 +108,15 @@ describe('PayrollEngineService', () => {
     }));
   }
 
-  const calc = (workDate = '2026-08-03') => engine.calculate(COMPANY, EMPLOYEE, parseWorkDate(workDate));
+  const calc = (workDate = '2026-08-03') =>
+    engine.calculate(COMPANY, EMPLOYEE, parseWorkDate(workDate));
 
   // =========================================================================
   //  Ca hành chính bình thường
   // =========================================================================
 
   it('ca hành chính đúng giờ: 08:00–17:30 → 8h công, trạng thái ON_TIME', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'], // 08:00 VN
         [AttendanceType.CHECK_OUT, '2026-08-03T10:30:00Z'], // 17:30 VN
@@ -131,7 +134,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('đi muộn TRONG dung sai 5 phút thì không tính lỗi', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:04:00Z'], // 08:04 VN
         [AttendanceType.CHECK_OUT, '2026-08-03T10:30:00Z'],
@@ -144,7 +147,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('đi muộn NGOÀI dung sai: 08:47 → trừ 5 phút dung sai = 42 phút muộn', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:47:00Z'], // 08:47 VN
         [AttendanceType.CHECK_OUT, '2026-08-03T10:30:00Z'],
@@ -157,7 +160,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('về sớm: chấm ra 16:30 thay vì 17:30 → 60 phút về sớm', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T09:30:00Z'], // 16:30 VN
@@ -170,7 +173,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('vừa đi muộn vừa về sớm → LATE_AND_EARLY', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:30:00Z'], // 08:30 VN
         [AttendanceType.CHECK_OUT, '2026-08-03T09:30:00Z'], // 16:30 VN
@@ -189,7 +192,7 @@ describe('PayrollEngineService', () => {
 
   it('ca đêm 22:00 → 06:00 hôm sau: KHÔNG tách thành hai ngày công', async () => {
     policy.resolveShiftForDate.mockResolvedValue(nightShift);
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T15:00:00Z'], // 22:00 VN ngày 03
         [AttendanceType.CHECK_OUT, '2026-08-03T23:00:00Z'], // 06:00 VN ngày 04
@@ -207,7 +210,7 @@ describe('PayrollEngineService', () => {
 
   it('ca đêm về sớm: chấm ra 05:00 thay vì 06:00 → 60 phút về sớm', async () => {
     policy.resolveShiftForDate.mockResolvedValue(nightShift);
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T15:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T22:00:00Z'], // 05:00 VN ngày 04
@@ -223,7 +226,7 @@ describe('PayrollEngineService', () => {
   // =========================================================================
 
   it('nhiều cặp vào/ra trong ngày (ra ngoài giữa giờ) đều được cộng dồn', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'], // 08:00
         [AttendanceType.CHECK_OUT, '2026-08-03T05:00:00Z'], // 12:00 → 240 phút
@@ -238,7 +241,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('quên chấm ra → MISSING_RECORD, không cộng giờ cho cặp dở dang', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches([AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z']),
     );
 
@@ -250,7 +253,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('chấm ra mà chưa chấm vào (BR-ATT-03) → bỏ qua, không sinh giờ âm', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches([AttendanceType.CHECK_OUT, '2026-08-03T10:30:00Z']),
     );
 
@@ -270,17 +273,13 @@ describe('PayrollEngineService', () => {
   // =========================================================================
 
   it('bản ghi bị VOID không được tính vào bảng công', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T10:30:00Z'],
       ),
     );
-    prisma.attendanceAdjustment.findMany.mockImplementation(({ where }: { where: { adjustType: string } }) =>
-      Promise.resolve(
-        where.adjustType === 'VOID' ? [{ attendanceLogId: 'log_1' }] : [],
-      ),
-    );
+    payrolls.findVoidedLogIds.mockResolvedValue(['log_1']);
 
     const result = await calc();
     // Mất lượt chấm ra → cặp dở dang.
@@ -289,19 +288,15 @@ describe('PayrollEngineService', () => {
   });
 
   it('MODIFY_TIME áp giờ mới nhưng KHÔNG sửa bản ghi gốc', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:47:00Z'], // 08:47 — đi muộn
         [AttendanceType.CHECK_OUT, '2026-08-03T10:30:00Z'],
       ),
     );
-    prisma.attendanceAdjustment.findMany.mockImplementation(({ where }: { where: { adjustType: string } }) =>
-      Promise.resolve(
-        where.adjustType === 'MODIFY_TIME'
-          ? [{ attendanceLogId: 'log_0', afterValue: { recordedAt: '2026-08-03T01:00:00Z' } }]
-          : [],
-      ),
-    );
+    payrolls.findTimeModifications.mockResolvedValue([
+      { attendanceLogId: 'log_0', afterValue: { recordedAt: '2026-08-03T01:00:00Z' } },
+    ]);
 
     const result = await calc();
     expect(result.lateMinutes).toBe(0);
@@ -314,12 +309,14 @@ describe('PayrollEngineService', () => {
   // =========================================================================
 
   it('đơn nghỉ phép nguyên ngày đã duyệt → ON_LEAVE và vẫn tính đủ công', async () => {
-    prisma.leaveRequest.findMany.mockResolvedValue([
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
       {
         id: 'req_1',
         quantity: 1,
         isHalfDay: false,
-        requestType: { code: 'ANNUAL_LEAVE', deductFrom: 'ANNUAL_LEAVE', unit: 'DAY' },
+        code: 'ANNUAL_LEAVE',
+        deductFrom: 'ANNUAL_LEAVE',
+        unit: 'DAY',
       },
     ]);
 
@@ -330,12 +327,14 @@ describe('PayrollEngineService', () => {
   });
 
   it('nghỉ nửa ngày → tính nửa công', async () => {
-    prisma.leaveRequest.findMany.mockResolvedValue([
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
       {
         id: 'req_2',
         quantity: 0.5,
         isHalfDay: true,
-        requestType: { code: 'ANNUAL_LEAVE', deductFrom: 'ANNUAL_LEAVE', unit: 'DAY' },
+        code: 'ANNUAL_LEAVE',
+        deductFrom: 'ANNUAL_LEAVE',
+        unit: 'DAY',
       },
     ]);
 
@@ -344,12 +343,14 @@ describe('PayrollEngineService', () => {
   });
 
   it('nghỉ KHÔNG lương không được tính công', async () => {
-    prisma.leaveRequest.findMany.mockResolvedValue([
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
       {
         id: 'req_3',
         quantity: 1,
         isHalfDay: false,
-        requestType: { code: 'UNPAID_LEAVE', deductFrom: 'UNPAID', unit: 'DAY' },
+        code: 'UNPAID_LEAVE',
+        deductFrom: 'UNPAID',
+        unit: 'DAY',
       },
     ]);
 
@@ -369,7 +370,7 @@ describe('PayrollEngineService', () => {
   // =========================================================================
 
   it('làm ngoài ca nhưng KHÔNG có đơn OT duyệt trước → không tính OT', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T13:30:00Z'], // 20:30 VN — muộn 3h
@@ -384,18 +385,20 @@ describe('PayrollEngineService', () => {
   });
 
   it('có đơn OT duyệt trước → tính OT với hệ số ngày thường 1.5', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T13:30:00Z'], // 20:30 VN
       ),
     );
-    prisma.leaveRequest.findMany.mockResolvedValue([
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
       {
         id: 'req_ot',
         quantity: 3,
         isHalfDay: false,
-        requestType: { code: 'OT_REGISTER', deductFrom: 'OT_CREDIT', unit: 'HOUR' },
+        code: 'OT_REGISTER',
+        deductFrom: 'OT_CREDIT',
+        unit: 'HOUR',
       },
     ]);
 
@@ -406,18 +409,20 @@ describe('PayrollEngineService', () => {
 
   it('OT ngày lễ dùng hệ số 3.0 (NFR-LEGAL-05)', async () => {
     policy.findHoliday.mockResolvedValue({ name: 'Quốc khánh', otMultiplier: 3.0 });
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-09-02T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-09-02T12:30:00Z'], // 19:30 VN
       ),
     );
-    prisma.leaveRequest.findMany.mockResolvedValue([
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
       {
         id: 'req_ot',
         quantity: 2,
         isHalfDay: false,
-        requestType: { code: 'OT_REGISTER', deductFrom: 'OT_CREDIT', unit: 'HOUR' },
+        code: 'OT_REGISTER',
+        deductFrom: 'OT_CREDIT',
+        unit: 'HOUR',
       },
     ]);
 
@@ -426,18 +431,20 @@ describe('PayrollEngineService', () => {
   });
 
   it('OT vượt trần theo ngày bị cắt về mức tối đa (NFR-LEGAL-06)', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T17:00:00Z'], // 24:00 VN → OT 6h30
       ),
     );
-    prisma.leaveRequest.findMany.mockResolvedValue([
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
       {
         id: 'req_ot',
         quantity: 7,
         isHalfDay: false,
-        requestType: { code: 'OT_REGISTER', deductFrom: 'OT_CREDIT', unit: 'HOUR' },
+        code: 'OT_REGISTER',
+        deductFrom: 'OT_CREDIT',
+        unit: 'HOUR',
       },
     ]);
 
@@ -452,8 +459,8 @@ describe('PayrollEngineService', () => {
   // =========================================================================
 
   it('phút làm bù được cộng vào công chuẩn', async () => {
-    prisma.makeupWorkRecord.aggregate.mockResolvedValue({ _sum: { makeupMinutes: 120 } });
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.sumMakeupMinutes.mockResolvedValue(120);
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T07:00:00Z'], // 14:00 VN → 360 phút
@@ -467,7 +474,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('IDEMPOTENT — chạy hai lần cho cùng dữ liệu ra kết quả GIỐNG HỆT (NFR-REL-06)', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:15:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T10:45:00Z'],
@@ -495,7 +502,7 @@ describe('PayrollEngineService', () => {
       type: ShiftType.FLEXIBLE,
       requiredMinutes: 480,
     });
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T03:00:00Z'], // 10:00 VN — muộn nếu là ca cố định
         [AttendanceType.CHECK_OUT, '2026-08-03T12:00:00Z'], // 19:00 VN
@@ -508,7 +515,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('về sớm được ưu tiên hơn thiếu công vì nói rõ nguyên nhân hơn', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T06:00:00Z'], // 13:00 VN → 300 phút
@@ -523,7 +530,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('vào đúng giờ, ra đúng giờ nhưng nghỉ dài giữa ca → INSUFFICIENT', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'], // 08:00
         [AttendanceType.CHECK_OUT, '2026-08-03T05:00:00Z'], // 12:00 → 240 phút
@@ -545,7 +552,7 @@ describe('PayrollEngineService', () => {
   // =========================================================================
 
   it('breakdown ghi đủ thông tin để giải trình "con số này ra từ đâu"', async () => {
-    prisma.attendanceLog.findMany.mockResolvedValue(
+    payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
         [AttendanceType.CHECK_OUT, '2026-08-03T10:30:00Z'],

@@ -1,125 +1,30 @@
 import { Injectable } from '@nestjs/common';
-import { randomBytes, randomInt, scrypt, timingSafeEqual, type ScryptOptions } from 'node:crypto';
-import { promisify } from 'node:util';
+import { randomInt } from 'node:crypto';
 import { AppException } from 'src/common/errors';
 
 /**
- * `promisify` chọn overload 3 tham số của `scrypt` nên mất mất tham số
- * `options` — mà đó lại là chỗ đặt `maxmem`, thứ bắt buộc phải nới rộng.
- * Khai báo lại kiểu cho đúng chữ ký thật.
- */
-const scryptAsync = promisify(scrypt) as (
-  password: string | Buffer,
-  salt: string | Buffer,
-  keylen: number,
-  options: ScryptOptions,
-) => Promise<Buffer>;
-
-/**
- * Băm và kiểm tra mật khẩu.
+ * Chính sách mật khẩu.
  *
- * ## Vì sao scrypt chứ không phải bcrypt/argon2
+ * ## Vì sao service này không còn băm mật khẩu
  *
- * scrypt nằm sẵn trong `node:crypto`, không cần thư viện biên dịch native. Đây
- * là lựa chọn có chủ đích: `bcrypt` và `argon2` đều phải build bằng node-gyp,
- * và một phụ thuộc native hỏng build là thứ chặn đứng cả pipeline vào đúng lúc
- * cần deploy gấp. scrypt là hàm dẫn xuất khoá đúng nghĩa — tốn cả CPU lẫn bộ
- * nhớ, nên đắt với người bẻ khoá bằng GPU/ASIC.
+ * Từ khi chuyển sang Firebase Authentication, Backend không giữ mật khẩu nữa —
+ * `hash`, `verify` và `needsRehash` (scrypt) đã bị bỏ cùng với cột `passwordHash`.
+ * Firebase là nơi lưu và đối chiếu.
  *
- * ## Định dạng lưu
+ * Nhưng CHÍNH SÁCH thì vẫn ở lại đây, vì Firebase bản không nâng cấp Identity
+ * Platform chỉ ép được độ dài tối thiểu 6 ký tự. Bỏ tầng này đi là hạ chuẩn mật
+ * khẩu của toàn hệ thống từ 12 ký tự xuống 6.
  *
- * ```
- * scrypt$N$r$p$<salt base64url>$<hash base64url>
- * ```
+ * ## Chỗ chính sách này KHÔNG với tới được
  *
- * Tham số nằm ngay trong chuỗi, không hard-code ở chỗ đọc. Nhờ vậy nâng tham số
- * về sau vẫn kiểm được mật khẩu cũ, và `needsRehash()` cho biết khi nào nên băm
- * lại lúc người dùng đăng nhập thành công.
+ * Chỉ những đường đi QUA Backend mới bị kiểm: cấp tài khoản, và `POST
+ * /auth/password/change`. Nếu sau này bật màn hình "quên mật khẩu" mặc định của
+ * Firebase, người dùng đặt mật khẩu thẳng trên trang của Firebase và chỉ bị kiểm
+ * theo chuẩn của Firebase. Muốn giữ nguyên chuẩn 12 ký tự thì luồng đặt lại mật
+ * khẩu cũng phải đi qua Backend.
  */
 @Injectable()
 export class PasswordService {
-  /** Chi phí CPU/bộ nhớ. N=2^16 tốn ~64MB mỗi lần băm. */
-  private readonly cost = 2 ** 16;
-  private readonly blockSize = 8;
-  private readonly parallelization = 1;
-  private readonly keyLength = 64;
-  private readonly saltLength = 16;
-
-  /**
-   * `maxmem` phải nới rộng hơn nhu cầu thật.
-   *
-   * scrypt cần khoảng `128 * N * r` byte; mặc định của Node là 32MB nên N=2^16
-   * sẽ ném lỗi "memory limit exceeded" ngay lần băm đầu tiên.
-   */
-  private get options() {
-    return {
-      N: this.cost,
-      r: this.blockSize,
-      p: this.parallelization,
-      maxmem: 256 * this.cost * this.blockSize,
-    };
-  }
-
-  async hash(plain: string): Promise<string> {
-    const salt = randomBytes(this.saltLength);
-    const derived = (await scryptAsync(
-      plain.normalize('NFKC'),
-      salt,
-      this.keyLength,
-      this.options,
-    )) as Buffer;
-
-    return [
-      'scrypt',
-      this.cost,
-      this.blockSize,
-      this.parallelization,
-      salt.toString('base64url'),
-      derived.toString('base64url'),
-    ].join('$');
-  }
-
-  /**
-   * Kiểm mật khẩu.
-   *
-   * Trả `false` thay vì ném lỗi khi chuỗi băm hỏng: bản ghi lỗi trong DB không
-   * được biến thành 500, và cũng không được để lộ ra ngoài rằng tài khoản này
-   * khác các tài khoản khác ở điểm nào.
-   */
-  async verify(plain: string, stored: string): Promise<boolean> {
-    const parts = stored.split('$');
-    if (parts.length !== 6 || parts[0] !== 'scrypt') return false;
-
-    const [, cost, blockSize, parallelization, saltEncoded, hashEncoded] = parts;
-    const N = Number.parseInt(cost, 10);
-    const r = Number.parseInt(blockSize, 10);
-    const p = Number.parseInt(parallelization, 10);
-    if (!Number.isFinite(N) || !Number.isFinite(r) || !Number.isFinite(p)) return false;
-
-    const expected = Buffer.from(hashEncoded, 'base64url');
-    if (expected.length === 0) return false;
-
-    try {
-      const derived = (await scryptAsync(
-        plain.normalize('NFKC'),
-        Buffer.from(saltEncoded, 'base64url'),
-        expected.length,
-        { N, r, p, maxmem: 256 * N * r },
-      )) as Buffer;
-
-      return timingSafeEqual(derived, expected);
-    } catch {
-      return false;
-    }
-  }
-
-  /** Chuỗi băm cũ dùng tham số yếu hơn cấu hình hiện tại → nên băm lại. */
-  needsRehash(stored: string): boolean {
-    const parts = stored.split('$');
-    if (parts.length !== 6 || parts[0] !== 'scrypt') return true;
-    return Number.parseInt(parts[1], 10) < this.cost;
-  }
-
   /** Độ dài tối thiểu. Đây là yếu tố có tác dụng thật, không phải quy tắc thành phần. */
   static readonly MIN_LENGTH = 12;
 
@@ -151,8 +56,6 @@ export class PasswordService {
       reasons.push(`Mật khẩu phải dài ít nhất ${PasswordService.MIN_LENGTH} ký tự.`);
     }
     if (plain.length > PasswordService.MAX_LENGTH) {
-      // Không phải để làm khó người dùng: scrypt cố tình tốn kém, một chuỗi vài
-      // MB gửi lên sẽ chiếm CPU rất lâu.
       reasons.push(`Mật khẩu không được dài quá ${PasswordService.MAX_LENGTH} ký tự.`);
     }
     if (/^\d+$/.test(plain) && plain.length < PasswordService.MIN_LENGTH_DIGITS_ONLY) {

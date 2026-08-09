@@ -2,12 +2,12 @@ import { Global, Logger, Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { AuthController } from './auth.controller';
+import { AuthRepository } from './auth.repository';
 import { AuthService } from './auth.service';
 import { DeviceService } from './device.service';
 import { OtpService } from './otp.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
-import { TotpService } from './totp.service';
 
 const logger = new Logger('JwtModule');
 
@@ -47,19 +47,18 @@ const logger = new Logger('JwtModule');
   ],
   controllers: [AuthController],
   providers: [
+    AuthRepository,
     AuthService,
     PasswordService,
-    TotpService,
     TokenService,
     DeviceService,
-    // OtpService không còn dùng để đăng nhập. Giữ lại vì các luồng thông báo
-    // khác vẫn cần gửi mã qua SMS.
+    // Lớp xác thực thứ hai chạy trên OtpService: Firebase chỉ lo lớp thứ nhất.
     OtpService,
   ],
   exports: [
+    AuthRepository,
     AuthService,
     PasswordService,
-    TotpService,
     TokenService,
     DeviceService,
     OtpService,

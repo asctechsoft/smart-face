@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { NotificationController } from './notification.controller';
+import { NotificationRepository } from './notification.repository';
 import { NotificationService } from './notification.service';
 import { PushService } from './push.service';
 import { RealtimeGateway } from './realtime.gateway';
@@ -21,7 +22,13 @@ import { SmsService } from './sms.service';
 @Global()
 @Module({
   controllers: [NotificationController],
-  providers: [NotificationService, SmsService, PushService, RealtimeGateway],
-  exports: [NotificationService, SmsService, PushService, RealtimeGateway],
+  providers: [
+    NotificationRepository,
+    NotificationService,
+    SmsService,
+    PushService,
+    RealtimeGateway,
+  ],
+  exports: [NotificationRepository, NotificationService, SmsService, PushService, RealtimeGateway],
 })
 export class NotificationModule {}

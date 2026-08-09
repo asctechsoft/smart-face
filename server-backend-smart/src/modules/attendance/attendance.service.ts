@@ -6,10 +6,9 @@ import {
   AttendanceType,
   AuthMethod,
   Branch,
+  DailyStatus,
   Employee,
   EmployeeStatus,
-  FaceProfileStatus,
-  PayrollPeriodStatus,
   Prisma,
   Shift,
 } from '@prisma/client';
@@ -28,9 +27,9 @@ import {
   ipInAnyCidr,
   isValidCidr,
   normalizeBssid,
+  parseWorkDate,
   toWorkDate,
 } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { RedisService } from 'src/infra/redis/redis.service';
 import { RedisKeys } from 'src/infra/redis/redis.keys';
 import { StorageService } from 'src/infra/storage/storage.service';
@@ -46,6 +45,7 @@ import {
   WifiRequirement,
 } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
+import { AttendanceRepository } from './attendance.repository';
 import type { CheckInDto } from './dto/attendance.dto';
 import type { RequestContext } from 'src/common/types/request-context';
 
@@ -75,7 +75,7 @@ export class AttendanceService {
   private readonly engineVersion = 'attendance@1.0.0';
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly attendances: AttendanceRepository,
     private readonly redis: RedisService,
     private readonly config: ConfigService,
     private readonly policy: PolicyService,
@@ -267,52 +267,46 @@ export class AttendanceService {
     }
 
     // --- (9) Ghi bản ghi THÔ — BẤT BIẾN (BR-06) -------------------------------
-    const log = await this.prisma.attendanceLog.create({
-      data: {
-        companyId,
-        employeeId: employee.id,
-        branchId: geo.branch?.id ?? employee.branchId,
-        type,
-        authMethod: dto.authMethod,
-        recordedAt,
-        clientReportedAt: Number.isNaN(clientReportedAt.getTime()) ? null : clientReportedAt,
-        clockSkewSeconds,
-        workDate,
-        latitude: dto.location.latitude,
-        longitude: dto.location.longitude,
-        gpsAccuracy: dto.location.accuracy,
-        locationProvider: dto.location.provider,
-        isMockLocation: dto.location.isMocked ?? false,
-        distanceToBranchM: geo.distanceMeters,
-        insideGeofence: geo.insideGeofence,
-        wifiBssid: dto.deviceContext.wifiBssid,
-        beaconUuid: dto.deviceContext.beaconUuid,
-        deviceId: dto.deviceContext.deviceId,
-        deviceModel: dto.deviceContext.model,
-        osVersion: dto.deviceContext.osVersion,
-        appVersion: dto.deviceContext.appVersion,
-        isRootedDevice: dto.deviceContext.isRooted ?? false,
-        attestationPassed: verification.attestationPassed,
-        ipAddress,
-        matchScore: verification.matchScore,
-        livenessScore: verification.livenessScore,
-        imageQuality: verification.quality as Prisma.InputJsonValue,
-        livenessChallenge: challenge.livenessAction,
-        aiModelVersion: verification.modelVersion,
-        aiProcessingMs: verification.processingMs,
-        photoKey,
-        photoHash,
-        fraudScore: evaluation.score,
-        decision,
-      },
+    const log = await this.attendances.createLog(companyId, {
+      employeeId: employee.id,
+      branchId: geo.branch?.id ?? employee.branchId,
+      type,
+      authMethod: dto.authMethod,
+      recordedAt,
+      clientReportedAt: Number.isNaN(clientReportedAt.getTime()) ? null : clientReportedAt,
+      clockSkewSeconds,
+      workDate,
+      latitude: dto.location.latitude,
+      longitude: dto.location.longitude,
+      gpsAccuracy: dto.location.accuracy,
+      locationProvider: dto.location.provider,
+      isMockLocation: dto.location.isMocked ?? false,
+      distanceToBranchM: geo.distanceMeters,
+      insideGeofence: geo.insideGeofence,
+      wifiBssid: dto.deviceContext.wifiBssid,
+      beaconUuid: dto.deviceContext.beaconUuid,
+      deviceId: dto.deviceContext.deviceId,
+      deviceModel: dto.deviceContext.model,
+      osVersion: dto.deviceContext.osVersion,
+      appVersion: dto.deviceContext.appVersion,
+      isRootedDevice: dto.deviceContext.isRooted ?? false,
+      attestationPassed: verification.attestationPassed,
+      ipAddress,
+      matchScore: verification.matchScore,
+      livenessScore: verification.livenessScore,
+      imageQuality: verification.quality as Prisma.InputJsonValue,
+      livenessChallenge: challenge.livenessAction,
+      aiModelVersion: verification.modelVersion,
+      aiProcessingMs: verification.processingMs,
+      photoKey,
+      photoHash,
+      fraudScore: evaluation.score,
+      decision,
     });
 
     // BR-04: mã nhân viên bất biến sau lần chấm công đầu tiên.
     if (!employee.codeLocked) {
-      await this.prisma.employee.update({
-        where: { id: employee.id },
-        data: { codeLocked: true, status: EmployeeStatus.ACTIVE },
-      });
+      await this.attendances.lockEmployeeCode(companyId, employee.id);
     }
 
     await this.fraud.persistFlags({
@@ -404,17 +398,12 @@ export class AttendanceService {
       });
     }
 
-    const profiles = await this.prisma.faceProfile.findMany({
-      where: { companyId, employeeId: employee.id, status: FaceProfileStatus.ACTIVE },
-      select: { embeddingRaw: true },
-    });
-    if (profiles.length === 0) {
+    const rawEmbeddings = await this.attendances.findActiveFaceEmbeddings(companyId, employee.id);
+    if (rawEmbeddings.length === 0) {
       throw new AppException('FACE_NOT_ENROLLED');
     }
 
-    const embeddings = profiles
-      .map((profile) => (profile.embeddingRaw ? bufferToEmbedding(profile.embeddingRaw) : null))
-      .filter((embedding): embedding is number[] => embedding !== null);
+    const embeddings = rawEmbeddings.map((raw) => bufferToEmbedding(raw));
 
     const requireLiveness = await this.policy.getBoolean(
       companyId,
@@ -462,7 +451,10 @@ export class AttendanceService {
     const bestScore = result.match?.best_score ?? 0;
     if (bestScore < matchThreshold) {
       await this.registerFailedAttempt(companyId, employee.id);
-      throw new AppException('FACE_NOT_MATCHED', { matchScore: bestScore, threshold: matchThreshold });
+      throw new AppException('FACE_NOT_MATCHED', {
+        matchScore: bestScore,
+        threshold: matchThreshold,
+      });
     }
 
     return {
@@ -488,13 +480,11 @@ export class AttendanceService {
       });
     }
 
-    const key = await this.prisma.biometricKey.findFirst({
-      where: {
-        employeeId: employee.id,
-        deviceId: dto.deviceContext.deviceId,
-        revokedAt: null,
-      },
-    });
+    const key = await this.attendances.findFingerprintKey(
+      employee.companyId,
+      employee.id,
+      dto.deviceContext.deviceId,
+    );
     if (!key) {
       throw new AppException('BIO_NOT_ENROLLED');
     }
@@ -525,10 +515,7 @@ export class AttendanceService {
    * là vô nghĩa vì kẻ tấn công tự tạo được. Đây là hạng mục Giai đoạn 3.
    */
   private async verifyAttestation(companyId: string, dto: CheckInDto): Promise<boolean | null> {
-    const required = await this.policy.getBoolean(
-      companyId,
-      PolicyKeys.DEVICE_REQUIRE_ATTESTATION,
-    );
+    const required = await this.policy.getBoolean(companyId, PolicyKeys.DEVICE_REQUIRE_ATTESTATION);
     if (!required) {
       return dto.deviceContext.attestationToken ? null : null;
     }
@@ -564,10 +551,7 @@ export class AttendanceService {
       });
     }
 
-    const requireGps = await this.policy.getBoolean(
-      companyId,
-      PolicyKeys.GPS_REQUIRE_GPS_PROVIDER,
-    );
+    const requireGps = await this.policy.getBoolean(companyId, PolicyKeys.GPS_REQUIRE_GPS_PROVIDER);
     if (requireGps && dto.location.provider && dto.location.provider !== 'gps') {
       throw new AppException('FRAUD_LOW_GPS_ACCURACY', {
         reason: `Nguồn vị trí "${dto.location.provider}" không đủ tin cậy.`,
@@ -587,15 +571,7 @@ export class AttendanceService {
 
   /** BR-07 / BR-ATT-05 — kỳ lương đã chốt thì khoá hoàn toàn. */
   private async assertPeriodOpen(companyId: string, workDate: Date): Promise<void> {
-    const closed = await this.prisma.payrollPeriod.findFirst({
-      where: {
-        companyId,
-        status: PayrollPeriodStatus.CLOSED,
-        startDate: { lte: workDate },
-        endDate: { gte: workDate },
-      },
-      select: { id: true, name: true },
-    });
+    const closed = await this.attendances.findClosedPeriodCovering(companyId, workDate);
     if (closed) {
       throw new AppException('ATT_PERIOD_LOCKED', { period: closed.name });
     }
@@ -607,17 +583,7 @@ export class AttendanceService {
     workDate: Date,
     type: AttendanceType,
   ): Promise<void> {
-    const last = await this.prisma.attendanceLog.findFirst({
-      where: {
-        companyId: employee.companyId,
-        employeeId: employee.id,
-        workDate,
-        type: { in: [AttendanceType.CHECK_IN, AttendanceType.CHECK_OUT] },
-        decision: { not: AttendanceDecision.REJECTED },
-      },
-      orderBy: { recordedAt: 'desc' },
-      select: { type: true, recordedAt: true },
-    });
+    const last = await this.attendances.findLastPunch(employee.companyId, employee.id, workDate);
 
     if (type === AttendanceType.CHECK_IN && last?.type === AttendanceType.CHECK_IN) {
       throw new AppException('ATT_ALREADY_CHECKED_IN', {
@@ -629,17 +595,7 @@ export class AttendanceService {
   }
 
   private async determineNextType(employee: Employee, workDate: Date): Promise<AttendanceType> {
-    const last = await this.prisma.attendanceLog.findFirst({
-      where: {
-        companyId: employee.companyId,
-        employeeId: employee.id,
-        workDate,
-        type: { in: [AttendanceType.CHECK_IN, AttendanceType.CHECK_OUT] },
-        decision: { not: AttendanceDecision.REJECTED },
-      },
-      orderBy: { recordedAt: 'desc' },
-      select: { type: true },
-    });
+    const last = await this.attendances.findLastPunch(employee.companyId, employee.id, workDate);
     return last?.type === AttendanceType.CHECK_IN
       ? AttendanceType.CHECK_OUT
       : AttendanceType.CHECK_IN;
@@ -655,15 +611,7 @@ export class AttendanceService {
       PolicyKeys.GEOFENCE_OUT_OF_RANGE_ACTION,
     );
 
-    const branches = await this.prisma.branch.findMany({
-      where: {
-        companyId,
-        deletedAt: null,
-        latitude: { not: null },
-        longitude: { not: null },
-        ...(dto.branchId ? { id: dto.branchId } : {}),
-      },
-    });
+    const branches = await this.attendances.findGeofenceBranches(companyId, dto.branchId);
 
     if (branches.length === 0) {
       // Chưa cấu hình geofence → không đánh giá được, không gắn cờ oan.
@@ -696,17 +644,11 @@ export class AttendanceService {
 
     // Nhân viên có đơn công tác đã duyệt được MIỄN kiểm tra geofence (BR-ATT-06).
     if (!insideGeofence) {
-      const onTrip = await this.prisma.leaveRequest.findFirst({
-        where: {
-          companyId,
-          employeeId: employee.id,
-          status: 'APPROVED',
-          startAt: { lte: new Date() },
-          endAt: { gte: new Date() },
-          requestType: { code: { in: ['BUSINESS_TRIP', 'CONG_TAC'] } },
-        },
-        select: { id: true },
-      });
+      const onTrip = await this.attendances.hasApprovedBusinessTrip(
+        companyId,
+        employee.id,
+        new Date(),
+      );
       if (onTrip) {
         return {
           branch: nearest.branch,
@@ -991,6 +933,28 @@ export class AttendanceService {
   // ===========================================================================
 
   /** GET /attendance/today */
+  /**
+   * GET /attendance/history — lịch sử chấm công của CHÍNH người đang đăng nhập.
+   *
+   * `companyId` và `employeeId` là chốt an toàn chứ không phải bộ lọc tiện dụng:
+   * cái đầu cách ly giữa các công ty (BR-09), cái sau bảo đảm không ai đọc được
+   * lịch sử của người khác. Cả hai đến từ JWT, không bao giờ từ query.
+   */
+  async getHistory(
+    companyId: string,
+    employeeId: string,
+    query: { from?: string; to?: string; status?: DailyStatus; skip: number; take: number },
+  ) {
+    return this.attendances.searchDaily(companyId, {
+      employeeId,
+      from: query.from ? parseWorkDate(query.from) : undefined,
+      to: query.to ? parseWorkDate(query.to) : undefined,
+      status: query.status,
+      skip: query.skip,
+      take: query.take,
+    });
+  }
+
   async getToday(ctx: RequestContext) {
     const employee = await this.requireActiveEmployee(ctx);
     const timezone = await this.policy.getTimezone(employee.companyId, employee.branchId);
@@ -999,35 +963,14 @@ export class AttendanceService {
 
     const [shift, logs, daily, branch] = await Promise.all([
       this.policy.resolveShiftForDate(employee.companyId, employee.id, workDate),
-      this.prisma.attendanceLog.findMany({
-        where: { companyId: employee.companyId, employeeId: employee.id, workDate },
-        orderBy: { recordedAt: 'asc' },
-        select: {
-          id: true,
-          type: true,
-          recordedAt: true,
-          authMethod: true,
-          decision: true,
-          insideGeofence: true,
-          distanceToBranchM: true,
-        },
-      }),
-      this.prisma.attendanceDaily.findUnique({
-        where: { employeeId_workDate: { employeeId: employee.id, workDate } },
-      }),
-      employee.branchId
-        ? this.prisma.branch.findUnique({ where: { id: employee.branchId } })
-        : this.prisma.branch.findFirst({
-            where: { companyId: employee.companyId, deletedAt: null, latitude: { not: null } },
-          }),
+      this.attendances.listPunchesForDay(employee.companyId, employee.id, workDate),
+      this.attendances.findDaily(employee.companyId, employee.id, workDate),
+      this.attendances.findBranchForEmployee(employee.companyId, employee.branchId),
     ]);
 
     const lastPunch = [...logs]
       .reverse()
-      .find(
-        (log) =>
-          log.type === AttendanceType.CHECK_IN || log.type === AttendanceType.CHECK_OUT,
-      );
+      .find((log) => log.type === AttendanceType.CHECK_IN || log.type === AttendanceType.CHECK_OUT);
 
     // Đồng hồ đếm giờ của App tính từ mốc này — dùng giờ server, không dùng giờ máy.
     const firstCheckIn = logs.find((log) => log.type === AttendanceType.CHECK_IN);
@@ -1070,22 +1013,12 @@ export class AttendanceService {
 
   /** GET /attendance/{id} — chi tiết một lượt, kèm ảnh qua presigned URL. */
   async getLogDetail(companyId: string, logId: string, restrictToEmployeeId?: string) {
-    const log = await this.prisma.attendanceLog.findFirst({
-      where: {
-        id: logId,
-        companyId,
-        ...(restrictToEmployeeId ? { employeeId: restrictToEmployeeId } : {}),
-      },
-      include: { fraudFlags: true, adjustments: true },
-    });
+    const log = await this.attendances.findLogDetail(companyId, logId, restrictToEmployeeId);
     if (!log) {
       throw new AppException('ATT_NOT_FOUND');
     }
 
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: log.employeeId, companyId },
-      select: { id: true, fullName: true, employeeCode: true, departmentId: true },
-    });
+    const employee = await this.attendances.findEmployeeSummary(companyId, log.employeeId);
 
     return {
       ...log,
@@ -1159,9 +1092,7 @@ export class AttendanceService {
           removeOnComplete: true,
         },
       )
-      .catch((error: Error) =>
-        this.logger.warn(`Không đẩy được job tính công: ${error.message}`),
-      );
+      .catch((error: Error) => this.logger.warn(`Không đẩy được job tính công: ${error.message}`));
   }
 
   private async consumeChallenge(userId: string, nonce: string): Promise<ChallengePayload> {
@@ -1182,11 +1113,7 @@ export class AttendanceService {
   }
 
   private async isKnownDevice(userId: string, deviceId: string): Promise<boolean> {
-    const device = await this.prisma.deviceBinding.findUnique({
-      where: { userId_deviceId: { userId, deviceId } },
-      select: { isActive: true, revokedAt: true },
-    });
-    return Boolean(device?.isActive && !device.revokedAt);
+    return this.attendances.isDeviceActive(userId, deviceId);
   }
 
   /** FR-APP-FACE-05 — giới hạn số lần thử, tạm khoá khi vượt ngưỡng. */
@@ -1203,9 +1130,7 @@ export class AttendanceService {
       throw new AppException('AUTH_COMPANY_REQUIRED');
     }
 
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: ctx.employeeId, companyId: ctx.companyId, deletedAt: null },
-    });
+    const employee = await this.attendances.findEmployee(ctx.companyId, ctx.employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }

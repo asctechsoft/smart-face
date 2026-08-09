@@ -13,6 +13,10 @@ const REQUIRED_IN_PRODUCTION = [
   'S3_BUCKET',
   'S3_ACCESS_KEY',
   'S3_SECRET_KEY',
+  // Firebase là nhà cung cấp danh tính — thiếu là không ai đăng nhập được.
+  'FIREBASE_PROJECT_ID',
+  'FIREBASE_CLIENT_EMAIL',
+  'FIREBASE_PRIVATE_KEY',
 ];
 
 /**
@@ -46,6 +50,16 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
 
     if (config.OTP_DEBUG_RETURN && String(config.OTP_DEBUG_RETURN).toLowerCase() === 'true') {
       throw new Error('OTP_DEBUG_RETURN phải TẮT ở production — nếu bật sẽ lộ mã OTP qua API.');
+    }
+
+    // Auth Emulator KHÔNG kiểm chữ ký ID token: nó chấp nhận token do bất kỳ ai
+    // tự dựng. Trỏ vào emulator ở production nghĩa là ai cũng đăng nhập được
+    // dưới danh nghĩa bất kỳ tài khoản nào.
+    if (config.FIREBASE_AUTH_EMULATOR_HOST) {
+      throw new Error(
+        'FIREBASE_AUTH_EMULATOR_HOST không được đặt ở production — emulator không kiểm ' +
+          'chữ ký ID token, ai cũng tự tạo được token hợp lệ.',
+      );
     }
 
     // AF-12 — chữ ký HMAC là lớp DUY NHẤT chặn được kẻ đã đánh cắp access token.

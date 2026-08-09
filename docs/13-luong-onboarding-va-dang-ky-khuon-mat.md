@@ -39,7 +39,10 @@ mặt nằm trong `face_profile` và người đó chấm công được.
                               ↓
 ┌─ MỘT LẦN DUY NHẤT, LÚC ONBOARDING ─────────────────────────────────┐
 │                                                                     │
-│  ① POST /auth/login       tên miền + email + mật khẩu tạm          │
+│  ⓪ Firebase SDK: signInWithEmailAndPassword(email, mật khẩu tạm)   │
+│     └→ nhận Firebase ID token                                       │
+│                                                                     │
+│  ① POST /auth/session     tên miền + firebaseIdToken               │
 │     └→ nextStep: CHANGE_PASSWORD                                    │
 │     └→ token bị CHẶN ở mọi API khác cho tới khi đổi mật khẩu         │
 │                                                                     │
@@ -59,10 +62,15 @@ mặt nằm trong `face_profile` và người đó chấm công được.
 ```
 
 > **Xác thực 2 lớp là tuỳ chọn.** Người dùng tự bật trong phần cá nhân, dùng
-> TOTP (Google Authenticator). Đã bật thì bước ① trả `nextStep: TWO_FACTOR` kèm
-> `twoFactorToken`, phải qua `POST /auth/2fa/verify` mới có token đăng nhập.
+> **OTP gửi qua SMS**. Đã bật thì bước ① trả `nextStep: TWO_FACTOR` kèm
+> `twoFactorToken` và tự gửi mã tới số đã đăng ký; phải qua `POST /auth/2fa/verify`
+> mới có token đăng nhập.
 >
-> Không còn đăng nhập bằng OTP SMS, không còn mã mời.
+> Mật khẩu do **Firebase Authentication** giữ — Backend không bao giờ nhận mật
+> khẩu. Bước ② vì vậy cần một Firebase ID token vừa làm mới thay cho trường
+> `currentPassword`; xem [08 mục 2](./08-hop-dong-api.md#2-api-xác-thực-auth).
+>
+> Không còn đăng nhập bằng OTP SMS, không còn mã mời, không còn TOTP.
 
 ### Bức tranh dữ liệu
 
@@ -90,14 +98,23 @@ giữa chừng thì không để lại hồ sơ nửa vời — Redis tự dọn
 
 ---
 
-## 2. Bước 1 — Đăng nhập bằng tên miền + email + mật khẩu
+## 2. Bước 1 — Đăng nhập với Firebase rồi đổi lấy phiên
+
+Hai lượt gọi, không phải một. Mật khẩu chỉ đi tới Firebase; Backend chỉ nhận ID
+token.
+
+```ts
+// ⓪ Client — Firebase SDK
+const cred = await signInWithEmailAndPassword(auth, 'duc@amobi.vn', '<mật khẩu tạm HR đọc cho>');
+const firebaseIdToken = await cred.user.getIdToken();
+```
 
 ```jsonc
-POST /v1/auth/login
+// ① Backend
+POST /v1/auth/session
 {
   "domain": "amobi.vn",              // ← tên miền công ty cấp
-  "email": "duc@amobi.vn",
-  "password": "<mật khẩu tạm HR đọc cho>",
+  "firebaseIdToken": "eyJ...",
   "deviceId": "a3f9c2e1-...",        // App bắt buộc; Web quản lý không cần
   "deviceInfo": { "model": "iPhone 14", "os": "iOS" }
 }
@@ -123,20 +140,24 @@ Trả về:
 }
 ```
 
-### Một mã lỗi duy nhất cho ba trường hợp sai
+### Lỗi sai mật khẩu giờ đến từ Firebase, không phải Backend
 
-Sai tên miền, email không tồn tại, sai mật khẩu — **cùng trả
-`AUTH_INVALID_CREDENTIALS`**. Và Backend tốn thời gian như nhau ở cả ba nhánh:
-khi không tìm thấy tài khoản, nó vẫn băm mật khẩu vừa nhận với một chuỗi giả
-rồi mới báo lỗi.
+Bước ⓪ hỏng thì client nhận mã lỗi thẳng từ Firebase SDK
+(`auth/wrong-password`, `auth/user-not-found`, `auth/too-many-requests`) và tự
+hiển thị — không có lượt gọi nào tới Backend. Việc khoá tạm sau nhiều lần sai
+cũng do Firebase làm; Backend không còn cột `failedLoginCount`/`lockedUntil`.
 
-Phân biệt ra sẽ biến màn hình đăng nhập thành công cụ dò: gõ bừa email, thấy
-"email không tồn tại" thì loại, thấy "mật khẩu sai" thì biết email đó có thật.
-Danh sách email nhân viên của một công ty có giá trị với cả tuyển dụng lẫn lừa
-đảo. Chênh lệch thời gian phản hồi cũng rò rỉ đúng thông tin đó mà không cần
-đọc thông báo lỗi — scrypt cố tình chậm nên khoảng chênh rất dễ đo.
+Bước ① chỉ còn hai loại lỗi thuộc về Backend:
 
-Sai 8 lần liên tiếp → khoá tạm 15 phút, trả `AUTH_ACCOUNT_LOCKED`.
+- `AUTH_DOMAIN_MISMATCH` — tên miền không khớp công ty của tài khoản. **Tên miền
+  không tồn tại cũng trả đúng mã này**, để gõ bừa không dò ra được tên miền nào
+  có thật.
+- `AUTH_ACCOUNT_NOT_PROVISIONED` — uid hợp lệ nhưng chưa có hồ sơ trong hệ thống,
+  tức ai đó tự đăng ký thẳng qua Firebase SDK. Tài khoản chỉ do HR cấp.
+
+> ⚠ Đây là điểm **bắt buộc** phải kiểm ở bước ①: Firebase chỉ xác nhận danh tính,
+> nó không biết gì về ranh giới công ty. Bỏ chốt tên miền thì nhân viên công ty A
+> gõ tên miền của công ty B vẫn vào được.
 
 ### `nextStep` — Backend quyết định điều hướng, không phải App
 
@@ -177,10 +198,24 @@ vĩnh viễn không đăng nhập được.
 
 ## 3. Bước 2 — Đổi mật khẩu tạm
 
+Backend không giữ mật khẩu nên không đối chiếu được `currentPassword`. Client cho
+người dùng gõ lại mật khẩu tạm qua Firebase, rồi gửi lên ID token vừa làm mới:
+`auth_time` trong token là bằng chứng việc gõ lại vừa xảy ra.
+
+```ts
+await reauthenticateWithCredential(user, EmailAuthProvider.credential(email, mậtKhẩuTạm));
+const firebaseIdToken = await user.getIdToken(true);
+```
+
 ```jsonc
 POST /v1/auth/password/change
-{ "currentPassword": "<mật khẩu tạm>", "newPassword": "..." }
+{ "firebaseIdToken": "eyJ...", "newPassword": "..." }
 ```
+
+Token cũ hơn `FIREBASE_FRESH_AUTH_WINDOW_SECONDS` (mặc định 300 giây) bị từ chối
+với `AUTH_REAUTH_STALE`. Firebase ID token sống một giờ, nên chỉ kiểm token hợp
+lệ là chưa đủ: máy đang mở sẵn phiên vẫn lấy được token hợp lệ mà không cần biết
+mật khẩu.
 
 ### Cưỡng chế ở SERVER, không phải điều hướng ở App
 

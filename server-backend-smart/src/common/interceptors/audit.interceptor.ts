@@ -1,7 +1,7 @@
 import { CallHandler, ExecutionContext, Injectable, Logger, NestInterceptor } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { Observable, tap } from 'rxjs';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { AuditRepository } from 'src/modules/audit/audit.repository';
 import { AUDIT_KEY, AuditOptions } from '../decorators/audit.decorator';
 import { AppException } from '../errors';
 import type { AuthenticatedRequest } from '../types/request-context';
@@ -23,7 +23,7 @@ export class AuditInterceptor implements NestInterceptor {
 
   constructor(
     private readonly reflector: Reflector,
-    private readonly prisma: PrismaService,
+    private readonly audits: AuditRepository,
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
@@ -92,19 +92,17 @@ export class AuditInterceptor implements NestInterceptor {
     },
   ): Promise<void> {
     try {
-      await this.prisma.auditLog.create({
-        data: {
-          companyId: data.companyId,
-          actorUserId: data.actorUserId,
-          actorRole: data.actorRole,
-          actorIp: data.actorIp,
-          actorUserAgent: data.actorUserAgent,
-          action: options.action,
-          targetType: options.targetType,
-          targetId: data.targetId,
-          reason: data.reason,
-          traceId: data.traceId,
-        },
+      await this.audits.create({
+        companyId: data.companyId,
+        actorUserId: data.actorUserId,
+        actorRole: data.actorRole,
+        actorIp: data.actorIp,
+        actorUserAgent: data.actorUserAgent,
+        action: options.action,
+        targetType: options.targetType,
+        targetId: data.targetId,
+        reason: data.reason,
+        traceId: data.traceId,
       });
     } catch (error) {
       // Ghi audit thất bại KHÔNG được làm hỏng nghiệp vụ đã thực hiện xong,

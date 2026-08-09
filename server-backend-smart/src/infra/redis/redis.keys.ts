@@ -1,13 +1,20 @@
 /** Quy ước key Redis — tập trung một chỗ để tránh đụng namespace. */
 export const RedisKeys = {
+  // Nhóm OTP đánh theo `subject` chứ không theo số điện thoại.
+  //
+  // Đánh theo số thì hai tài khoản khai cùng một số (vợ chồng dùng chung máy,
+  // nhân sự thời vụ khai số của quản lý) sẽ giẫm lên mã và lên bộ đếm khoá của
+  // nhau — người này nhập sai năm lần là người kia bị khoá. `subject` để bên gọi
+  // tự chọn phạm vi; xem `OtpService`.
+
   /** OTP đang chờ xác thực */
-  otp: (phone: string) => `otp:code:${phone}`,
+  otp: (subject: string) => `otp:code:${subject}`,
   /** Chặn gửi lại quá nhanh (FR-APP-AUTH-05) */
-  otpResendLock: (phone: string) => `otp:resend:${phone}`,
+  otpResendLock: (subject: string) => `otp:resend:${subject}`,
   /** Số lần gửi OTP trong giờ */
-  otpSendCount: (phone: string) => `otp:send-count:${phone}`,
+  otpSendCount: (subject: string) => `otp:send-count:${subject}`,
   /** Khoá sau khi nhập sai quá số lần cho phép */
-  otpLock: (phone: string) => `otp:lock:${phone}`,
+  otpLock: (subject: string) => `otp:lock:${subject}`,
 
   /** Nonce chấm công (AF-12) — lưu challenge do server sinh */
   attendanceChallenge: (userId: string, nonce: string) => `att:challenge:${userId}:${nonce}`,
@@ -24,15 +31,19 @@ export const RedisKeys = {
   /** Token xác thực lại danh tính cho thao tác nhạy cảm */
   reauthToken: (token: string) => `auth:reauth:${token}`,
 
-  /** Phiên chờ nhập mã 2 lớp — cấp sau khi mật khẩu đúng, trước khi cấp token */
+  /** Phiên chờ nhập mã 2 lớp — cấp sau khi Firebase xác nhận, trước khi cấp token */
   twoFactorChallenge: (token: string) => `auth:2fa:${token}`,
+  /** Phạm vi OTP của thử thách 2 lớp — mỗi tài khoản một ngăn riêng */
+  twoFactorOtp: (userId: string) => `2fa:${userId}`,
   /**
-   * Bước thời gian TOTP đã dùng.
+   * Số điện thoại đang chờ xác minh ở bước bật 2 lớp.
    *
-   * Cửa sổ chấp nhận là 90 giây nên một mã sống khá lâu; không đánh dấu đã dùng
-   * thì người nhìn trộm màn hình gõ lại được ngay mã vừa thấy.
+   * Để ở Redis chứ không ghi thẳng vào `UserAccount.twoFactorPhone`: số chỉ được
+   * ghi xuống khi đã chứng minh là người dùng nhận được tin nhắn tới số đó. Ghi
+   * trước rồi mới xác minh nghĩa là gõ nhầm một chữ số cũng đủ khiến mã OTP về
+   * sau bay tới máy người lạ.
    */
-  totpUsedStep: (userId: string, counter: number) => `auth:totp-used:${userId}:${counter}`,
+  twoFactorPendingPhone: (userId: string) => `auth:2fa-setup:${userId}`,
 
   /** Rate limit (AF-13) */
   rateLimit: (bucket: string, subject: string) => `rl:${bucket}:${subject}`,

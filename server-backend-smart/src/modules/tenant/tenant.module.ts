@@ -1,5 +1,6 @@
 import { Global, Module } from '@nestjs/common';
 import { CompanyController } from './tenant.controller';
+import { TenantRepository } from './tenant.repository';
 import { TenantService } from './tenant.service';
 
 /**
@@ -15,7 +16,7 @@ import { TenantService } from './tenant.service';
 @Global()
 @Module({
   controllers: [CompanyController],
-  providers: [TenantService],
+  providers: [TenantRepository, TenantService],
   exports: [TenantService],
 })
 export class TenantModule {}

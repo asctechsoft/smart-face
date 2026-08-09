@@ -1,115 +1,142 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CompanyStatus, Employee, EmployeeStatus, UserAccount } from '@prisma/client';
+import { randomInt } from 'node:crypto';
 import { AppException } from 'src/common/errors';
-import { randomToken, sha256 } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import {
+  isValidVietnamesePhone,
+  maskPhone,
+  normalizePhone,
+  randomToken,
+  sha256,
+} from 'src/common/utils';
+import { FirebaseService } from 'src/infra/firebase/firebase.service';
 import { RedisService } from 'src/infra/redis/redis.service';
 import { RedisKeys } from 'src/infra/redis/redis.keys';
+import { SmsService } from '../notification/sms.service';
+import { AuthRepository } from './auth.repository';
 import { DeviceService } from './device.service';
+import { OtpService } from './otp.service';
 import { PasswordService } from './password.service';
 import { TokenService } from './token.service';
-import { TotpService } from './totp.service';
 import type { AuthTokenResponseDto, DeviceInfoDto, LoginResultDto, NextStep } from './dto/auth.dto';
 
 const REAUTH_TOKEN_TTL_SECONDS = 300;
 const TWO_FACTOR_TOKEN_TTL_SECONDS = 300;
-
-/** Số lần sai liên tiếp trước khi khoá tạm. */
-const MAX_FAILED_LOGINS = 8;
-const LOCK_DURATION_MS = 15 * 60 * 1000;
+const TWO_FACTOR_SETUP_TTL_SECONDS = 600;
 
 /**
- * Đăng nhập bằng **tên miền + email + mật khẩu**.
+ * Đăng nhập bằng **Firebase Authentication**, xác thực 2 lớp bằng **OTP SMS**.
  *
- * ## Luồng
+ * ## Ai làm việc gì
  *
  * ```
- * HR cấp tài khoản (tên miền, email, mật khẩu tạm)
- *      ↓
- * POST /auth/login
- *      ├─ đã bật 2FA?  → trả twoFactorToken, chờ POST /auth/2fa/verify
- *      └─ chưa bật     → cấp token luôn
- *      ↓
- * mustChangePassword = true  →  nextStep: CHANGE_PASSWORD
- *      ↓  POST /auth/password/change
- * chưa có sinh trắc học      →  nextStep: SETUP_BIOMETRIC
- *      ↓
- * HOME
+ * Client                     Firebase                  Backend
+ *   │  email + mật khẩu  ──────▶ │
+ *   │  ◀────── Firebase ID token │
+ *   │
+ *   │  POST /auth/session { domain, firebaseIdToken, deviceId }
+ *   │                                                    │ verifyIdToken
+ *   │                                                    │ tra UserAccount theo uid
+ *   │                                                    │
+ *   │  ◀── đã bật 2 lớp?  → gửi OTP, trả twoFactorToken ─┤
+ *   │  POST /auth/2fa/verify { twoFactorToken, code }     │
+ *   │                                                    │
+ *   │  ◀── accessToken + refreshToken của Backend ───────┘
  * ```
  *
- * ## Tài khoản gắn với đúng một công ty
+ * ## Vì sao Backend vẫn cấp token riêng thay vì dùng thẳng Firebase ID token
  *
- * Một người làm ở hai công ty có hai tài khoản riêng, hai mật khẩu riêng. Vì
- * vậy không còn khái niệm "chọn công ty" hay "chuyển công ty" — đăng nhập vào
- * tên miền nào là làm việc với công ty đó.
+ * Đây là câu hỏi đúng nhất cần đặt ra khi đọc file này, nên trả lời ngay:
  *
- * ## OTP không còn là cách đăng nhập
+ * 1. **Ràng buộc thiết bị (AF-16).** `JwtAuthGuard` bắt `X-Device-Id` phải khớp
+ *    `deviceId` nằm trong token. Firebase ID token cấp theo NGƯỜI DÙNG, không
+ *    theo phiên, nên không có chỗ nào đặt được `deviceId` cho từng máy.
+ * 2. **Thu hồi theo từng thiết bị.** `TokenService.revokeAllForDevice` đóng phiên
+ *    của đúng một máy. Firebase chỉ có `revokeRefreshTokens(uid)` — hoặc thu hồi
+ *    tất cả, hoặc không thu hồi gì.
+ * 3. **Phát hiện dùng lại refresh token (AF-16).** Firebase không có khái niệm
+ *    này; mất dấu hiệu sớm nhất của việc token bị đánh cắp.
+ * 4. **Vai trò và phạm vi.** `roles`, `companyId`, `scopeDepartmentIds` nằm sẵn
+ *    trong JWT nên guard quyết định được mà không chạm database. Đẩy chúng sang
+ *    Firebase custom claims thì bị giới hạn 1000 byte, và thu hồi quyền phải chờ
+ *    tới một giờ cho tới khi client tự làm mới token — thay vì 15 phút như hiện
+ *    tại.
  *
- * Xác thực 2 lớp dùng TOTP (ứng dụng xác thực), do người dùng tự bật.
+ * Nên ranh giới là: **Firebase trả lời "anh là ai", Backend quyết định "anh được
+ * làm gì và trong bao lâu"**.
+ *
+ * ## Vì sao 2 lớp không dùng cơ chế của Firebase
+ *
+ * MFA qua SMS của Firebase đòi nâng cấp Identity Platform (tính tiền theo MAU),
+ * và từ 09/2024 mọi tin nhắn của Phone Auth đòi gói Blaze có gắn thanh toán. Dự
+ * án đang ở gói Spark nên cả hai đường đều đóng. Thử thách lớp hai vì vậy do
+ * Backend tự điều phối: `OtpService` sinh và kiểm mã, `SmsService` gửi.
+ *
+ * Đổi lại còn được lợi: toàn bộ ngưỡng chống lạm dụng (giãn cách gửi lại, số lần
+ * gửi mỗi giờ, số lần nhập sai, thời gian khoá) nằm trong tay mình.
  */
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly accounts: AuthRepository,
     private readonly redis: RedisService,
     private readonly config: ConfigService,
+    private readonly firebase: FirebaseService,
     private readonly passwords: PasswordService,
-    private readonly totp: TotpService,
+    private readonly otp: OtpService,
+    private readonly sms: SmsService,
     private readonly tokens: TokenService,
     private readonly devices: DeviceService,
   ) {}
 
   // ===========================================================================
-  //  Đăng nhập
+  //  Đăng nhập — đổi Firebase ID token lấy phiên của Backend
   // ===========================================================================
 
-  async login(input: {
+  async createSession(input: {
     domain: string;
-    email: string;
-    password: string;
+    firebaseIdToken: string;
     deviceId?: string;
     deviceInfo?: DeviceInfoDto;
   }): Promise<LoginResultDto> {
-    const domain = normalizeDomain(input.domain);
-    const email = normalizeEmail(input.email);
+    const decoded = await this.firebase.verifyIdToken(input.firebaseIdToken);
 
-    // Quản trị viên nền tảng không thuộc công ty nào nên không có tên miền để
-    // gõ. Dành riêng một tên miền quy ước cho họ. Không tách thành endpoint
-    // riêng: một endpoint đăng nhập duy nhất thì chỉ có một chỗ để làm đúng
-    // việc chống dò tài khoản và đếm số lần sai.
-    const systemDomain = this.config.get<string>('app.systemAdminDomain', 'system');
+    const account = await this.accounts.findAccountByFirebaseUid(decoded.uid);
 
-    const company =
-      domain === systemDomain
-        ? null
-        : await this.prisma.company.findUnique({ where: { domain } });
-
-    let user: UserAccount | null = null;
-    if (domain === systemDomain) {
-      // `companyId = null` không dùng được findUnique vì Postgres coi mọi NULL
-      // là khác nhau — ràng buộc duy nhất cho nhóm này là chỉ mục một phần
-      // trong prisma/sql/02_auth_constraints.sql.
-      user = await this.prisma.userAccount.findFirst({
-        where: { companyId: null, email, isSystemAdmin: true, deletedAt: null },
-      });
-    } else if (company) {
-      user = await this.prisma.userAccount.findUnique({
-        where: { companyId_email: { companyId: company.id, email } },
-      });
+    // Có tài khoản Firebase hợp lệ nhưng chưa được cấp hồ sơ trong hệ thống —
+    // ví dụ ai đó tự đăng ký thẳng qua SDK ở phía client. Không phải lỗi xác
+    // thực, mà là chưa được cấp quyền vào.
+    if (!account) {
+      this.logger.warn(`Firebase uid ${decoded.uid} chưa gắn với tài khoản nào`);
+      throw new AppException('AUTH_ACCOUNT_NOT_PROVISIONED');
     }
 
-    // ⚠ Không thoát sớm khi không tìm thấy công ty hoặc tài khoản. Xem
-    // `assertPasswordMatches` để hiểu vì sao.
-    await this.assertPasswordMatches(user, input.password);
+    const company = await this.resolveCompanyForDomain(input.domain);
 
-    // Tới đây `user` chắc chắn khác null.
-    const account = user as UserAccount;
+    // Tên miền phải khớp công ty của tài khoản.
+    //
+    // Không phải chuyện thẩm mỹ: bỏ chốt này thì nhân viên công ty A gõ tên miền
+    // của công ty B vẫn vào được — Firebase chỉ xác nhận danh tính, nó không biết
+    // gì về ranh giới công ty. Đây là nơi duy nhất kiểm điều đó.
+    if ((account.companyId ?? null) !== (company?.id ?? null)) {
+      throw new AppException('AUTH_DOMAIN_MISMATCH');
+    }
+
+    // Tên miền quy ước dành RIÊNG cho quản trị viên nền tảng.
+    //
+    // Chỉ so `companyId` là chưa đủ: một tài khoản `companyId = null` mà không
+    // phải quản trị viên vẫn lọt qua chốt trên. Trường hợp đó không nên tồn tại,
+    // nhưng "không nên tồn tại" không phải là một chốt an ninh.
+    if (company === null && !account.isSystemAdmin) {
+      throw new AppException('AUTH_DOMAIN_MISMATCH');
+    }
+
     await this.assertAccountUsable(account, company);
 
-    if (account.twoFactorEnabled && account.twoFactorSecret) {
+    if (account.twoFactorEnabled && account.twoFactorPhone) {
       return this.beginTwoFactorChallenge(account, input.deviceId, input.deviceInfo);
     }
 
@@ -127,35 +154,47 @@ export class AuthService {
     code: string;
   }): Promise<AuthTokenResponseDto> {
     const key = RedisKeys.twoFactorChallenge(sha256(input.twoFactorToken));
-    const pending = await this.redis.getJson<{
-      userId: string;
-      deviceId?: string;
-      deviceInfo?: DeviceInfoDto;
-    }>(key);
+    const pending = await this.redis.getJson<PendingTwoFactor>(key);
 
     if (!pending) {
       throw new AppException('AUTH_2FA_INVALID', { reason: 'Phiên xác thực đã hết hạn.' });
     }
 
-    const account = await this.prisma.userAccount.findUnique({ where: { id: pending.userId } });
-    if (!account?.twoFactorSecret) {
+    const account = await this.accounts.findAccountById(pending.userId);
+    if (!account?.twoFactorEnabled) {
       throw new AppException('AUTH_2FA_NOT_ENABLED');
     }
 
-    const step = this.totp.verify(account.twoFactorSecret, input.code);
-    if (step === null) {
-      const usedRecoveryCode = await this.consumeRecoveryCode(account, input.code);
-      if (!usedRecoveryCode) {
-        throw new AppException('AUTH_2FA_INVALID');
-      }
-    } else {
-      await this.assertTotpStepUnused(account.id, step);
+    // Thử mã dự phòng TRƯỚC khi tính là nhập sai OTP.
+    //
+    // Ngược lại thì mỗi lần dùng mã dự phòng đều bị `OtpService` đếm là một lần
+    // sai, và người mất điện thoại — đúng đối tượng mà mã dự phòng sinh ra để
+    // cứu — sẽ tự khoá mình sau vài lần thử.
+    if (!(await this.consumeRecoveryCode(account, input.code))) {
+      await this.otp.verify(RedisKeys.twoFactorOtp(account.id), input.code);
     }
 
     // Tiêu thụ ngay khi dùng — không cho thử lại nhiều mã trên cùng một phiên.
     await this.redis.del(key);
 
     return this.completeLogin(account, pending.deviceId, pending.deviceInfo);
+  }
+
+  /** Gửi lại OTP cho một thử thách đang mở. */
+  async resendTwoFactorCode(twoFactorToken: string): Promise<TwoFactorDelivery> {
+    const key = RedisKeys.twoFactorChallenge(sha256(twoFactorToken));
+    const pending = await this.redis.getJson<PendingTwoFactor>(key);
+
+    if (!pending) {
+      throw new AppException('AUTH_2FA_INVALID', { reason: 'Phiên xác thực đã hết hạn.' });
+    }
+
+    const account = await this.accounts.findAccountById(pending.userId);
+    if (!account?.twoFactorEnabled || !account.twoFactorPhone) {
+      throw new AppException('AUTH_2FA_NOT_ENABLED');
+    }
+
+    return this.sendTwoFactorCode(account.id, account.twoFactorPhone);
   }
 
   // ===========================================================================
@@ -165,21 +204,25 @@ export class AuthService {
   /**
    * Đổi mật khẩu. Đây cũng là bước bắt buộc sau khi đăng nhập lần đầu.
    *
-   * Thu hồi TOÀN BỘ phiên khác sau khi đổi: nếu mật khẩu bị lộ và kẻ tấn công
-   * đang có phiên mở, đổi mật khẩu mà không thu hồi thì phiên của hắn vẫn sống.
+   * ## Vì sao nhận `firebaseIdToken` thay vì `currentPassword`
+   *
+   * Backend không giữ mật khẩu nữa nên không tự đối chiếu được mật khẩu hiện tại.
+   * Client phải gọi `reauthenticateWithCredential` của Firebase (tức là người
+   * dùng gõ lại mật khẩu cũ), rồi gửi lên ID token vừa làm mới. `auth_time` trong
+   * token đó chứng minh việc gõ lại vừa xảy ra.
+   *
+   * Thu hồi TOÀN BỘ phiên khác sau khi đổi — cả phía Backend lẫn phía Firebase.
+   * Nếu mật khẩu bị lộ và kẻ tấn công đang có phiên mở, đổi mật khẩu mà không thu
+   * hồi thì phiên của hắn vẫn sống.
    */
-  async changePassword(userId: string, currentPassword: string, newPassword: string) {
-    const account = await this.prisma.userAccount.findUniqueOrThrow({ where: { id: userId } });
+  async changePassword(userId: string, firebaseIdToken: string, newPassword: string) {
+    const account = await this.accounts.findAccountByIdOrThrow(userId);
 
-    const matches = await this.passwords.verify(currentPassword, account.passwordHash);
-    if (!matches) {
-      throw new AppException('AUTH_INVALID_CREDENTIALS', {
-        reason: 'Mật khẩu hiện tại không đúng.',
+    const decoded = await this.firebase.verifyFreshIdToken(firebaseIdToken);
+    if (decoded.uid !== account.firebaseUid) {
+      throw new AppException('AUTH_FIREBASE_TOKEN_INVALID', {
+        reason: 'Token thuộc về tài khoản khác.',
       });
-    }
-
-    if (await this.passwords.verify(newPassword, account.passwordHash)) {
-      throw new AppException('AUTH_PASSWORD_REUSED');
     }
 
     this.passwords.assertStrong(newPassword, {
@@ -187,17 +230,12 @@ export class AuthService {
       fullName: account.fullName,
     });
 
-    await this.prisma.userAccount.update({
-      where: { id: userId },
-      data: {
-        passwordHash: await this.passwords.hash(newPassword),
-        mustChangePassword: false,
-        passwordChangedAt: new Date(),
-        failedLoginCount: 0,
-        lockedUntil: null,
-      },
-    });
+    await this.firebase.setPassword(account.firebaseUid, newPassword);
 
+    await this.accounts.markPasswordChanged(userId, new Date());
+
+    // Hai kho phiên độc lập: bỏ sót bên nào thì bên đó vẫn cho vào bằng mật khẩu cũ.
+    await this.firebase.revokeTokens(account.firebaseUid);
     const revoked = await this.tokens.revokeAllForUser(userId, 'PASSWORD_CHANGED');
     this.logger.log(`Đổi mật khẩu cho ${userId}, thu hồi ${revoked} phiên`);
 
@@ -220,92 +258,96 @@ export class AuthService {
   }
 
   // ===========================================================================
-  //  Xác thực 2 lớp (TOTP)
+  //  Xác thực 2 lớp (OTP qua SMS)
   // ===========================================================================
 
   /**
-   * Bước 1 — sinh secret và URI mã QR.
+   * Bước 1 — nhận số điện thoại và gửi mã xác minh tới đó.
    *
-   * Secret được lưu ngay nhưng `twoFactorEnabled` vẫn `false`. Chỉ khi người
-   * dùng nhập đúng một mã sinh từ secret đó (bước `enable`) mới bật thật. Bật
-   * ngay từ đây sẽ khoá chính người dùng ra ngoài nếu họ quét mã QR hỏng.
+   * Chưa ghi gì vào `UserAccount`: số chỉ được lưu khi đã chứng minh người dùng
+   * nhận được tin nhắn tới đúng số đó (bước `enable`). Ghi trước rồi mới xác minh
+   * nghĩa là gõ nhầm một chữ số cũng đủ khiến mọi mã OTP về sau bay tới máy người
+   * lạ — và người dùng thì tự khoá mình ra ngoài.
    */
-  async setupTwoFactor(userId: string) {
-    const account = await this.prisma.userAccount.findUniqueOrThrow({ where: { id: userId } });
+  async setupTwoFactor(userId: string, phone: string) {
+    const account = await this.accounts.findAccountByIdOrThrow(userId);
     if (account.twoFactorEnabled) {
       throw new AppException('AUTH_2FA_ALREADY_ENABLED');
     }
 
-    const secret = this.totp.generateSecret();
-    await this.prisma.userAccount.update({
-      where: { id: userId },
-      data: { twoFactorSecret: secret, twoFactorConfirmedAt: null },
-    });
+    const normalized = normalizePhone(phone);
+    if (!isValidVietnamesePhone(normalized)) {
+      throw new AppException('AUTH_PHONE_INVALID', { phone: maskPhone(normalized) });
+    }
 
-    const issuer = this.config.get<string>('app.name', 'SmartFace');
+    await this.redis.setJson(
+      RedisKeys.twoFactorPendingPhone(userId),
+      { phone: normalized },
+      TWO_FACTOR_SETUP_TTL_SECONDS,
+    );
 
     return {
-      secret,
-      otpauthUri: this.totp.buildOtpAuthUri(secret, account.email, issuer),
-      // App hiển thị secret dạng chữ cho người không quét được mã QR.
-      manualEntryKey: secret.replace(/(.{4})/g, '$1 ').trim(),
+      ...(await this.sendTwoFactorCode(userId, normalized)),
+      setupExpiresIn: TWO_FACTOR_SETUP_TTL_SECONDS,
     };
   }
 
-  /** Bước 2 — xác nhận bằng một mã thật rồi mới bật. */
+  /** Bước 2 — xác nhận bằng mã vừa nhận rồi mới bật. */
   async enableTwoFactor(userId: string, code: string) {
-    const account = await this.prisma.userAccount.findUniqueOrThrow({ where: { id: userId } });
+    const account = await this.accounts.findAccountByIdOrThrow(userId);
     if (account.twoFactorEnabled) {
       throw new AppException('AUTH_2FA_ALREADY_ENABLED');
     }
-    if (!account.twoFactorSecret) {
+
+    const pending = await this.redis.getJson<{ phone: string }>(
+      RedisKeys.twoFactorPendingPhone(userId),
+    );
+    if (!pending) {
       throw new AppException('AUTH_2FA_INVALID', {
-        reason: 'Chưa thiết lập. Gọi POST /auth/2fa/setup trước.',
+        reason: 'Chưa thiết lập hoặc đã quá hạn. Gọi POST /auth/2fa/setup trước.',
       });
     }
-    if (this.totp.verify(account.twoFactorSecret, code) === null) {
-      throw new AppException('AUTH_2FA_INVALID');
-    }
 
-    const recoveryCodes = this.totp.generateRecoveryCodes();
+    await this.otp.verify(RedisKeys.twoFactorOtp(userId), code);
 
-    await this.prisma.userAccount.update({
-      where: { id: userId },
-      data: {
-        twoFactorEnabled: true,
-        twoFactorConfirmedAt: new Date(),
-        // Chỉ lưu bản băm. Mất thiết bị mà đọc được mã dự phòng từ DB thì lớp
-        // xác thực thứ hai không còn ý nghĩa gì.
-        twoFactorRecoveryCodes: recoveryCodes.map((value) => sha256(value)),
-      },
+    const recoveryCodes = generateRecoveryCodes();
+
+    await this.accounts.enableTwoFactor(userId, {
+      phone: pending.phone,
+      confirmedAt: new Date(),
+      recoveryCodeHashes: recoveryCodes.map((value) => sha256(value)),
     });
+
+    await this.redis.del(RedisKeys.twoFactorPendingPhone(userId));
 
     return {
       enabled: true,
+      maskedPhone: maskPhone(pending.phone),
       // Hiển thị MỘT LẦN. Server không giữ bản gốc nên không cấp lại được.
       recoveryCodes,
     };
   }
 
-  /** Tắt 2FA — bắt buộc xác nhận lại bằng mật khẩu. */
-  async disableTwoFactor(userId: string, password: string) {
-    const account = await this.prisma.userAccount.findUniqueOrThrow({ where: { id: userId } });
+  /**
+   * Tắt 2FA — bắt buộc xác thực lại.
+   *
+   * Trước đây chốt này là mật khẩu; giờ là một Firebase ID token vừa làm mới, vì
+   * cùng một lý do như `changePassword`: Backend không còn mật khẩu để đối chiếu.
+   */
+  async disableTwoFactor(userId: string, firebaseIdToken: string) {
+    const account = await this.accounts.findAccountByIdOrThrow(userId);
     if (!account.twoFactorEnabled) {
       throw new AppException('AUTH_2FA_NOT_ENABLED');
     }
-    if (!(await this.passwords.verify(password, account.passwordHash))) {
-      throw new AppException('AUTH_INVALID_CREDENTIALS', { reason: 'Mật khẩu không đúng.' });
+
+    const decoded = await this.firebase.verifyFreshIdToken(firebaseIdToken);
+    if (decoded.uid !== account.firebaseUid) {
+      throw new AppException('AUTH_FIREBASE_TOKEN_INVALID', {
+        reason: 'Token thuộc về tài khoản khác.',
+      });
     }
 
-    await this.prisma.userAccount.update({
-      where: { id: userId },
-      data: {
-        twoFactorEnabled: false,
-        twoFactorSecret: null,
-        twoFactorConfirmedAt: null,
-        twoFactorRecoveryCodes: [],
-      },
-    });
+    await this.accounts.disableTwoFactor(userId);
 
     return { enabled: false };
   }
@@ -316,7 +358,7 @@ export class AuthService {
 
   async refresh(refreshToken: string) {
     return this.tokens.rotate(refreshToken, async (userId) => {
-      const account = await this.prisma.userAccount.findUnique({ where: { id: userId } });
+      const account = await this.accounts.findAccountById(userId);
       if (!account || account.isBlocked || account.deletedAt) {
         throw new AppException('AUTH_ACCOUNT_SUSPENDED');
       }
@@ -344,21 +386,27 @@ export class AuthService {
   /**
    * docs/03 mục 8.1 — đổi khuôn mặt/vân tay BẮT BUỘC xác thực lại trước.
    *
-   * Xác thực lại bằng MẬT KHẨU (kèm mã 2FA nếu đã bật), không dùng OTP SMS. Kẻ
-   * cầm được điện thoại đang đăng nhập cũng nhận được SMS gửi tới chính máy đó,
-   * nên OTP không phải là rào cản trong đúng kịch bản mà chốt này sinh ra để
-   * chặn.
+   * Xác thực lại bằng MẬT KHẨU (qua Firebase, kèm mã 2 lớp nếu đã bật), không
+   * dùng OTP một mình. Kẻ cầm được điện thoại đang đăng nhập cũng nhận được SMS
+   * gửi tới chính máy đó, nên OTP không phải là rào cản trong đúng kịch bản mà
+   * chốt này sinh ra để chặn — mật khẩu thì hắn không có.
    */
-  async verifyReauth(userId: string, password: string, totpCode?: string) {
-    const account = await this.prisma.userAccount.findUniqueOrThrow({ where: { id: userId } });
+  async verifyReauth(userId: string, firebaseIdToken: string, twoFactorCode?: string) {
+    const account = await this.accounts.findAccountByIdOrThrow(userId);
 
-    if (!(await this.passwords.verify(password, account.passwordHash))) {
-      throw new AppException('AUTH_INVALID_CREDENTIALS', { reason: 'Mật khẩu không đúng.' });
+    const decoded = await this.firebase.verifyFreshIdToken(firebaseIdToken);
+    if (decoded.uid !== account.firebaseUid) {
+      throw new AppException('AUTH_FIREBASE_TOKEN_INVALID', {
+        reason: 'Token thuộc về tài khoản khác.',
+      });
     }
 
-    if (account.twoFactorEnabled && account.twoFactorSecret) {
-      if (!totpCode || this.totp.verify(account.twoFactorSecret, totpCode) === null) {
+    if (account.twoFactorEnabled) {
+      if (!twoFactorCode) {
         throw new AppException('AUTH_2FA_REQUIRED');
+      }
+      if (!(await this.consumeRecoveryCode(account, twoFactorCode))) {
+        await this.otp.verify(RedisKeys.twoFactorOtp(account.id), twoFactorCode);
       }
     }
 
@@ -370,6 +418,21 @@ export class AuthService {
     );
 
     return { reauthToken, expiresIn: REAUTH_TOKEN_TTL_SECONDS };
+  }
+
+  /**
+   * Gửi OTP để phục vụ `verifyReauth` khi tài khoản đã bật 2 lớp.
+   *
+   * Tách riêng khỏi `verifyReauth` vì thứ tự bắt buộc là: gửi mã → người dùng
+   * đọc tin nhắn → gọi `verifyReauth` kèm mã. Gộp vào một lượt gọi thì không có
+   * chỗ nào để chờ người dùng.
+   */
+  async requestReauthCode(userId: string): Promise<TwoFactorDelivery> {
+    const account = await this.accounts.findAccountByIdOrThrow(userId);
+    if (!account.twoFactorEnabled || !account.twoFactorPhone) {
+      throw new AppException('AUTH_2FA_NOT_ENABLED');
+    }
+    return this.sendTwoFactorCode(account.id, account.twoFactorPhone);
   }
 
   /** Tiêu thụ reauthToken — dùng một lần. */
@@ -388,57 +451,21 @@ export class AuthService {
   // ===========================================================================
 
   /**
-   * Kiểm mật khẩu, và tốn thời gian như nhau ở MỌI nhánh thất bại.
-   *
-   * Nếu thoát sớm khi không tìm thấy công ty hoặc tài khoản, phản hồi sẽ về
-   * nhanh hơn hẳn so với trường hợp có tài khoản nhưng sai mật khẩu — vì scrypt
-   * cố tình chậm. Chênh lệch đó đủ để kẻ tấn công dò ra email nào có thật mà
-   * không cần đoán đúng một mật khẩu nào.
-   *
-   * Nên khi không có tài khoản, vẫn băm mật khẩu vừa nhập với một chuỗi giả rồi
-   * mới báo lỗi.
+   * Quản trị viên nền tảng không thuộc công ty nào nên không có tên miền để gõ.
+   * Dành riêng một tên miền quy ước cho họ, cấu hình được để không đụng tên miền
+   * của một khách hàng thật.
    */
-  private async assertPasswordMatches(user: UserAccount | null, password: string): Promise<void> {
-    if (!user) {
-      await this.passwords.verify(password, DUMMY_HASH);
-      throw new AppException('AUTH_INVALID_CREDENTIALS');
+  private async resolveCompanyForDomain(rawDomain: string) {
+    const domain = normalizeDomain(rawDomain);
+    const systemDomain = this.config.get<string>('app.systemAdminDomain', 'system');
+
+    if (domain === systemDomain) return null;
+
+    const company = await this.accounts.findCompanyByDomain(domain);
+    if (!company) {
+      throw new AppException('AUTH_DOMAIN_MISMATCH');
     }
-
-    if (user.lockedUntil && user.lockedUntil > new Date()) {
-      throw new AppException('AUTH_ACCOUNT_LOCKED', {
-        lockedUntil: user.lockedUntil.toISOString(),
-      });
-    }
-
-    if (await this.passwords.verify(password, user.passwordHash)) {
-      if (user.failedLoginCount > 0) {
-        await this.prisma.userAccount.update({
-          where: { id: user.id },
-          data: { failedLoginCount: 0, lockedUntil: null },
-        });
-      }
-      return;
-    }
-
-    const failed = user.failedLoginCount + 1;
-    const shouldLock = failed >= MAX_FAILED_LOGINS;
-
-    await this.prisma.userAccount.update({
-      where: { id: user.id },
-      data: {
-        failedLoginCount: failed,
-        lockedUntil: shouldLock ? new Date(Date.now() + LOCK_DURATION_MS) : null,
-      },
-    });
-
-    if (shouldLock) {
-      this.logger.warn(`Khoá tạm tài khoản ${user.id} sau ${failed} lần sai mật khẩu`);
-      throw new AppException('AUTH_ACCOUNT_LOCKED', {
-        lockedUntil: new Date(Date.now() + LOCK_DURATION_MS).toISOString(),
-      });
-    }
-
-    throw new AppException('AUTH_INVALID_CREDENTIALS');
+    return company;
   }
 
   private async assertAccountUsable(
@@ -471,11 +498,12 @@ export class AuthService {
     deviceId?: string,
     deviceInfo?: DeviceInfoDto,
   ): Promise<LoginResultDto> {
+    const delivery = await this.sendTwoFactorCode(account.id, account.twoFactorPhone!);
     const twoFactorToken = randomToken(24);
 
     await this.redis.setJson(
       RedisKeys.twoFactorChallenge(sha256(twoFactorToken)),
-      { userId: account.id, deviceId, deviceInfo },
+      { userId: account.id, deviceId, deviceInfo } satisfies PendingTwoFactor,
       TWO_FACTOR_TOKEN_TTL_SECONDS,
     );
 
@@ -483,6 +511,26 @@ export class AuthService {
       nextStep: 'TWO_FACTOR',
       twoFactorToken,
       expiresIn: TWO_FACTOR_TOKEN_TTL_SECONDS,
+      ...delivery,
+    };
+  }
+
+  /**
+   * Sinh OTP rồi gửi qua SMS.
+   *
+   * Chỉ trả về số đã CHE. Trả số đầy đủ ở bước này là biến màn hình đăng nhập
+   * thành công cụ tra số điện thoại nhân viên cho bất kỳ ai đoán đúng mật khẩu
+   * một lần.
+   */
+  private async sendTwoFactorCode(userId: string, phone: string): Promise<TwoFactorDelivery> {
+    const { code, result } = await this.otp.issue(RedisKeys.twoFactorOtp(userId));
+    await this.sms.sendOtp(phone, code, result.expiresIn);
+
+    return {
+      maskedPhone: maskPhone(phone),
+      codeExpiresIn: result.expiresIn,
+      resendAfter: result.resendAfter,
+      ...(result.debugCode ? { debugCode: result.debugCode } : {}),
     };
   }
 
@@ -493,10 +541,7 @@ export class AuthService {
   ): Promise<AuthTokenResponseDto> {
     const employee = await this.findEmployee(account.id);
 
-    await this.prisma.userAccount.update({
-      where: { id: account.id },
-      data: { lastLoginAt: new Date(), failedLoginCount: 0, lockedUntil: null },
-    });
+    await this.accounts.markLoggedIn(account.id, new Date());
 
     let deviceSecret: string | undefined;
     if (deviceId) {
@@ -551,8 +596,7 @@ export class AuthService {
   }
 
   private findEmployee(userId: string): Promise<Employee | null> {
-    // Quan hệ 1–1: tài khoản gắn với đúng một công ty nên đúng một hồ sơ.
-    return this.prisma.employee.findFirst({ where: { userId, deletedAt: null } });
+    return this.accounts.findEmployeeByUserId(userId);
   }
 
   /**
@@ -571,27 +615,10 @@ export class AuthService {
     if (isSystemAdmin) return 'HOME';
     if (!employee) return 'HOME';
 
-    const [faceCount, fingerprintCount] = await Promise.all([
-      this.prisma.faceProfile.count({ where: { employeeId: employee.id, status: 'ACTIVE' } }),
-      this.prisma.biometricKey.count({ where: { employeeId: employee.id, revokedAt: null } }),
-    ]);
+    const { faces, fingerprints } = await this.accounts.countActiveBiometrics(employee.id);
 
     // BR-03: chưa có phương thức xác thực nào thì KHÔNG được vào Home.
-    return faceCount + fingerprintCount > 0 ? 'HOME' : 'SETUP_BIOMETRIC';
-  }
-
-  /**
-   * AF-12 tương tự cho TOTP: một mã chỉ dùng được MỘT lần.
-   *
-   * Cửa sổ chấp nhận là 90 giây, nên không có chốt này thì người nhìn trộm màn
-   * hình gõ lại được ngay mã vừa thấy.
-   */
-  private async assertTotpStepUnused(userId: string, step: number): Promise<void> {
-    const counter = Math.floor(Date.now() / 1000 / 30) + step;
-    const fresh = await this.redis.consumeOnce(RedisKeys.totpUsedStep(userId, counter), 120);
-    if (!fresh) {
-      throw new AppException('AUTH_2FA_INVALID', { reason: 'Mã này đã được dùng.' });
-    }
+    return faces + fingerprints > 0 ? 'HOME' : 'SETUP_BIOMETRIC';
   }
 
   /** Mã dự phòng dùng một lần rồi xoá khỏi danh sách. */
@@ -599,29 +626,32 @@ export class AuthService {
     const hashed = sha256(code.trim().toLowerCase());
     if (!account.twoFactorRecoveryCodes.includes(hashed)) return false;
 
-    await this.prisma.userAccount.update({
-      where: { id: account.id },
-      data: {
-        twoFactorRecoveryCodes: account.twoFactorRecoveryCodes.filter(
-          (stored) => stored !== hashed,
-        ),
-      },
-    });
+    await this.accounts.replaceRecoveryCodes(
+      account.id,
+      account.twoFactorRecoveryCodes.filter((stored) => stored !== hashed),
+    );
 
     this.logger.warn(`Tài khoản ${account.id} đăng nhập bằng mã dự phòng 2FA`);
     return true;
   }
 }
 
-/**
- * Chuỗi băm giả để nhánh "không có tài khoản" tốn thời gian ngang nhánh thật.
- *
- * Sinh sẵn một lần với đúng tham số scrypt đang dùng. Nội dung không quan trọng
- * — chỉ cần `verify` phải chạy đủ vòng lặp thay vì trả về ngay.
- */
-const DUMMY_HASH =
-  'scrypt$65536$8$1$AAAAAAAAAAAAAAAAAAAAAA$' +
-  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+// ---------------------------------------------------------------------------
+
+interface PendingTwoFactor {
+  userId: string;
+  deviceId?: string;
+  deviceInfo?: DeviceInfoDto;
+}
+
+/** Thông tin về mã vừa gửi — đủ để App vẽ màn hình chờ, không lộ số đầy đủ. */
+export interface TwoFactorDelivery {
+  maskedPhone: string;
+  codeExpiresIn: number;
+  resendAfter: number;
+  /** CHỈ khi OTP_DEBUG_RETURN=true (môi trường dev). */
+  debugCode?: string;
+}
 
 function normalizeDomain(raw: string): string {
   // Người dùng hay gõ kèm giao thức hoặc dấu / ở cuối khi chép từ trình duyệt.
@@ -632,6 +662,15 @@ function normalizeDomain(raw: string): string {
     .replace(/\/+$/, '');
 }
 
-function normalizeEmail(raw: string): string {
-  return raw.trim().toLowerCase();
+/**
+ * Mã dự phòng dùng khi mất điện thoại.
+ *
+ * Bảng chữ cái bỏ ký tự dễ đọc nhầm vì người dùng được khuyên chép ra giấy.
+ * Trả về dạng gốc để hiển thị MỘT LẦN; chỉ bản băm được ghi xuống database.
+ */
+function generateRecoveryCodes(count = 8): string[] {
+  const alphabet = '23456789abcdefghjkmnpqrstuvwxyz';
+  const part = () => Array.from({ length: 4 }, () => alphabet[randomInt(alphabet.length)]).join('');
+
+  return Array.from({ length: count }, () => `${part()}-${part()}`);
 }

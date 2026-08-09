@@ -6,7 +6,8 @@ import { PaginatedResult } from 'src/common/dto';
 import { SystemUserQueryDto } from './dto/admin-query.dto';
 import { AppException } from 'src/common/errors';
 import { buildMeta, maskPhone, normalizePhone } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { FirebaseService } from 'src/infra/firebase/firebase.service';
+import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { RedisService } from 'src/infra/redis/redis.service';
 import { RedisKeys } from 'src/infra/redis/redis.keys';
 import { StorageService } from 'src/infra/storage/storage.service';
@@ -18,6 +19,7 @@ import { DeviceService } from '../auth/device.service';
 import { BiometricService } from '../biometric/biometric.service';
 import { NotificationService } from '../notification/notification.service';
 import { RealtimeGateway } from '../notification/realtime.gateway';
+import { AdminRepository } from './admin.repository';
 import type { RequestContext } from 'src/common/types/request-context';
 
 /**
@@ -34,8 +36,10 @@ export class AdminService {
   private readonly logger = new Logger(AdminService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly admins: AdminRepository,
+    private readonly transactions: TransactionManager,
     private readonly redis: RedisService,
+    private readonly firebase: FirebaseService,
     private readonly storage: StorageService,
     private readonly ai: AiGatewayService,
     private readonly audit: AuditService,
@@ -57,54 +61,20 @@ export class AdminService {
   // ===========================================================================
 
   async searchUsers(query: SystemUserQueryDto) {
-    const where: Prisma.UserAccountWhereInput = { deletedAt: null };
-
-    if (query.q) {
-      const phone = normalizePhone(query.q);
-      where.OR = [
-        { phone: { contains: phone } },
-        { fullName: { contains: query.q, mode: 'insensitive' } },
-        { employees: { some: { employeeCode: { contains: query.q, mode: 'insensitive' } } } },
-      ];
-    }
-    if (query.companyId) {
-      where.employees = { some: { companyId: query.companyId } };
-    }
-
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.userAccount.findMany({
-        where,
-        include: {
-          employees: {
-            select: {
-              id: true,
-              companyId: true,
-              employeeCode: true,
-              status: true,
-              company: { select: { name: true, code: true } },
-            },
-          },
-          _count: { select: { devices: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: query.skip,
-        take: query.take,
-      }),
-      this.prisma.userAccount.count({ where }),
-    ]);
+    const { items, total } = await this.admins.searchUsers({
+      q: query.q,
+      normalizedPhone: query.q ? normalizePhone(query.q) : undefined,
+      companyId: query.companyId,
+      skip: query.skip,
+      take: query.take,
+    });
 
     return new PaginatedResult(items, buildMeta(query.page, query.pageSize, total));
   }
 
   /** FR-ADM-USR-07 — lịch sử hoạt động của một tài khoản. */
   async getUserActivity(userId: string) {
-    const user = await this.prisma.userAccount.findUnique({
-      where: { id: userId },
-      include: {
-        employees: { include: { company: { select: { name: true, code: true } } } },
-        devices: true,
-      },
-    });
+    const user = await this.admins.findUserWithCompanies(userId);
     if (!user) {
       throw new AppException('SYS_NOT_FOUND');
     }
@@ -112,28 +82,9 @@ export class AdminService {
     const employeeIds = user.employees.map((employee) => employee.id);
 
     const [recentAttendance, recentAudit, activeSessions] = await Promise.all([
-      this.prisma.attendanceLog.findMany({
-        where: { employeeId: { in: employeeIds } },
-        orderBy: { recordedAt: 'desc' },
-        take: 20,
-        select: {
-          id: true,
-          companyId: true,
-          type: true,
-          recordedAt: true,
-          decision: true,
-          fraudScore: true,
-          deviceId: true,
-        },
-      }),
-      this.prisma.auditLog.findMany({
-        where: { OR: [{ actorUserId: userId }, { targetId: { in: employeeIds } }] },
-        orderBy: { createdAt: 'desc' },
-        take: 30,
-      }),
-      this.prisma.refreshToken.count({
-        where: { userId, revokedAt: null, expiresAt: { gt: new Date() } },
-      }),
+      this.admins.findRecentPunches(employeeIds),
+      this.admins.findRecentAudit(userId, employeeIds),
+      this.admins.countActiveSessions(userId),
     ]);
 
     return {
@@ -161,17 +112,24 @@ export class AdminService {
 
   /** FR-ADM-USR-02 */
   async blockUser(ctx: RequestContext, userId: string, blocked: boolean, reason: string) {
-    const user = await this.prisma.userAccount.findUnique({ where: { id: userId } });
+    const user = await this.admins.findUser(userId);
     if (!user) {
       throw new AppException('SYS_NOT_FOUND');
     }
 
-    await this.prisma.userAccount.update({
-      where: { id: userId },
-      data: { isBlocked: blocked, blockedReason: blocked ? reason : null },
-    });
+    await this.admins.setBlocked(userId, blocked, reason);
+
+    // Khoá ở CẢ HAI nơi.
+    //
+    // `AuthService.createSession` đã chặn tài khoản `isBlocked`, nên chỉ cờ này
+    // thôi cũng đủ để không vào được hệ thống. Nhưng để tài khoản Firebase còn
+    // sống nghĩa là người bị khoá vẫn đăng nhập được vào Firebase, vẫn tự đổi
+    // được mật khẩu qua email đặt lại, và vẫn giữ được token hợp lệ — trạng thái
+    // nửa vời đó không có lý do gì để tồn tại.
+    await this.firebase.setDisabled(user.firebaseUid, blocked);
 
     if (blocked) {
+      await this.firebase.revokeTokens(user.firebaseUid);
       await this.tokens.revokeAllForUser(userId, 'ACCOUNT_BLOCKED');
     }
 
@@ -208,9 +166,7 @@ export class AdminService {
       confirmEmployeeCode: string;
     },
   ) {
-    const employee = await this.prisma.employee.findFirst({
-      where: { userId, employeeCode: input.confirmEmployeeCode, deletedAt: null },
-    });
+    const employee = await this.admins.findEmployeeByUserAndCode(userId, input.confirmEmployeeCode);
     if (!employee) {
       throw new AppException('SYS_VALIDATION_ERROR', {
         reason:
@@ -228,17 +184,9 @@ export class AdminService {
 
     let revokedDevices = 0;
     if (input.revokeDevices) {
-      const devices = await this.prisma.deviceBinding.findMany({
-        where: { userId, isActive: true },
-        select: { deviceId: true },
-      });
-      for (const device of devices) {
-        const revoked = await this.devices.revoke(
-          userId,
-          device.deviceId,
-          ctx.userId,
-          input.reason,
-        );
+      const deviceIds = await this.admins.findActiveDeviceIds(userId);
+      for (const deviceId of deviceIds) {
+        const revoked = await this.devices.revoke(userId, deviceId, ctx.userId, input.reason);
         revokedDevices += revoked.revoked;
       }
       await this.tokens.revokeAllForUser(userId, 'ADMIN_BIOMETRIC_RESET');
@@ -266,7 +214,7 @@ export class AdminService {
   /** FR-ADM-USR-05 — đổi số điện thoại khi nhân viên đổi số. */
   async changePhone(ctx: RequestContext, userId: string, newPhone: string, reason: string) {
     const phone = normalizePhone(newPhone);
-    const user = await this.prisma.userAccount.findUnique({ where: { id: userId } });
+    const user = await this.admins.findUser(userId);
     if (!user) {
       throw new AppException('SYS_NOT_FOUND');
     }
@@ -274,17 +222,13 @@ export class AdminService {
     // Số điện thoại chỉ cần duy nhất TRONG công ty, không phải toàn hệ thống:
     // tài khoản đã gắn với đúng một công ty nên hai công ty khác nhau dùng
     // trùng số là chuyện bình thường (một người làm hai nơi).
-    const taken = await this.prisma.userAccount.findFirst({
-      where: { companyId: user.companyId, phone, deletedAt: null, NOT: { id: userId } },
-      select: { id: true },
-    });
+    const taken = await this.admins.isPhoneTakenInCompany(user.companyId, phone, userId);
     if (taken) {
       throw new AppException('EMP_PHONE_TAKEN');
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.userAccount.update({ where: { id: userId }, data: { phone } });
-      await tx.employee.updateMany({ where: { userId }, data: { phone } });
+    await this.transactions.run(async (tx) => {
+      await this.admins.updatePhone(userId, phone, tx);
     });
 
     // Đổi SĐT = đổi định danh đăng nhập → thu hồi toàn bộ phiên.
@@ -310,39 +254,24 @@ export class AdminService {
     const [health, metrics] = await Promise.all([this.ai.health(), this.ai.metrics()]);
 
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    // groupBy gọi riêng: gộp vào $transaction([...]) làm mất kiểu narrow của `_count`.
-    const [total, avgLatency] = await this.prisma.$transaction([
-      this.prisma.attendanceLog.count({ where: { recordedAt: { gte: since } } }),
-      this.prisma.attendanceLog.aggregate({
-        where: { recordedAt: { gte: since }, aiProcessingMs: { not: null } },
-        _avg: { aiProcessingMs: true, matchScore: true, livenessScore: true },
-      }),
-    ]);
-
-    const byDecision = await this.prisma.attendanceLog.groupBy({
-      by: ['decision'],
-      where: { recordedAt: { gte: since } },
-      _count: { decision: true },
-      orderBy: { decision: 'asc' },
-    });
+    const usage = await this.admins.loadAiUsage(since);
 
     return {
       health,
       circuitBreakerState: this.ai.circuitBreakerState,
       rawMetrics: metrics,
       last24h: {
-        totalRecognitions: total,
-        byDecision: byDecision.map((row) => ({ decision: row.decision, count: row._count.decision })),
-        avgProcessingMs: Math.round(avgLatency._avg.aiProcessingMs ?? 0),
-        avgMatchScore: avgLatency._avg.matchScore,
-        avgLivenessScore: avgLatency._avg.livenessScore,
+        totalRecognitions: usage.total,
+        byDecision: usage.byDecision,
+        avgProcessingMs: Math.round(usage.avgProcessingMs ?? 0),
+        avgMatchScore: usage.avgMatchScore,
+        avgLivenessScore: usage.avgLivenessScore,
       },
     };
   }
 
   async listAiModels() {
-    return this.prisma.aiModelVersion.findMany({ orderBy: { createdAt: 'desc' } });
+    return this.admins.listAiModels();
   }
 
   async registerAiModel(data: {
@@ -355,11 +284,7 @@ export class AdminService {
     defaultLivenessThreshold?: number;
     notes?: string;
   }) {
-    return this.prisma.aiModelVersion.upsert({
-      where: { name_version: { name: data.name, version: data.version } },
-      create: data,
-      update: data,
-    });
+    return this.admins.upsertAiModel(data);
   }
 
   /**
@@ -369,20 +294,14 @@ export class AdminService {
    * đúng. Response luôn kèm cảnh báo nhắc hiệu chỉnh lại ngưỡng cùng lúc.
    */
   async deployAiModel(ctx: RequestContext, modelId: string, reason: string) {
-    const model = await this.prisma.aiModelVersion.findUnique({ where: { id: modelId } });
+    const model = await this.admins.findAiModel(modelId);
     if (!model) {
       throw new AppException('SYS_NOT_FOUND');
     }
 
-    const previous = await this.prisma.aiModelVersion.findFirst({ where: { isActive: true } });
+    const previous = await this.admins.findActiveAiModel();
 
-    await this.prisma.$transaction([
-      this.prisma.aiModelVersion.updateMany({ where: { isActive: true }, data: { isActive: false } }),
-      this.prisma.aiModelVersion.update({
-        where: { id: modelId },
-        data: { isActive: true, deployedAt: new Date(), rolledBackAt: null },
-      }),
-    ]);
+    await this.admins.switchActiveAiModel(modelId, 'DEPLOY', new Date());
 
     await this.audit.record(ctx, {
       action: 'AI_MODEL_DEPLOY',
@@ -402,18 +321,12 @@ export class AdminService {
   }
 
   async rollbackAiModel(ctx: RequestContext, modelId: string, reason: string) {
-    const model = await this.prisma.aiModelVersion.findUnique({ where: { id: modelId } });
+    const model = await this.admins.findAiModel(modelId);
     if (!model) {
       throw new AppException('SYS_NOT_FOUND');
     }
 
-    await this.prisma.$transaction([
-      this.prisma.aiModelVersion.updateMany({ where: { isActive: true }, data: { isActive: false, rolledBackAt: new Date() } }),
-      this.prisma.aiModelVersion.update({
-        where: { id: modelId },
-        data: { isActive: true, deployedAt: new Date() },
-      }),
-    ]);
+    await this.admins.switchActiveAiModel(modelId, 'ROLLBACK', new Date());
 
     await this.audit.record(ctx, {
       action: 'AI_MODEL_ROLLBACK',
@@ -431,21 +344,23 @@ export class AdminService {
   // ===========================================================================
 
   async getSystemConfig() {
-    const rows = await this.prisma.systemConfig.findMany();
+    const rows = await this.admins.findAllSystemConfig();
     return rows.reduce<Record<string, unknown>>((acc, row) => {
       acc[row.key] = row.value;
       return acc;
     }, {});
   }
 
-  async setSystemConfig(ctx: RequestContext, entries: Record<string, Prisma.InputJsonValue>, reason: string) {
-    for (const [key, value] of Object.entries(entries)) {
-      await this.prisma.systemConfig.upsert({
-        where: { key },
-        create: { key, value, updatedBy: ctx.userId },
-        update: { value, updatedBy: ctx.userId },
-      });
-    }
+  async setSystemConfig(
+    ctx: RequestContext,
+    entries: Record<string, Prisma.InputJsonValue>,
+    reason: string,
+  ) {
+    await this.transactions.run(async (tx) => {
+      for (const [key, value] of Object.entries(entries)) {
+        await this.admins.upsertSystemConfig(key, value, ctx.userId, tx);
+      }
+    });
 
     await this.audit.record(ctx, {
       action: 'SYSTEM_CONFIG_UPDATE',
@@ -465,7 +380,7 @@ export class AdminService {
   async healthCheck() {
     const checks = await Promise.all([
       this.timed('database', async () => {
-        await this.prisma.$queryRaw`SELECT 1`;
+        await this.admins.ping();
         return true;
       }),
       this.timed('redis', () => this.redis.ping()),
@@ -474,7 +389,11 @@ export class AdminService {
     ]);
 
     const healthy = checks.every((check) => check.healthy);
-    return { status: healthy ? 'healthy' : 'degraded', checks, checkedAt: new Date().toISOString() };
+    return {
+      status: healthy ? 'healthy' : 'degraded',
+      checks,
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   private async timed(name: string, probe: () => Promise<boolean>) {
@@ -588,7 +507,9 @@ export class AdminService {
 
   async getMaintenance() {
     return (
-      (await this.redis.getJson<{ enabled: boolean; message: string }>(RedisKeys.maintenance())) ?? {
+      (await this.redis.getJson<{ enabled: boolean; message: string }>(
+        RedisKeys.maintenance(),
+      )) ?? {
         enabled: false,
       }
     );
@@ -599,20 +520,14 @@ export class AdminService {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     const [otpLocks, highSeverityFlags, multiDeviceFlags] = await Promise.all([
-      this.prisma.auditLog.count({
-        where: { action: 'AUTH_OTP_LOCKED', createdAt: { gte: since } },
-      }),
-      this.prisma.fraudFlag.count({
-        where: { severity: 'HIGH', createdAt: { gte: since } },
-      }),
-      this.prisma.fraudFlag.count({
-        where: { code: 'MULTI_DEVICE_ANOMALY', createdAt: { gte: since } },
-      }),
+      this.admins.countAuditActionSince('AUTH_OTP_LOCKED', since),
+      this.admins.countFraudFlagsSince(since, { severity: 'HIGH' }),
+      this.admins.countFraudFlagsSince(since, { code: 'MULTI_DEVICE_ANOMALY' }),
     ]);
 
     // So với trung bình 7 ngày để phát hiện đột biến cờ gian lận.
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const weekFlags = await this.prisma.fraudFlag.count({ where: { createdAt: { gte: weekAgo } } });
+    const weekFlags = await this.admins.countFraudFlagsSince(weekAgo);
     const dailyAverage = weekFlags / 7;
 
     return {

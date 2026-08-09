@@ -2,8 +2,7 @@ import { Controller, Get } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public, SkipTenant } from 'src/common/decorators';
 import { listErrorDefinitions } from 'src/common/errors';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
-import { RedisService } from 'src/infra/redis/redis.service';
+import { HealthService } from './health.service';
 
 /**
  * Ba endpoint hạ tầng, đều `@Public()` — không cần token.
@@ -18,37 +17,18 @@ import { RedisService } from 'src/infra/redis/redis.service';
 @ApiTags('Hệ thống')
 @Controller()
 export class HealthController {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly redis: RedisService,
-  ) {}
+  constructor(private readonly health: HealthService) {}
 
   @Get('health')
   @Public()
   @SkipTenant()
   @ApiOperation({
     summary: 'Health check (NFR-OBS-05)',
-    description: 'Kiểm tra cả dependency, không chỉ trả 200 rỗng. Dùng cho readiness probe của K8s.',
+    description:
+      'Kiểm tra cả dependency, không chỉ trả 200 rỗng. Dùng cho readiness probe của K8s.',
   })
-  async health() {
-    // `Promise.all` để hai lần kiểm tra chạy song song — probe của K8s có timeout
-    // ngắn, cộng dồn tuần tự dễ vượt ngưỡng và pod bị giết oan.
-    //
-    // `.catch(() => false)` là cố ý: health check KHÔNG được phép tự nó ném lỗi.
-    // Ném ra thì endpoint trả 500 và K8s chỉ biết "hỏng gì đó"; nuốt lỗi rồi trả
-    // 200 kèm `database: false` thì người trực biết chính xác thành phần nào chết.
-    const [database, redis] = await Promise.all([
-      this.prisma
-        .$queryRaw`SELECT 1`.then(() => true)
-        .catch(() => false),
-      this.redis.ping(),
-    ]);
-
-    return {
-      status: database && redis ? 'healthy' : 'degraded',
-      dependencies: { database, redis },
-      timestamp: new Date().toISOString(),
-    };
+  checkHealth() {
+    return this.health.check();
   }
 
   @Get('time')

@@ -11,6 +11,7 @@ import { RolesGuard } from './common/guards/roles.guard';
 import { ScopeGuard } from './common/guards/scope.guard';
 import { SignatureGuard } from './common/guards/signature.guard';
 import { TenantGuard } from './common/guards/tenant.guard';
+import { FirebaseModule } from './infra/firebase/firebase.module';
 import { LoggerModule } from './infra/logger/logger.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
 import { QueueModule } from './infra/queue/queue.module';
@@ -50,6 +51,7 @@ import { TenantModule } from './modules/tenant/tenant.module';
     // Hạ tầng
     PrismaModule,
     RedisModule,
+    FirebaseModule,
     StorageModule,
     QueueModule,
 

@@ -2,7 +2,6 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
-  IsEmail,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -49,7 +48,21 @@ export class DeviceInfoDto {
 //  Đăng nhập
 // ---------------------------------------------------------------------------
 
-export class LoginDto {
+/**
+ * Độ dài tối đa cho một Firebase ID token.
+ *
+ * Token là JWT ba phần, thường 900–1300 byte và phình theo số custom claim.
+ * Chặn ở 4096 để một chuỗi vài MB không đi được tới bước xác minh chữ ký.
+ */
+const FIREBASE_ID_TOKEN_MAX_LENGTH = 4096;
+
+/**
+ * Đổi Firebase ID token lấy phiên làm việc của Backend.
+ *
+ * Client tự đăng nhập với Firebase trước (email + mật khẩu qua SDK), rồi gửi ID
+ * token nhận được lên đây. Backend KHÔNG bao giờ nhìn thấy mật khẩu.
+ */
+export class CreateSessionDto {
   @ApiProperty({
     example: 'amobi.vn',
     description: 'Tên miền công ty cấp cho nhân viên. Chấp nhận cả dạng có https:// và dấu / cuối.',
@@ -59,17 +72,13 @@ export class LoginDto {
   @MaxLength(255)
   domain!: string;
 
-  @ApiProperty({ example: 'duc@amobi.vn' })
-  @IsEmail({}, { message: 'Email không hợp lệ' })
-  @MaxLength(255)
-  email!: string;
-
-  @ApiProperty({ description: 'Mật khẩu do công ty cấp, hoặc mật khẩu đã đổi' })
+  @ApiProperty({
+    description: 'ID token lấy từ Firebase SDK sau khi đăng nhập thành công (`user.getIdToken()`).',
+  })
   @IsString()
   @IsNotEmpty()
-  // Chặn chuỗi khổng lồ ngay ở tầng validate: scrypt cố tình tốn kém.
-  @MaxLength(PasswordService.MAX_LENGTH)
-  password!: string;
+  @MaxLength(FIREBASE_ID_TOKEN_MAX_LENGTH)
+  firebaseIdToken!: string;
 
   @ApiPropertyOptional({ description: 'Bắt buộc với App; Web quản lý không cần.' })
   @IsOptional()
@@ -91,23 +100,41 @@ export class VerifyTwoFactorDto {
 
   @ApiProperty({
     example: '123456',
-    description: 'Mã 6 số từ ứng dụng xác thực, hoặc một mã dự phòng.',
+    description: 'Mã 6 số vừa nhận qua SMS, hoặc một mã dự phòng.',
   })
   @IsString()
   @Length(6, 20)
   code!: string;
 }
 
+export class ResendTwoFactorDto {
+  @ApiProperty({ description: 'Lấy từ phản hồi đăng nhập khi nextStep = TWO_FACTOR' })
+  @IsString()
+  @IsNotEmpty()
+  twoFactorToken!: string;
+}
+
 // ---------------------------------------------------------------------------
 //  Mật khẩu
 // ---------------------------------------------------------------------------
 
+/**
+ * Đổi mật khẩu.
+ *
+ * Không còn trường `currentPassword`: Backend không giữ mật khẩu nên không đối
+ * chiếu được. Thay vào đó client gọi `reauthenticateWithCredential` của Firebase
+ * (người dùng gõ lại mật khẩu cũ) rồi gửi lên ID token vừa làm mới — `auth_time`
+ * trong token chứng minh việc gõ lại vừa xảy ra.
+ */
 export class ChangePasswordDto {
-  @ApiProperty({ description: 'Mật khẩu hiện tại — mật khẩu tạm nếu đây là lần đầu' })
+  @ApiProperty({
+    description:
+      'ID token vừa làm mới sau khi xác thực lại với Firebase. Quá hạn `FIREBASE_FRESH_AUTH_WINDOW_SECONDS` sẽ bị từ chối.',
+  })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(PasswordService.MAX_LENGTH)
-  currentPassword!: string;
+  @MaxLength(FIREBASE_ID_TOKEN_MAX_LENGTH)
+  firebaseIdToken!: string;
 
   @ApiProperty({
     description: `Tối thiểu ${PasswordService.MIN_LENGTH} ký tự. Không bắt buộc chữ hoa/ký tự đặc biệt — độ dài mới là thứ có tác dụng.`,
@@ -121,19 +148,37 @@ export class ChangePasswordDto {
 //  Xác thực 2 lớp
 // ---------------------------------------------------------------------------
 
+export class SetupTwoFactorDto {
+  @ApiProperty({
+    example: '0912345678',
+    description:
+      'Số nhận mã OTP. Nhận cả dạng `+84…`; hệ thống tự chuẩn hoá về `0…`. Chỉ được ghi nhận sau khi nhập đúng mã gửi tới số này.',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(20)
+  phone!: string;
+}
+
 export class EnableTwoFactorDto {
-  @ApiProperty({ example: '123456', description: 'Mã hiện tại từ ứng dụng xác thực' })
+  @ApiProperty({ example: '123456', description: 'Mã 6 số vừa nhận qua SMS' })
   @IsString()
   @Matches(/^\d{6}$/, { message: 'Mã xác thực gồm đúng 6 chữ số' })
   code!: string;
 }
 
+/**
+ * Tắt 2FA — dùng ID token vừa làm mới thay cho mật khẩu, cùng lý do với
+ * `ChangePasswordDto`.
+ */
 export class DisableTwoFactorDto {
-  @ApiProperty({ description: 'Xác nhận bằng mật khẩu để không ai tắt hộ' })
+  @ApiProperty({
+    description: 'ID token vừa làm mới sau khi xác thực lại với Firebase.',
+  })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(PasswordService.MAX_LENGTH)
-  password!: string;
+  @MaxLength(FIREBASE_ID_TOKEN_MAX_LENGTH)
+  firebaseIdToken!: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,22 +202,27 @@ export class LogoutDto {
 /**
  * Xác thực lại danh tính trước thao tác nhạy cảm (FR-APP-PRO-02, docs/03 mục 8.1).
  *
- * Dùng mật khẩu chứ không dùng OTP SMS: kẻ cầm được điện thoại đang đăng nhập
- * cũng nhận được SMS gửi tới chính máy đó, nên OTP không phải rào cản trong đúng
- * kịch bản mà chốt này sinh ra để chặn.
+ * Neo vào MẬT KHẨU (qua Firebase) chứ không phải chỉ OTP: kẻ cầm được điện thoại
+ * đang đăng nhập cũng nhận được SMS gửi tới chính máy đó, nên OTP một mình không
+ * phải rào cản trong đúng kịch bản mà chốt này sinh ra để chặn.
  */
 export class ReauthVerifyDto {
-  @ApiProperty()
+  @ApiProperty({
+    description: 'ID token vừa làm mới sau khi xác thực lại với Firebase.',
+  })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(PasswordService.MAX_LENGTH)
-  password!: string;
+  @MaxLength(FIREBASE_ID_TOKEN_MAX_LENGTH)
+  firebaseIdToken!: string;
 
-  @ApiPropertyOptional({ description: 'Bắt buộc nếu tài khoản đã bật xác thực 2 lớp' })
+  @ApiPropertyOptional({
+    description:
+      'Bắt buộc nếu tài khoản đã bật xác thực 2 lớp. Lấy mã bằng POST /auth/reauth/code. Nhận cả mã dự phòng.',
+  })
   @IsOptional()
   @IsString()
-  @Matches(/^\d{6}$/)
-  totpCode?: string;
+  @Length(6, 20)
+  twoFactorCode?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,15 +301,32 @@ export class AuthTokenResponseDto {
   employee!: AuthEmployeeDto | null;
 }
 
-/** Phản hồi khi mật khẩu đúng nhưng tài khoản đã bật xác thực 2 lớp. */
-export class TwoFactorChallengeDto {
+/** Thông tin mã OTP vừa gửi — đủ để App vẽ màn hình chờ mà không lộ số đầy đủ. */
+export class TwoFactorDeliveryDto {
+  @ApiProperty({ example: '090****567', description: 'Số nhận mã, đã che bớt' })
+  maskedPhone!: string;
+
+  @ApiProperty({ example: 300, description: 'Số giây mã còn hiệu lực' })
+  codeExpiresIn!: number;
+
+  @ApiProperty({ example: 60, description: 'Số giây phải chờ trước khi được gửi lại' })
+  resendAfter!: number;
+
+  @ApiPropertyOptional({
+    description: 'CHỈ có khi OTP_DEBUG_RETURN=true (dev). Production không bao giờ trả trường này.',
+  })
+  debugCode?: string;
+}
+
+/** Phản hồi khi Firebase đã xác nhận danh tính nhưng tài khoản còn lớp thứ hai. */
+export class TwoFactorChallengeDto extends TwoFactorDeliveryDto {
   @ApiProperty({ enum: ['TWO_FACTOR'] })
   nextStep!: 'TWO_FACTOR';
 
   @ApiProperty({ description: 'Gửi kèm mã xác thực tới POST /auth/2fa/verify. Dùng một lần.' })
   twoFactorToken!: string;
 
-  @ApiProperty({ example: 300 })
+  @ApiProperty({ example: 300, description: 'Số giây `twoFactorToken` còn hiệu lực' })
   expiresIn!: number;
 }
 

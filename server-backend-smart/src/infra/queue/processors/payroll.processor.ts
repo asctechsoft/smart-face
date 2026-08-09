@@ -1,9 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { PayrollPeriodStatus } from '@prisma/client';
 import { Job } from 'bullmq';
 import { parseWorkDate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { JobsRepository } from '../jobs.repository';
 import { PayrollEngineService } from 'src/modules/payroll/payroll-engine.service';
 import { PayrollService } from 'src/modules/payroll/payroll.service';
 import { JOBS, QUEUES } from '../queue.constants';
@@ -22,7 +21,7 @@ export class PayrollProcessor extends WorkerHost {
   constructor(
     private readonly engine: PayrollEngineService,
     private readonly payroll: PayrollService,
-    private readonly prisma: PrismaService,
+    private readonly jobs: JobsRepository,
   ) {
     super();
   }
@@ -52,15 +51,7 @@ export class PayrollProcessor extends WorkerHost {
     const date = parseWorkDate(workDate);
 
     // BR-07: kỳ đã chốt thì BỎ QUA và ghi cảnh báo, không ghi đè số liệu đã chốt.
-    const locked = await this.prisma.payrollPeriod.findFirst({
-      where: {
-        companyId,
-        status: PayrollPeriodStatus.CLOSED,
-        startDate: { lte: date },
-        endDate: { gte: date },
-      },
-      select: { name: true },
-    });
+    const locked = await this.jobs.findClosedPeriodCovering(companyId, date);
     if (locked) {
       this.logger.warn(
         `Bỏ qua tính công ${employeeId} ngày ${workDate}: thuộc kỳ đã chốt "${locked.name}" (BR-07)`,
@@ -113,19 +104,16 @@ export class PayrollProcessor extends WorkerHost {
     const { companyId } = job.data as { companyId?: string };
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    const companies = companyId
-      ? [{ id: companyId }]
-      : await this.prisma.company.findMany({
-          where: { status: { in: ['TRIAL', 'ACTIVE'] }, deletedAt: null },
-          select: { id: true },
-        });
+    const companyIds = companyId
+      ? [companyId]
+      : await this.jobs.acrossTenantsFindOperatingCompanyIds();
 
     let calculated = 0;
-    for (const company of companies) {
-      const targets = await this.payroll.findDatesNeedingRecalculation(company.id, since);
+    for (const id of companyIds) {
+      const targets = await this.payroll.findDatesNeedingRecalculation(id, since);
       for (const target of targets) {
         await this.engine
-          .calculateAndPersist(company.id, target.employeeId, target.workDate)
+          .calculateAndPersist(id, target.employeeId, target.workDate)
           .then(() => {
             calculated += 1;
           })
@@ -137,6 +125,6 @@ export class PayrollProcessor extends WorkerHost {
       }
     }
 
-    return { calculated, companyCount: companies.length };
+    return { calculated, companyCount: companyIds.length };
   }
 }

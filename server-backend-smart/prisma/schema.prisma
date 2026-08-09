@@ -99,15 +99,15 @@ model SubscriptionPlan {
 }
 
 model Branch {
-  id           String  @id @default(cuid())
+  id           String   @id @default(cuid())
   companyId    String
-  company      Company @relation(fields: [companyId], references: [id])
+  company      Company  @relation(fields: [companyId], references: [id])
   name         String
   address      String?
   /// Geofence (FR-WEB-POL-09)
   latitude     Float?
   longitude    Float?
-  radiusMeters Int     @default(100)
+  radiusMeters Int      @default(100)
   /// Xác thực lớp 2 tại chỗ (AF-02)
   ///
   /// `wifiSsids` CHỈ để hiển thị cho HR biết mình đang khai bộ phát nào — nó
@@ -133,7 +133,7 @@ model Branch {
   /// Backend. Xem `configuration.ts`.
   allowedIpCidrs String[] @default([])
   /// Ghi đè timezone công ty nếu chi nhánh khác múi giờ
-  timezone     String?
+  timezone       String?
 
   departments Department[]
   employees   Employee[]
@@ -147,11 +147,11 @@ model Branch {
 }
 
 model Department {
-  id        String  @id @default(cuid())
+  id        String       @id @default(cuid())
   companyId String
-  company   Company @relation(fields: [companyId], references: [id])
+  company   Company      @relation(fields: [companyId], references: [id])
   branchId  String?
-  branch    Branch? @relation(fields: [branchId], references: [id])
+  branch    Branch?      @relation(fields: [branchId], references: [id])
   name      String
   /// Cây phòng ban
   parentId  String?
@@ -213,28 +213,52 @@ model UserAccount {
   company   Company? @relation(fields: [companyId], references: [id])
 
   /// Định danh đăng nhập, LUÔN lưu ở dạng chữ thường
-  email    String
-  phone    String?
-  fullName String
+  email     String
+  phone     String?
+  fullName  String
   avatarUrl String?
   locale    String  @default("vi")
 
-  /// scrypt — xem PasswordService. KHÔNG BAO GIỜ lưu mật khẩu gốc.
-  passwordHash String
+  /// Tài khoản tương ứng bên Firebase Authentication — nơi giữ mật khẩu.
+  ///
+  /// Backend KHÔNG lưu mật khẩu dưới bất kỳ dạng nào nữa. Đây là mối nối duy
+  /// nhất giữa danh tính (Firebase) và dữ liệu nghiệp vụ (bảng này).
+  ///
+  /// ⚠ HỆ QUẢ CỦA VIỆC DÙNG FIREBASE — đọc trước khi sửa `@@unique` bên dưới.
+  ///
+  /// Một dự án Firebase (không nâng cấp Identity Platform) coi EMAIL LÀ DUY NHẤT
+  /// TOÀN DỰ ÁN. Trong khi bảng này vẫn cho phép cùng một email tồn tại ở hai
+  /// công ty khác nhau (`@@unique([companyId, email])`).
+  ///
+  /// Nghĩa là ràng buộc chặt hơn giờ nằm ở Firebase chứ không ở đây: HR của công
+  /// ty B cấp tài khoản cho một email đã dùng ở công ty A sẽ nhận `EMP_EMAIL_TAKEN`.
+  /// Ràng buộc trong schema được giữ nguyên để không phải sửa dữ liệu cũ, nhưng
+  /// đừng trông vào nó — Firebase mới là nơi chặn thật.
+  ///
+  /// Muốn khôi phục hành vi "một email dùng được ở nhiều công ty": nâng lên
+  /// Identity Platform rồi ánh xạ mỗi công ty thành một Firebase tenant.
+  firebaseUid String @unique
+
   /// true khi HR vừa cấp tài khoản. Chặn mọi API nghiệp vụ tới khi đổi mật khẩu.
+  ///
+  /// Vẫn do Backend giữ chứ không đẩy sang Firebase: đây là quy tắc nghiệp vụ
+  /// (mật khẩu tạm đi qua nhiều tay) chứ không phải trạng thái xác thực, và
+  /// `PasswordChangeGuard` phải đọc được nó ở mọi request mà không gọi Firebase.
   mustChangePassword Boolean   @default(true)
   passwordChangedAt  DateTime?
-  /// Đếm số lần sai liên tiếp — khoá tạm khi vượt ngưỡng
-  failedLoginCount Int       @default(0)
-  lockedUntil      DateTime?
 
-  /// Xác thực 2 lớp bằng TOTP (RFC 6238). Người dùng tự bật.
-  twoFactorEnabled     Boolean   @default(false)
-  /// Secret base32, mã hoá at-rest ở tầng ứng dụng
-  twoFactorSecret      String?
-  twoFactorConfirmedAt DateTime?
-  /// Mã dự phòng đã băm — dùng khi mất thiết bị
-  twoFactorRecoveryCodes String[] @default([])
+  /// Xác thực 2 lớp bằng OTP gửi qua SMS. Người dùng tự bật.
+  ///
+  /// Không dùng TOTP (ứng dụng xác thực) nữa, cũng không dùng MFA của Firebase —
+  /// MFA đó đòi nâng cấp Identity Platform. Backend tự điều phối thử thách bằng
+  /// `OtpService`, xem `AuthService`.
+  twoFactorEnabled       Boolean   @default(false)
+  /// Số nhận OTP, đã xác minh ở bước bật. Tách khỏi `phone` có chủ đích:
+  /// đổi số liên lạc trong hồ sơ nhân sự KHÔNG được âm thầm chuyển hướng OTP.
+  twoFactorPhone         String?
+  twoFactorConfirmedAt   DateTime?
+  /// Mã dự phòng đã băm — dùng khi mất điện thoại
+  twoFactorRecoveryCodes String[]  @default([])
 
   isSystemAdmin Boolean   @default(false)
   isBlocked     Boolean   @default(false)
@@ -260,36 +284,36 @@ model UserAccount {
 }
 
 model Employee {
-  id        String       @id @default(cuid())
-  companyId String
-  company   Company      @relation(fields: [companyId], references: [id])
+  id                   String         @id @default(cuid())
+  companyId            String
+  company              Company        @relation(fields: [companyId], references: [id])
   /// Tài khoản đăng nhập. `null` chỉ trong khoảnh khắc HR vừa nhập hồ sơ mà
   /// chưa cấp tài khoản; bình thường luôn có.
   ///
   /// Quan hệ 1–1: tài khoản gắn với đúng một công ty nên cũng gắn với đúng một
   /// hồ sơ nhân viên.
-  userId    String?      @unique
-  user      UserAccount? @relation(fields: [userId], references: [id])
+  userId               String?        @unique
+  user                 UserAccount?   @relation(fields: [userId], references: [id])
   /// Mã hiển thị: ducnv.amobi — DUY NHẤT trong công ty, BẤT BIẾN sau khi chấm công (BR-04)
-  employeeCode String
-  fullName     String
-  phone        String
-  email        String?
-  branchId     String?
-  branch       Branch?     @relation(fields: [branchId], references: [id])
-  departmentId String?
-  department   Department? @relation(fields: [departmentId], references: [id])
-  position     String?
+  employeeCode         String
+  fullName             String
+  phone                String
+  email                String?
+  branchId             String?
+  branch               Branch?        @relation(fields: [branchId], references: [id])
+  departmentId         String?
+  department           Department?    @relation(fields: [departmentId], references: [id])
+  position             String?
   /// "Chính thức" | "Thử việc" | "Thời vụ" | "Part-time"
-  contractType String?
-  joinedAt     DateTime?
-  terminatedAt DateTime?
-  status       EmployeeStatus @default(PENDING_ACTIVATION)
-  roles        SystemRole[]   @default([EMPLOYEE])
+  contractType         String?
+  joinedAt             DateTime?
+  terminatedAt         DateTime?
+  status               EmployeeStatus @default(PENDING_ACTIVATION)
+  roles                SystemRole[]   @default([EMPLOYEE])
   /// Phạm vi quản lý — dùng cho ScopeGuard của vai trò MANAGER
-  managedDepartmentIds String[] @default([])
+  managedDepartmentIds String[]       @default([])
   /// true sau lần chấm công đầu tiên → khoá employeeCode (BR-04)
-  codeLocked           Boolean  @default(false)
+  codeLocked           Boolean        @default(false)
 
   faceProfiles      FaceProfile[]
   biometricKeys     BiometricKey[]
@@ -313,16 +337,16 @@ model Employee {
 }
 
 model RefreshToken {
-  id        String      @id @default(cuid())
-  userId    String
-  user      UserAccount @relation(fields: [userId], references: [id])
-  tokenHash String      @unique
-  deviceId  String
-  expiresAt DateTime
-  revokedAt DateTime?
+  id            String      @id @default(cuid())
+  userId        String
+  user          UserAccount @relation(fields: [userId], references: [id])
+  tokenHash     String      @unique
+  deviceId      String
+  expiresAt     DateTime
+  revokedAt     DateTime?
   revokedReason String?
   /// Rotation: token thay thế token này (AF-16)
-  replacedById String?
+  replacedById  String?
 
   createdAt DateTime @default(now())
 
@@ -378,13 +402,13 @@ model FaceProfile {
 
 /// Vân tay: server CHỈ lưu public key. Private key nằm trong secure enclave (BR-05, NFR-SEC-07)
 model BiometricKey {
-  id         String   @id @default(cuid())
-  companyId  String
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id])
-  deviceId   String
-  publicKey  String   @db.Text
-  algorithm  String   @default("ES256")
+  id            String    @id @default(cuid())
+  companyId     String
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id])
+  deviceId      String
+  publicKey     String    @db.Text
+  algorithm     String    @default("ES256")
   /// Kết quả App Attest / Play Integrity lúc đăng ký
   attestation   Json?
   revokedAt     DateTime?
@@ -398,21 +422,21 @@ model BiometricKey {
 }
 
 model DeviceBinding {
-  id         String      @id @default(cuid())
-  companyId  String?
-  userId     String
-  user       UserAccount @relation(fields: [userId], references: [id])
-  deviceId   String
-  deviceModel String?
-  osName      String?
-  osVersion   String?
-  appVersion  String?
+  id               String      @id @default(cuid())
+  companyId        String?
+  userId           String
+  user             UserAccount @relation(fields: [userId], references: [id])
+  deviceId         String
+  deviceModel      String?
+  osName           String?
+  osVersion        String?
+  appVersion       String?
   /// Secret dùng ký HMAC request (AF-12). LƯU DẠNG HASH.
   deviceSecretHash String
   pushToken        String?
-  isRooted         Boolean   @default(false)
+  isRooted         Boolean     @default(false)
   lastSeenAt       DateTime?
-  isActive         Boolean   @default(true)
+  isActive         Boolean     @default(true)
   revokedAt        DateTime?
   revokedBy        String?
   revokedReason    String?
@@ -439,29 +463,29 @@ enum ShiftType {
 }
 
 model Shift {
-  id        String    @id @default(cuid())
-  companyId String
-  company   Company   @relation(fields: [companyId], references: [id])
+  id                         String    @id @default(cuid())
+  companyId                  String
+  company                    Company   @relation(fields: [companyId], references: [id])
   /// "Hành chính", "Ca đêm"
-  name      String
-  type      ShiftType @default(FIXED)
+  name                       String
+  type                       ShiftType @default(FIXED)
   /// Giờ dạng "HH:mm" theo timezone công ty
-  startTime String?
-  endTime   String?
+  startTime                  String?
+  endTime                    String?
   /// true nếu ca kết thúc vào NGÀY HÔM SAU (ca đêm 22:00 → 06:00)
-  crossesMidnight Boolean @default(false)
-  breakMinutes    Int     @default(0)
+  crossesMidnight            Boolean   @default(false)
+  breakMinutes               Int       @default(0)
   /// Ca linh hoạt: tổng phút phải làm trong ngày
-  requiredMinutes Int?
-  lateToleranceMinutes       Int @default(0)
-  earlyLeaveToleranceMinutes Int @default(0)
+  requiredMinutes            Int?
+  lateToleranceMinutes       Int       @default(0)
+  earlyLeaveToleranceMinutes Int       @default(0)
   /// Ca mặc định của công ty khi nhân viên không được phân ca (BR-ATT-04)
-  isDefault                  Boolean @default(false)
+  isDefault                  Boolean   @default(false)
   /// Bitmask ngày trong tuần áp dụng: 1=T2 ... 64=CN. 0 = mọi ngày
-  weekdayMask                Int     @default(0)
+  weekdayMask                Int       @default(0)
   /// Hiệu lực theo thời gian (D6) — đổi giờ ca giữa tháng không phá dữ liệu cũ
-  effectiveFrom DateTime
-  effectiveTo   DateTime?
+  effectiveFrom              DateTime
+  effectiveTo                DateTime?
 
   segments    ShiftSegment[]
   assignments ShiftAssignment[]
@@ -506,11 +530,11 @@ model ShiftAssignment {
 }
 
 model Holiday {
-  id        String   @id @default(cuid())
-  companyId String
-  company   Company  @relation(fields: [companyId], references: [id])
-  name      String
-  date      DateTime @db.Date
+  id             String    @id @default(cuid())
+  companyId      String
+  company        Company   @relation(fields: [companyId], references: [id])
+  name           String
+  date           DateTime  @db.Date
   /// Nghỉ bù khi lễ trùng cuối tuần
   substituteDate DateTime? @db.Date
   /// Hệ số OT áp dụng cho ngày này (NFR-LEGAL-05: ngày lễ ≥ 300%)
@@ -528,13 +552,13 @@ model Holiday {
 /// Toàn bộ chính sách cấu hình được của công ty (BR-12).
 /// Key-value có hiệu lực theo thời gian (D6).
 model CompanyPolicy {
-  id            String   @id @default(cuid())
+  id            String    @id @default(cuid())
   companyId     String
-  company       Company  @relation(fields: [companyId], references: [id])
+  company       Company   @relation(fields: [companyId], references: [id])
   /// VD: "attendance.geofence.outOfRangeAction"
   key           String
   value         Json
-  effectiveFrom DateTime @default(now())
+  effectiveFrom DateTime  @default(now())
   effectiveTo   DateTime?
   updatedBy     String?
 
@@ -545,21 +569,21 @@ model CompanyPolicy {
 }
 
 model LeavePolicy {
-  id                  String   @id @default(cuid())
-  companyId           String
+  id                   String    @id @default(cuid())
+  companyId            String
   /// null = áp dụng chung cho mọi loại hợp đồng
-  contractType        String?
+  contractType         String?
   /// NFR-LEGAL-07: tối thiểu 12 ngày/năm
-  baseDaysPerYear     Decimal  @default(12) @db.Decimal(5, 2)
-  seniorityBonusDays  Decimal  @default(1) @db.Decimal(5, 2)
-  seniorityEveryYears Int      @default(5)
-  allowCarryOver      Boolean  @default(true)
-  maxCarryOverDays    Decimal? @db.Decimal(5, 2)
+  baseDaysPerYear      Decimal   @default(12) @db.Decimal(5, 2)
+  seniorityBonusDays   Decimal   @default(1) @db.Decimal(5, 2)
+  seniorityEveryYears  Int       @default(5)
+  allowCarryOver       Boolean   @default(true)
+  maxCarryOverDays     Decimal?  @db.Decimal(5, 2)
   /// Phép cộng dồn hết hạn tháng mấy của năm sau
-  carryOverExpireMonth Int?    @default(3)
+  carryOverExpireMonth Int?      @default(3)
   /// "YEARLY" | "MONTHLY"
-  accrualMode          String  @default("YEARLY")
-  effectiveFrom        DateTime @default(now())
+  accrualMode          String    @default("YEARLY")
+  effectiveFrom        DateTime  @default(now())
   effectiveTo          DateTime?
 
   createdAt DateTime @default(now())
@@ -569,17 +593,17 @@ model LeavePolicy {
 }
 
 model LeaveBalance {
-  id         String   @id @default(cuid())
-  companyId  String
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id])
-  year       Int
+  id              String   @id @default(cuid())
+  companyId       String
+  employeeId      String
+  employee        Employee @relation(fields: [employeeId], references: [id])
+  year            Int
   /// Được cấp
-  entitledDays    Decimal @db.Decimal(5, 2)
-  carriedOverDays Decimal @default(0) @db.Decimal(5, 2)
-  usedDays        Decimal @default(0) @db.Decimal(5, 2)
+  entitledDays    Decimal  @db.Decimal(5, 2)
+  carriedOverDays Decimal  @default(0) @db.Decimal(5, 2)
+  usedDays        Decimal  @default(0) @db.Decimal(5, 2)
   /// Đang chờ duyệt
-  pendingDays     Decimal @default(0) @db.Decimal(5, 2)
+  pendingDays     Decimal  @default(0) @db.Decimal(5, 2)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -696,7 +720,7 @@ model AttendanceLog {
 }
 
 model FraudFlag {
-  id              String        @id @default(cuid())
+  id              String         @id @default(cuid())
   companyId       String
   attendanceLogId String?
   attendanceLog   AttendanceLog? @relation(fields: [attendanceLogId], references: [id])
@@ -709,11 +733,11 @@ model FraudFlag {
   score           Int
   details         Json?
   /// Xử lý (AF-23)
-  reviewedBy     String?
-  reviewedAt     DateTime?
+  reviewedBy      String?
+  reviewedAt      DateTime?
   /// "KEEP" | "VOID" | "ESCALATE"
-  reviewDecision String?
-  reviewReason   String?
+  reviewDecision  String?
+  reviewReason    String?
 
   createdAt DateTime @default(now())
 
@@ -726,10 +750,10 @@ model FraudFlag {
 
 /// Hiệu chỉnh công thủ công — KHÔNG sửa đè AttendanceLog (BR-ADJ-01)
 model AttendanceAdjustment {
-  id         String   @id @default(cuid())
-  companyId  String
-  employeeId String
-  workDate   DateTime @db.Date
+  id              String         @id @default(cuid())
+  companyId       String
+  employeeId      String
+  workDate        DateTime       @db.Date
   /// null nếu là BỔ SUNG bản ghi hoàn toàn mới (quên chấm công)
   attendanceLogId String?
   attendanceLog   AttendanceLog? @relation(fields: [attendanceLogId], references: [id])
@@ -774,15 +798,15 @@ model AttendanceDaily {
 
   firstCheckInAt    DateTime?
   lastCheckOutAt    DateTime?
-  workedMinutes     Int      @default(0)
-  breakMinutes      Int      @default(0)
-  lateMinutes       Int      @default(0)
-  earlyLeaveMinutes Int      @default(0)
-  otMinutes         Int      @default(0)
-  otMultiplier      Decimal? @db.Decimal(4, 2)
-  makeupMinutes     Int      @default(0)
+  workedMinutes     Int         @default(0)
+  breakMinutes      Int         @default(0)
+  lateMinutes       Int         @default(0)
+  earlyLeaveMinutes Int         @default(0)
+  otMinutes         Int         @default(0)
+  otMultiplier      Decimal?    @db.Decimal(4, 2)
+  makeupMinutes     Int         @default(0)
   /// Số công chuẩn quy đổi
-  standardDays      Decimal  @default(0) @db.Decimal(5, 3)
+  standardDays      Decimal     @default(0) @db.Decimal(5, 3)
   status            DailyStatus @default(ABSENT)
   /// Đơn từ ảnh hưởng ngày này
   appliedRequestIds String[]    @default([])
@@ -814,17 +838,17 @@ enum RequestStatus {
 
 /// Loại đơn cấu hình được theo công ty (không hard-code enum)
 model RequestType {
-  id        String  @id @default(cuid())
-  companyId String
-  company   Company @relation(fields: [companyId], references: [id])
+  id                  String  @id @default(cuid())
+  companyId           String
+  company             Company @relation(fields: [companyId], references: [id])
   /// "ANNUAL_LEAVE" | "GO_OUT" | "MAKEUP" | "BUSINESS_TRIP" | "OT_REGISTER" | ...
-  code      String
-  name      String
+  code                String
+  name                String
   /// Trừ vào đâu: "ANNUAL_LEAVE" | "NONE" | "UNPAID" | "OT_CREDIT" | "MAKEUP_CREDIT"
-  deductFrom String @default("NONE")
+  deductFrom          String  @default("NONE")
   /// "DAY" | "HALF_DAY" | "HOUR"
-  unit       String @default("DAY")
-  requiresAttachment Boolean @default(false)
+  unit                String  @default("DAY")
+  requiresAttachment  Boolean @default(false)
   /// OT phải duyệt trước mới tính
   requiresPreApproval Boolean @default(false)
   maxDaysPerRequest   Int?
@@ -855,13 +879,13 @@ model ApprovalFlow {
 }
 
 model ApprovalFlowStep {
-  id     String       @id @default(cuid())
-  flowId String
-  flow   ApprovalFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
-  order  Int
+  id           String       @id @default(cuid())
+  flowId       String
+  flow         ApprovalFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  order        Int
   /// "DIRECT_MANAGER" | "DEPARTMENT_HEAD" | "HR_PAYROLL" | "COMPANY_ADMIN"
   approverRole String
-  isRequired   Boolean @default(true)
+  isRequired   Boolean      @default(true)
   /// Điều kiện kích hoạt bước này, VD { "minDays": 3 }
   condition    Json?
 
@@ -878,12 +902,12 @@ model LeaveRequest {
   requestType   RequestType   @relation(fields: [requestTypeId], references: [id])
   status        RequestStatus @default(DRAFT)
 
-  startAt DateTime
-  endAt   DateTime
+  startAt          DateTime
+  endAt            DateTime
   /// Số ngày/giờ quy đổi
-  quantity  Decimal @db.Decimal(6, 2)
-  isHalfDay Boolean @default(false)
-  reason    String  @db.Text
+  quantity         Decimal   @db.Decimal(6, 2)
+  isHalfDay        Boolean   @default(false)
+  reason           String    @db.Text
   /// Cho đơn "Xin ra ngoài": giờ về dự kiến
   expectedReturnAt DateTime?
 
@@ -906,18 +930,18 @@ model LeaveRequest {
 }
 
 model ApprovalStep {
-  id           String       @id @default(cuid())
-  companyId    String
-  requestId    String
-  request      LeaveRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
-  order        Int
-  approverRole String
+  id            String       @id @default(cuid())
+  companyId     String
+  requestId     String
+  request       LeaveRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  order         Int
+  approverRole  String
   /// Người được phân công duyệt (giải quyết cụ thể tại thời điểm gửi đơn)
-  approverId   String?
+  approverId    String?
   /// "PENDING" | "APPROVED" | "REJECTED" | "SKIPPED"
-  status       String       @default("PENDING")
-  decidedAt    DateTime?
-  comment      String?
+  status        String       @default("PENDING")
+  decidedAt     DateTime?
+  comment       String?
   /// Người duyệt thay khi người duyệt chính vắng mặt (BR-APV-04)
   delegatedFrom String?
 
@@ -948,22 +972,22 @@ model RequestAttachment {
 // ============================================================================
 
 model MakeupWorkRecord {
-  id         String   @id @default(cuid())
-  companyId  String
-  employeeId String
-  employee   Employee @relation(fields: [employeeId], references: [id])
+  id               String    @id @default(cuid())
+  companyId        String
+  employeeId       String
+  employee         Employee  @relation(fields: [employeeId], references: [id])
   /// Ngày phát sinh nợ công
-  debtWorkDate   DateTime @db.Date
-  debtMinutes    Int
+  debtWorkDate     DateTime  @db.Date
+  debtMinutes      Int
   /// Ngày thực hiện làm bù
-  makeupWorkDate DateTime? @db.Date
-  makeupMinutes  Int       @default(0)
+  makeupWorkDate   DateTime? @db.Date
+  makeupMinutes    Int       @default(0)
   remainingMinutes Int
   /// Hạn phải làm bù
-  dueDate   DateTime? @db.Date
-  requestId String?
+  dueDate          DateTime? @db.Date
+  requestId        String?
   /// "OPEN" | "PARTIAL" | "COMPLETED" | "EXPIRED"
-  status    String    @default("OPEN")
+  status           String    @default("OPEN")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -979,16 +1003,16 @@ enum PayrollPeriodStatus {
 }
 
 model PayrollPeriod {
-  id        String              @id @default(cuid())
-  companyId String
-  company   Company             @relation(fields: [companyId], references: [id])
+  id           String              @id @default(cuid())
+  companyId    String
+  company      Company             @relation(fields: [companyId], references: [id])
   /// "Tháng 08/2026"
-  name      String
-  startDate DateTime            @db.Date
-  endDate   DateTime            @db.Date
-  status    PayrollPeriodStatus @default(OPEN)
-  closedAt  DateTime?
-  closedBy  String?
+  name         String
+  startDate    DateTime            @db.Date
+  endDate      DateTime            @db.Date
+  status       PayrollPeriodStatus @default(OPEN)
+  closedAt     DateTime?
+  closedBy     String?
   /// Mở lại kỳ đã chốt — thao tác đặc quyền (BR-07)
   reopenedAt   DateTime?
   reopenedBy   String?
@@ -1012,19 +1036,19 @@ model PayrollSummary {
   period     PayrollPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
   employeeId String
 
-  standardDays     Decimal @db.Decimal(6, 2)
+  standardDays     Decimal  @db.Decimal(6, 2)
   workedMinutes    Int
-  otMinutesNormal  Int     @default(0)
-  otMinutesWeekend Int     @default(0)
-  otMinutesHoliday Int     @default(0)
-  lateCount        Int     @default(0)
-  lateMinutesTotal Int     @default(0)
-  earlyLeaveCount  Int     @default(0)
-  leaveDays        Decimal @default(0) @db.Decimal(5, 2)
-  unpaidLeaveDays  Decimal @default(0) @db.Decimal(5, 2)
-  makeupMinutes    Int     @default(0)
+  otMinutesNormal  Int      @default(0)
+  otMinutesWeekend Int      @default(0)
+  otMinutesHoliday Int      @default(0)
+  lateCount        Int      @default(0)
+  lateMinutesTotal Int      @default(0)
+  earlyLeaveCount  Int      @default(0)
+  leaveDays        Decimal  @default(0) @db.Decimal(5, 2)
+  unpaidLeaveDays  Decimal  @default(0) @db.Decimal(5, 2)
+  makeupMinutes    Int      @default(0)
   penaltyAmount    Decimal? @db.Decimal(14, 2)
-  violationCount   Int     @default(0)
+  violationCount   Int      @default(0)
   /// Chi tiết để giải trình
   breakdown        Json?
 
@@ -1040,7 +1064,7 @@ model PayrollSummary {
 // ============================================================================
 
 model Notification {
-  id           String  @id @default(cuid())
+  id           String    @id @default(cuid())
   companyId    String?
   /// Người nhận. null + companyId → thông báo toàn công ty
   employeeId   String?
@@ -1048,10 +1072,10 @@ model Notification {
   /// "REQUEST_APPROVED" | "ATTENDANCE_REMINDER" | "FRAUD_FLAGGED" | ...
   type         String
   title        String
-  body         String  @db.Text
+  body         String    @db.Text
   data         Json?
   /// "PUSH" | "IN_APP" | "SMS" | "EMAIL"
-  channel      String  @default("PUSH")
+  channel      String    @default("PUSH")
   scheduledAt  DateTime?
   sentAt       DateTime?
   readAt       DateTime?
@@ -1101,12 +1125,12 @@ model SystemConfig {
 }
 
 model AiModelVersion {
-  id       String  @id @default(cuid())
+  id                       String    @id @default(cuid())
   /// "buffalo_l"
-  name     String
+  name                     String
   /// "2.1"
-  version  String
-  isActive Boolean @default(false)
+  version                  String
+  isActive                 Boolean   @default(false)
   /// Kết quả đo trên tập kiểm định
   farMeasured              Float?
   frrMeasured              Float?
@@ -1125,19 +1149,19 @@ model AiModelVersion {
 
 /// Theo dõi job export bất đồng bộ (202 Accepted → /v1/jobs/{id})
 model ExportJob {
-  id         String  @id @default(cuid())
-  companyId  String
-  createdBy  String
+  id           String  @id @default(cuid())
+  companyId    String
+  createdBy    String
   /// "ATTENDANCE" | "PAYROLL" | "EMPLOYEE_IMPORT_RESULT" | ...
-  kind       String
+  kind         String
   /// "QUEUED" | "PROCESSING" | "DONE" | "FAILED"
-  status     String  @default("QUEUED")
-  params     Json?
-  fileKey    String?
-  fileName   String?
-  errorCode  String?
+  status       String  @default("QUEUED")
+  params       Json?
+  fileKey      String?
+  fileName     String?
+  errorCode    String?
   errorMessage String?
-  progress   Int     @default(0)
+  progress     Int     @default(0)
 
   createdAt   DateTime  @default(now())
   completedAt DateTime?

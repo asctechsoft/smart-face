@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { EmployeeStatus, Prisma, SystemRole } from '@prisma/client';
+import { EmployeeStatus, SystemRole } from '@prisma/client';
 import { PaginatedResult } from 'src/common/dto';
 import { AppException } from 'src/common/errors';
 import {
@@ -10,14 +10,16 @@ import {
   normalizePhone,
   buildMeta,
 } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { JOBS } from 'src/infra/queue/queue.constants';
 import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../notification/notification.service';
+import { FirebaseService } from 'src/infra/firebase/firebase.service';
 import { PasswordService } from '../auth/password.service';
 import { TokenService } from '../auth/token.service';
 import { PolicyKeys } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
+import { EmployeeRepository } from './employee.repository';
 import type {
   CreateEmployeeDto,
   EmployeeQueryDto,
@@ -46,12 +48,14 @@ export class EmployeeService {
   private readonly logger = new Logger(EmployeeService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly employees: EmployeeRepository,
+    private readonly transactions: TransactionManager,
     private readonly policy: PolicyService,
     private readonly notifications: NotificationService,
     private readonly audit: AuditService,
     private readonly tokens: TokenService,
     private readonly passwords: PasswordService,
+    private readonly firebase: FirebaseService,
   ) {}
 
   // ===========================================================================
@@ -59,56 +63,21 @@ export class EmployeeService {
   // ===========================================================================
 
   async list(companyId: string, query: EmployeeQueryDto, departmentScope: string[] | null) {
-    const where: Prisma.EmployeeWhereInput = { companyId, deletedAt: null };
-
-    if (query.status) where.status = query.status;
-    if (query.departmentId) where.departmentId = query.departmentId;
-    if (query.branchId) where.branchId = query.branchId;
-    if (departmentScope) where.departmentId = { in: departmentScope };
-    if (query.q) {
-      where.OR = [
-        { fullName: { contains: query.q, mode: 'insensitive' } },
-        { employeeCode: { contains: query.q, mode: 'insensitive' } },
-        { phone: { contains: query.q } },
-        { email: { contains: query.q, mode: 'insensitive' } },
-      ];
-    }
-
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.employee.findMany({
-        where,
-        include: {
-          department: { select: { id: true, name: true } },
-          branch: { select: { id: true, name: true } },
-          _count: { select: { faceProfiles: true, biometricKeys: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: query.skip,
-        take: query.take,
-      }),
-      this.prisma.employee.count({ where }),
-    ]);
+    const { items, total } = await this.employees.search(companyId, {
+      status: query.status,
+      departmentId: query.departmentId,
+      branchId: query.branchId,
+      departmentScope,
+      q: query.q,
+      skip: query.skip,
+      take: query.take,
+    });
 
     return new PaginatedResult(items, buildMeta(query.page, query.pageSize, total));
   }
 
   async getById(companyId: string, employeeId: string) {
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, companyId, deletedAt: null },
-      include: {
-        department: { select: { id: true, name: true } },
-        branch: { select: { id: true, name: true } },
-        user: { select: { id: true, phone: true, lastLoginAt: true, isBlocked: true } },
-        faceProfiles: {
-          where: { status: 'ACTIVE' },
-          select: { id: true, angle: true, modelVersion: true, enrolledAt: true, qualityScore: true },
-        },
-        biometricKeys: {
-          where: { revokedAt: null },
-          select: { id: true, deviceId: true, algorithm: true, createdAt: true },
-        },
-      },
-    });
+    const employee = await this.employees.findDetail(companyId, employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }
@@ -118,11 +87,8 @@ export class EmployeeService {
   /** Hồ sơ cá nhân của chính nhân viên (FR-APP-PRO-01). */
   async getMyProfile(companyId: string, employeeId: string) {
     const employee = await this.getById(companyId, employeeId);
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { id: true, name: true, code: true, timezone: true },
-    });
-    return { ...employee, company };
+    const { id, name, code, timezone } = await this.employees.findCompanyProfile(companyId);
+    return { ...employee, company: { id, name, code, timezone } };
   }
 
   // ===========================================================================
@@ -131,10 +97,7 @@ export class EmployeeService {
 
   /** FR-WEB-HR-06 — xem trước mã sinh ra, HR sửa được trước khi lưu. */
   async previewCode(companyId: string, fullName: string) {
-    const company = await this.prisma.company.findUniqueOrThrow({
-      where: { id: companyId },
-      select: { code: true },
-    });
+    const company = await this.employees.findCompanyProfile(companyId);
 
     const base = buildEmployeeCode(fullName, company.code);
     const unique = await this.generateUniqueCode(companyId, company.code, fullName);
@@ -173,20 +136,19 @@ export class EmployeeService {
     fullName: string,
     extraTaken: ReadonlySet<string> = new Set(),
   ): Promise<string> {
-    const existing = await this.prisma.employee.findMany({
-      where: { companyId },
-      select: { employeeCode: true },
-    });
-    const taken = new Set([...existing.map((row) => row.employeeCode), ...extraTaken]);
+    const existing = await this.employees.findAllEmployeeCodes(companyId);
+    const taken = new Set([...existing, ...extraTaken]);
     return buildUniqueEmployeeCode(fullName, companyCode, taken);
   }
 
   /**
    * Cấp tài khoản đăng nhập cho nhân viên mới.
    *
+   * Tạo tài khoản ở HAI nơi: Firebase giữ email + mật khẩu, bảng `UserAccount`
+   * giữ dữ liệu nghiệp vụ và nối với nhau qua `firebaseUid`.
+   *
    * Trả về mật khẩu tạm ở dạng gốc để HR đọc lại cho nhân viên — **một lần
-   * duy nhất**. Server chỉ lưu bản băm nên không xem lại được; muốn cấp lại
-   * phải đặt lại mật khẩu.
+   * duy nhất**. Không nơi nào lưu lại được; muốn cấp lại phải đặt lại mật khẩu.
    *
    * Tài khoản bắt đầu với `mustChangePassword = true`, và `PasswordChangeGuard`
    * chặn mọi API khác cho tới khi nhân viên đổi mật khẩu. Mật khẩu tạm đi qua
@@ -204,28 +166,41 @@ export class EmployeeService {
       });
     }
 
-    const taken = await this.prisma.userAccount.findUnique({
-      where: { companyId_email: { companyId, email } },
-      select: { id: true },
-    });
+    const taken = await this.employees.isEmailTaken(companyId, email);
     if (taken) {
       throw new AppException('EMP_EMAIL_TAKEN', { email });
     }
 
     const temporaryPassword = this.passwords.generateTemporary();
-    const account = await this.prisma.userAccount.create({
-      data: {
-        companyId,
+
+    // Tạo bên Firebase TRƯỚC. Nếu email đã có người dùng ở công ty khác, Firebase
+    // từ chối ngay và ta chưa ghi gì xuống database — thứ tự ngược lại sẽ để lại
+    // một `UserAccount` không bao giờ đăng nhập được.
+    //
+    // (Firebase coi email là duy nhất TOÀN DỰ ÁN, chặt hơn ràng buộc
+    // `@@unique([companyId, email])` của bảng. Xem chú thích ở `schema.prisma`.)
+    const firebaseUid = await this.firebase.createUser({
+      email,
+      password: temporaryPassword,
+      displayName: input.fullName,
+    });
+
+    try {
+      const account = await this.employees.createUserAccount(companyId, {
         email,
         phone: input.phone,
         fullName: input.fullName,
-        passwordHash: await this.passwords.hash(temporaryPassword),
-        mustChangePassword: true,
-      },
-      select: { id: true },
-    });
+        firebaseUid,
+      });
 
-    return { userId: account.id, email, temporaryPassword };
+      return { userId: account.id, email, temporaryPassword };
+    } catch (error) {
+      // Ghi database hỏng (trùng khoá do gọi song song, mất kết nối…) thì tài
+      // khoản Firebase vừa tạo trở thành rác: nó chiếm mất email đó vĩnh viễn,
+      // nên lần cấp lại sau sẽ báo trùng mà HR không hiểu vì sao.
+      await this.firebase.deleteUser(firebaseUid);
+      throw error;
+    }
   }
 
   // ===========================================================================
@@ -240,9 +215,7 @@ export class EmployeeService {
       throw new AppException('AUTH_PHONE_INVALID', { phone: dto.phone });
     }
 
-    const duplicate = await this.prisma.employee.findFirst({
-      where: { companyId, phone, deletedAt: null },
-    });
+    const duplicate = await this.employees.findByPhone(companyId, phone);
     if (duplicate) {
       throw new AppException('EMP_PHONE_TAKEN', { existingEmployeeCode: duplicate.employeeCode });
     }
@@ -250,10 +223,7 @@ export class EmployeeService {
     // FR-ADM-TEN-04: giới hạn gói enforce ở Backend.
     await this.assertEmployeeQuota(companyId);
 
-    const company = await this.prisma.company.findUniqueOrThrow({
-      where: { id: companyId },
-      select: { code: true, name: true, domain: true },
-    });
+    const company = await this.employees.findCompanyProfile(companyId);
     const companyDomain = company.domain;
 
     let employeeCode = dto.employeeCode?.trim().toLowerCase();
@@ -263,9 +233,7 @@ export class EmployeeService {
           reason: 'Mã nhân viên chỉ gồm chữ thường/số và một dấu chấm, VD: ducnv.amobi',
         });
       }
-      const taken = await this.prisma.employee.findFirst({
-        where: { companyId, employeeCode },
-      });
+      const taken = await this.employees.findByCode(companyId, employeeCode);
       if (taken) {
         throw new AppException('EMP_CODE_TAKEN', { employeeCode });
       }
@@ -284,23 +252,20 @@ export class EmployeeService {
       phone,
     });
 
-    const employee = await this.prisma.employee.create({
-      data: {
-        companyId,
-        userId: account.userId,
-        employeeCode,
-        fullName: dto.fullName,
-        phone,
-        email: dto.email,
-        departmentId: dto.departmentId,
-        branchId: dto.branchId,
-        position: dto.position,
-        contractType: dto.contractType,
-        joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : new Date(),
-        status: EmployeeStatus.PENDING_ACTIVATION,
-        roles: dto.roles?.length ? dto.roles : [SystemRole.EMPLOYEE],
-        managedDepartmentIds: dto.managedDepartmentIds ?? [],
-      },
+    const employee = await this.employees.create(companyId, {
+      userId: account.userId,
+      employeeCode,
+      fullName: dto.fullName,
+      phone,
+      email: dto.email,
+      departmentId: dto.departmentId,
+      branchId: dto.branchId,
+      position: dto.position,
+      contractType: dto.contractType,
+      joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : new Date(),
+      status: EmployeeStatus.PENDING_ACTIVATION,
+      roles: dto.roles?.length ? dto.roles : [SystemRole.EMPLOYEE],
+      managedDepartmentIds: dto.managedDepartmentIds ?? [],
     });
 
     if (dto.sendInvite !== false) {
@@ -329,9 +294,7 @@ export class EmployeeService {
   }
 
   async update(ctx: TenantContext, employeeId: string, dto: UpdateEmployeeDto) {
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, companyId: ctx.companyId, deletedAt: null },
-    });
+    const employee = await this.employees.findById(ctx.companyId, employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }
@@ -344,29 +307,27 @@ export class EmployeeService {
       if (!isValidEmployeeCode(dto.employeeCode)) {
         throw new AppException('SYS_VALIDATION_ERROR', { reason: 'Mã nhân viên không hợp lệ.' });
       }
-      const taken = await this.prisma.employee.findFirst({
-        where: { companyId: ctx.companyId, employeeCode: dto.employeeCode, id: { not: employeeId } },
-      });
+      const taken = await this.employees.findByCode(ctx.companyId, dto.employeeCode, employeeId);
       if (taken) {
         throw new AppException('EMP_CODE_TAKEN');
       }
     }
 
-    const updated = await this.prisma.employee.update({
-      where: { id: employeeId },
-      data: {
-        fullName: dto.fullName,
-        employeeCode: dto.employeeCode,
-        email: dto.email,
-        departmentId: dto.departmentId,
-        branchId: dto.branchId,
-        position: dto.position,
-        contractType: dto.contractType,
-        joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : undefined,
-        roles: dto.roles,
-        managedDepartmentIds: dto.managedDepartmentIds,
-      },
+    const updated = await this.employees.update(ctx.companyId, employeeId, {
+      fullName: dto.fullName,
+      employeeCode: dto.employeeCode,
+      email: dto.email,
+      departmentId: dto.departmentId,
+      branchId: dto.branchId,
+      position: dto.position,
+      contractType: dto.contractType,
+      joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : undefined,
+      roles: dto.roles,
+      managedDepartmentIds: dto.managedDepartmentIds,
     });
+    if (!updated) {
+      throw new AppException('EMP_NOT_FOUND');
+    }
 
     await this.audit.record(ctx, {
       action: 'EMPLOYEE_UPDATE',
@@ -391,9 +352,7 @@ export class EmployeeService {
 
   /** FR-WEB-HR-09 — chỉ xoá được hồ sơ chưa kích hoạt. */
   async remove(ctx: TenantContext, employeeId: string) {
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, companyId: ctx.companyId, deletedAt: null },
-    });
+    const employee = await this.employees.findById(ctx.companyId, employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }
@@ -402,10 +361,7 @@ export class EmployeeService {
     }
 
     // D4: soft delete, giữ dấu vết cho kiểm toán.
-    await this.prisma.employee.update({
-      where: { id: employeeId },
-      data: { deletedAt: new Date() },
-    });
+    await this.employees.softDelete(ctx.companyId, employeeId, new Date());
 
     await this.audit.record(ctx, {
       action: 'EMPLOYEE_DELETE',
@@ -418,10 +374,7 @@ export class EmployeeService {
   }
 
   async resendInvite(ctx: TenantContext, employeeId: string) {
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, companyId: ctx.companyId, deletedAt: null },
-      include: { company: { select: { name: true } } },
-    });
+    const employee = await this.employees.findWithCompanyName(ctx.companyId, employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }
@@ -437,9 +390,8 @@ export class EmployeeService {
   async suspend(ctx: TenantContext, employeeId: string, reason: string) {
     const employee = await this.requireEmployee(ctx.companyId, employeeId);
 
-    await this.prisma.employee.update({
-      where: { id: employeeId },
-      data: { status: EmployeeStatus.SUSPENDED },
+    await this.employees.updateStatus(ctx.companyId, employeeId, {
+      status: EmployeeStatus.SUSPENDED,
     });
 
     // Tạm ngưng → thu hồi phiên ngay, không cho đăng nhập/chấm công.
@@ -475,9 +427,8 @@ export class EmployeeService {
       });
     }
 
-    await this.prisma.employee.update({
-      where: { id: employeeId },
-      data: { status: EmployeeStatus.ACTIVE },
+    await this.employees.updateStatus(ctx.companyId, employeeId, {
+      status: EmployeeStatus.ACTIVE,
     });
 
     await this.audit.record(ctx, {
@@ -510,48 +461,41 @@ export class EmployeeService {
       PolicyKeys.BIOMETRIC_DELETE_ON_TERMINATE,
     );
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.employee.update({
-        where: { id: employeeId },
-        data: { status: EmployeeStatus.TERMINATED, terminatedAt },
-      });
+    await this.transactions.run(async (tx) => {
+      await this.employees.updateStatus(
+        ctx.companyId,
+        employeeId,
+        { status: EmployeeStatus.TERMINATED, terminatedAt },
+        tx,
+      );
 
       // Luôn VÔ HIỆU dữ liệu sinh trắc học ngay; việc XOÁ hẳn theo chính sách.
-      await tx.faceProfile.updateMany({
-        where: { employeeId, status: 'ACTIVE' },
-        data: {
-          status: 'REVOKED',
-          revokedAt: new Date(),
-          revokedBy: ctx.userId,
-          revokedReason: 'EMPLOYEE_TERMINATED',
-        },
-      });
-      await tx.biometricKey.updateMany({
-        where: { employeeId, revokedAt: null },
-        data: { revokedAt: new Date(), revokedReason: 'EMPLOYEE_TERMINATED' },
-      });
+      await this.employees.revokeFaceProfiles(ctx.companyId, employeeId, ctx.userId, tx);
+      await this.employees.revokeBiometricKeys(ctx.companyId, employeeId, tx);
 
       if (employee.userId) {
-        await tx.deviceBinding.updateMany({
-          where: { userId: employee.userId, companyId: ctx.companyId, isActive: true },
-          data: {
-            isActive: false,
-            revokedAt: new Date(),
-            revokedBy: ctx.userId,
-            revokedReason: 'EMPLOYEE_TERMINATED',
-          },
-        });
+        await this.employees.revokeDeviceBindings(ctx.companyId, employee.userId, ctx.userId, tx);
       }
     });
 
     if (employee.userId) {
       await this.tokens.revokeAllForUser(employee.userId, 'EMPLOYEE_TERMINATED');
+
+      // Khoá luôn tài khoản Firebase. Thu hồi phiên của Backend mà để danh tính
+      // bên Firebase còn sống nghĩa là người đã nghỉ việc vẫn đăng nhập được và
+      // lấy được ID token mới — chốt duy nhất còn lại là `assertAccountUsable`,
+      // và trông vào đúng một chốt cho việc chấm dứt truy cập là quá mỏng.
+      const firebaseUid = await this.employees.findFirebaseUid(ctx.companyId, employee.userId);
+      if (firebaseUid) {
+        await this.firebase.setDisabled(firebaseUid, true);
+        await this.firebase.revokeTokens(firebaseUid);
+      }
     }
 
     if (deleteBiometricNow) {
-      const deleted = await this.prisma.faceProfile.deleteMany({ where: { employeeId } });
+      const deleted = await this.employees.deleteFaceProfiles(ctx.companyId, employeeId);
       this.logger.log(
-        `Đã xoá ${deleted.count} embedding của nhân viên ${employeeId} theo chính sách công ty`,
+        `Đã xoá ${deleted} embedding của nhân viên ${employeeId} theo chính sách công ty`,
       );
     }
 
@@ -583,26 +527,20 @@ export class EmployeeService {
    *
    * Mã nhân viên sinh ra phải duy nhất kể cả khi hai người TRÙNG TÊN trong cùng file.
    */
-  async validateImport(companyId: string, rows: ImportRowDto[]): Promise<{
+  async validateImport(
+    companyId: string,
+    rows: ImportRowDto[],
+  ): Promise<{
     totalRows: number;
     validRows: number;
     invalidRows: number;
     rows: ImportRowResult[];
   }> {
-    const company = await this.prisma.company.findUniqueOrThrow({
-      where: { id: companyId },
-      select: { code: true },
-    });
+    const company = await this.employees.findCompanyProfile(companyId);
 
     const [existingEmployees, departments] = await Promise.all([
-      this.prisma.employee.findMany({
-        where: { companyId, deletedAt: null },
-        select: { employeeCode: true, phone: true },
-      }),
-      this.prisma.department.findMany({
-        where: { companyId, deletedAt: null },
-        select: { id: true, name: true },
-      }),
+      this.employees.findCodesAndPhones(companyId),
+      this.employees.findDepartments(companyId),
     ]);
 
     const takenCodes = new Set(existingEmployees.map((row) => row.employeeCode));
@@ -683,14 +621,8 @@ export class EmployeeService {
       validation.rows.filter((row) => row.valid).map((row) => row.row),
     );
 
-    const company = await this.prisma.company.findUniqueOrThrow({
-      where: { id: ctx.companyId },
-      select: { code: true, name: true },
-    });
-    const departments = await this.prisma.department.findMany({
-      where: { companyId: ctx.companyId, deletedAt: null },
-      select: { id: true, name: true },
-    });
+    const company = await this.employees.findCompanyProfile(ctx.companyId);
+    const departments = await this.employees.findDepartments(ctx.companyId);
     const departmentByName = new Map(
       departments.map((department) => [department.name.toLowerCase(), department.id]),
     );
@@ -721,22 +653,19 @@ export class EmployeeService {
           phone,
         });
 
-        const employee = await this.prisma.employee.create({
-          data: {
-            companyId: ctx.companyId,
-            userId: account.userId,
-            employeeCode: validationRow.generatedCode,
-            fullName: row.fullName.trim(),
-            phone,
-            departmentId: row.departmentName
-              ? (departmentByName.get(row.departmentName.trim().toLowerCase()) ?? null)
-              : null,
-            position: row.position,
-            contractType: row.contractType,
-            joinedAt: row.joinedAt ? new Date(row.joinedAt) : new Date(),
-            status: EmployeeStatus.PENDING_ACTIVATION,
-            roles: [SystemRole.EMPLOYEE],
-          },
+        const employee = await this.employees.create(ctx.companyId, {
+          userId: account.userId,
+          employeeCode: validationRow.generatedCode,
+          fullName: row.fullName.trim(),
+          phone,
+          departmentId: row.departmentName
+            ? (departmentByName.get(row.departmentName.trim().toLowerCase()) ?? null)
+            : null,
+          position: row.position,
+          contractType: row.contractType,
+          joinedAt: row.joinedAt ? new Date(row.joinedAt) : new Date(),
+          status: EmployeeStatus.PENDING_ACTIVATION,
+          roles: [SystemRole.EMPLOYEE],
         });
 
         created.push({
@@ -753,9 +682,7 @@ export class EmployeeService {
           row: rowNumber,
           code: error instanceof AppException ? error.code : 'SYS_INTERNAL_ERROR',
           message:
-            error instanceof AppException
-              ? error.definition.message
-              : (error as Error).message,
+            error instanceof AppException ? error.definition.message : (error as Error).message,
         });
       }
     }
@@ -775,14 +702,11 @@ export class EmployeeService {
   // ===========================================================================
 
   private async assertEmployeeQuota(companyId: string): Promise<void> {
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      include: { plan: true },
-    });
-    const maxEmployees = company?.plan?.maxEmployees;
+    const plan = await this.employees.findPlanLimits(companyId);
+    const maxEmployees = plan?.maxEmployees;
     if (!maxEmployees) return;
 
-    const current = await this.prisma.employee.count({ where: { companyId, deletedAt: null } });
+    const current = await this.employees.countActive(companyId);
     if (current >= maxEmployees) {
       throw new AppException('PLAN_EMPLOYEE_LIMIT_REACHED', { current, maxEmployees });
     }
@@ -801,9 +725,7 @@ export class EmployeeService {
   }
 
   private async requireEmployee(companyId: string, employeeId: string) {
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, companyId, deletedAt: null },
-    });
+    const employee = await this.employees.findById(companyId, employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }

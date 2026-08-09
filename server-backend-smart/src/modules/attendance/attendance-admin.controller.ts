@@ -91,16 +91,17 @@ export class AttendanceAdminController {
 
   @Post('export')
   @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
   @HttpCode(HttpStatus.ACCEPTED)
   @RateLimit({ bucket: 'export', limit: 5, windowSeconds: 3600, by: 'account' })
   @ApiOperation({
     summary: 'Xuất bảng công ra Excel (bất đồng bộ)',
     description:
-      'Trả 202 kèm jobId. File xử lý ở Backend rồi lưu S3, tải qua link có thời hạn — không xuất ở client (docs/04 mục 7.4).',
+      'Trả 202 kèm jobId. File xử lý ở Backend rồi lưu S3, tải qua link có thời hạn — không xuất ở client (docs/04 mục 7.4). MANAGER chỉ xuất được phòng ban mình quản lý: phạm vi được chốt tại đây và ghi vào params của job, vì worker chạy sau không còn request context.',
   })
-  @ApiErrors('SYS_RATE_LIMITED')
+  @ApiErrors('SYS_RATE_LIMITED', 'AUTH_FORBIDDEN')
   export(@CurrentTenant() ctx: TenantContext, @Body() dto: ExportAttendanceDto) {
-    return this.admin.requestExport(ctx, dto);
+    return this.admin.requestExport(ctx, dto, resolveDepartmentScope(ctx));
   }
 }
 

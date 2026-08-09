@@ -5,9 +5,11 @@
 
 
 > ⚠ **LUỒNG XÁC THỰC ĐÃ ĐỔI.** Tài liệu này còn mô tả cách đăng nhập bằng OTP và
-> mã mời. Cách làm hiện tại: **tên miền + email + mật khẩu**, tài khoản do HR cấp
-> sẵn, đăng nhập lần đầu bắt buộc đổi mật khẩu; xác thực 2 lớp là tuỳ chọn dùng
-> TOTP. Mã mời đã bỏ hẳn.
+> mã mời. Cách làm hiện tại: danh tính do **Firebase Authentication** quản lý —
+> client đăng nhập với Firebase bằng **email + mật khẩu** rồi đổi ID token lấy
+> phiên của Backend qua `POST /auth/session` (kèm tên miền công ty). Tài khoản do
+> HR cấp sẵn, đăng nhập lần đầu bắt buộc đổi mật khẩu; xác thực 2 lớp là tuỳ chọn,
+> dùng **OTP gửi qua SMS**. Mã mời và TOTP (Google Authenticator) đã bỏ hẳn.
 >
 > Mô tả đúng: [01 mục 9](./01-tong-quan-he-thong.md#9-cấp-tài-khoản-và-gia-nhập-công-ty) ·
 > [08 mục 2](./08-hop-dong-api.md#2-api-xác-thực-auth) ·

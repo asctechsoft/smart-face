@@ -1,9 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
-  ApprovalFlowStep,
   Employee,
   LeaveRequest,
-  PayrollPeriodStatus,
   Prisma,
   RequestStatus,
   RequestType,
@@ -12,13 +10,14 @@ import {
 import { PaginatedResult } from 'src/common/dto';
 import { AppException } from 'src/common/errors';
 import { buildMeta, eachWorkDate, toWorkDate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { NotificationService } from '../notification/notification.service';
 import { RealtimeGateway } from '../notification/realtime.gateway';
 import { PolicyKeys } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
+import { FlowStepTemplate, RequestRepository } from './request.repository';
 import type {
   ApproveRequestDto,
   BulkApproveDto,
@@ -40,7 +39,8 @@ export class RequestService {
   private readonly logger = new Logger(RequestService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly requests: RequestRepository,
+    private readonly transactions: TransactionManager,
     private readonly policy: PolicyService,
     private readonly storage: StorageService,
     private readonly notifications: NotificationService,
@@ -53,11 +53,7 @@ export class RequestService {
   // ===========================================================================
 
   async listRequestTypes(companyId: string) {
-    return this.prisma.requestType.findMany({
-      where: { companyId, isActive: true },
-      include: { approvalFlow: { include: { steps: { orderBy: { order: 'asc' } } } } },
-      orderBy: { code: 'asc' },
-    });
+    return this.requests.listActiveRequestTypes(companyId);
   }
 
   /**
@@ -68,15 +64,9 @@ export class RequestService {
     const year = new Date().getUTCFullYear();
 
     const [balance, makeupRecords, pendingRequests] = await Promise.all([
-      this.prisma.leaveBalance.findUnique({
-        where: { employeeId_year: { employeeId, year } },
-      }),
-      this.prisma.makeupWorkRecord.findMany({
-        where: { companyId, employeeId, status: { in: ['OPEN', 'PARTIAL'] } },
-      }),
-      this.prisma.leaveRequest.count({
-        where: { companyId, employeeId, status: RequestStatus.PENDING },
-      }),
+      this.requests.findLeaveBalance(companyId, employeeId, year),
+      this.requests.findOpenMakeupRecords(companyId, employeeId),
+      this.requests.countPendingRequests(companyId, employeeId),
     ]);
 
     const entitled = Number(balance?.entitledDays ?? 0) + Number(balance?.carriedOverDays ?? 0);
@@ -143,20 +133,17 @@ export class RequestService {
       });
     }
 
-    const request = await this.prisma.leaveRequest.create({
-      data: {
-        companyId: ctx.companyId,
-        employeeId: employee.id,
-        requestTypeId: requestType.id,
-        status: submitNow ? RequestStatus.PENDING : RequestStatus.DRAFT,
-        startAt,
-        endAt,
-        quantity,
-        isHalfDay: dto.isHalfDay ?? false,
-        reason: dto.reason,
-        expectedReturnAt: dto.expectedReturnAt ? new Date(dto.expectedReturnAt) : null,
-        submittedAt: submitNow ? new Date() : null,
-      },
+    const request = await this.requests.create(ctx.companyId, {
+      employeeId: employee.id,
+      requestTypeId: requestType.id,
+      status: submitNow ? RequestStatus.PENDING : RequestStatus.DRAFT,
+      startAt,
+      endAt,
+      quantity,
+      isHalfDay: dto.isHalfDay ?? false,
+      reason: dto.reason,
+      expectedReturnAt: dto.expectedReturnAt ? new Date(dto.expectedReturnAt) : null,
+      submittedAt: submitNow ? new Date() : null,
     });
 
     if (submitNow) {
@@ -178,25 +165,26 @@ export class RequestService {
 
     const startAt = dto.startAt ? new Date(dto.startAt) : request.startAt;
     const endAt = dto.endAt ? new Date(dto.endAt) : request.endAt;
-    const requestType = await this.prisma.requestType.findUniqueOrThrow({
-      where: { id: request.requestTypeId },
-    });
+    const requestType = await this.requireRequestTypeById(ctx.companyId, request.requestTypeId);
 
-    return this.prisma.leaveRequest.update({
-      where: { id: requestId },
-      data: {
+    const updated = await this.requests.updateDraft(ctx.companyId, requestId, {
+      startAt,
+      endAt,
+      isHalfDay: dto.isHalfDay ?? request.isHalfDay,
+      reason: dto.reason ?? request.reason,
+      quantity: this.computeQuantity(
+        requestType,
         startAt,
         endAt,
-        isHalfDay: dto.isHalfDay ?? request.isHalfDay,
-        reason: dto.reason ?? request.reason,
-        quantity: this.computeQuantity(
-          requestType,
-          startAt,
-          endAt,
-          dto.isHalfDay ?? request.isHalfDay,
-        ),
-      },
+        dto.isHalfDay ?? request.isHalfDay,
+      ),
     });
+    if (!updated) {
+      throw new AppException('REQ_INVALID_STATUS', {
+        reason: 'Chỉ sửa được đơn ở trạng thái nháp.',
+      });
+    }
+    return updated;
   }
 
   async submit(ctx: TenantContext, requestId: string) {
@@ -205,30 +193,37 @@ export class RequestService {
       throw new AppException('REQ_INVALID_STATUS');
     }
 
-    const requestType = await this.prisma.requestType.findUniqueOrThrow({
-      where: { id: request.requestTypeId },
-    });
+    const requestType = await this.requireRequestTypeById(ctx.companyId, request.requestTypeId);
     const employee = await this.requireEmployee(ctx);
 
     // BR-REQ-05
     if (requestType.requiresAttachment) {
-      const attachmentCount = await this.prisma.requestAttachment.count({ where: { requestId } });
+      const attachmentCount = await this.requests.countAttachments(ctx.companyId, requestId);
       if (attachmentCount === 0) {
         throw new AppException('REQ_ATTACHMENT_REQUIRED');
       }
     }
 
     await this.assertPeriodOpen(ctx.companyId, request.startAt, request.endAt);
-    await this.assertNoOverlap(ctx.companyId, employee.id, request.startAt, request.endAt, requestId);
+    await this.assertNoOverlap(
+      ctx.companyId,
+      employee.id,
+      request.startAt,
+      request.endAt,
+      requestId,
+    );
 
     if (requestType.deductFrom === 'ANNUAL_LEAVE') {
       await this.assertLeaveBalance(ctx.companyId, employee.id, Number(request.quantity));
     }
 
-    const updated = await this.prisma.leaveRequest.update({
-      where: { id: requestId },
-      data: { status: RequestStatus.PENDING, submittedAt: new Date() },
+    const updated = await this.requests.updateStatus(ctx.companyId, requestId, {
+      status: RequestStatus.PENDING,
+      submittedAt: new Date(),
     });
+    if (!updated) {
+      throw new AppException('REQ_NOT_FOUND');
+    }
 
     await this.generateApprovalSteps(ctx.companyId, updated, requestType, employee);
     await this.reservePendingLeave(
@@ -267,24 +262,21 @@ export class RequestService {
       }
     }
 
-    const requestType = await this.prisma.requestType.findUniqueOrThrow({
-      where: { id: request.requestTypeId },
-    });
+    const requestType = await this.requireRequestTypeById(ctx.companyId, request.requestTypeId);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.leaveRequest.update({
-        where: { id: requestId },
-        data: {
+    await this.transactions.run(async (tx) => {
+      await this.requests.updateStatus(
+        ctx.companyId,
+        requestId,
+        {
           status: RequestStatus.CANCELLED,
           cancelledAt: new Date(),
           cancelledBy: ctx.userId,
           rejectReason: reason,
         },
-      });
-      await tx.approvalStep.updateMany({
-        where: { requestId, status: 'PENDING' },
-        data: { status: 'SKIPPED' },
-      });
+        tx,
+      );
+      await this.requests.skipPendingSteps(ctx.companyId, requestId, tx);
     });
 
     await this.releaseLeaveReservation(
@@ -357,14 +349,7 @@ export class RequestService {
     decision: 'APPROVED' | 'REJECTED',
     comment?: string,
   ) {
-    const request = await this.prisma.leaveRequest.findFirst({
-      where: { id: requestId, companyId: ctx.companyId },
-      include: {
-        requestType: true,
-        approvalSteps: { orderBy: { order: 'asc' } },
-        employee: true,
-      },
-    });
+    const request = await this.requests.findForDecision(ctx.companyId, requestId);
     if (!request) {
       throw new AppException('REQ_NOT_FOUND');
     }
@@ -399,28 +384,29 @@ export class RequestService {
 
     if (decision === 'REJECTED') {
       // BR-APV-02: một cấp từ chối → đơn TỪ CHỐI ngay, các cấp sau không xử lý.
-      await this.prisma.$transaction(async (tx) => {
-        await tx.approvalStep.update({
-          where: { id: currentStep.id },
-          data: {
+      await this.transactions.run(async (tx) => {
+        await this.requests.recordStepDecision(
+          ctx.companyId,
+          currentStep.id,
+          {
             status: 'REJECTED',
             decidedAt: new Date(),
             comment,
             approverId: ctx.employeeId ?? currentStep.approverId,
           },
-        });
-        await tx.approvalStep.updateMany({
-          where: { requestId, status: 'PENDING' },
-          data: { status: 'SKIPPED' },
-        });
-        await tx.leaveRequest.update({
-          where: { id: requestId },
-          data: {
+          tx,
+        );
+        await this.requests.skipPendingSteps(ctx.companyId, requestId, tx);
+        await this.requests.updateStatus(
+          ctx.companyId,
+          requestId,
+          {
             status: RequestStatus.REJECTED,
             decidedAt: new Date(),
             rejectReason: comment,
           },
-        });
+          tx,
+        );
       });
 
       await this.releaseLeaveReservation(
@@ -436,19 +422,14 @@ export class RequestService {
     }
 
     // --- Duyệt ----------------------------------------------------------------
-    await this.prisma.approvalStep.update({
-      where: { id: currentStep.id },
-      data: {
-        status: 'APPROVED',
-        decidedAt: new Date(),
-        comment,
-        approverId: ctx.employeeId ?? currentStep.approverId,
-      },
+    await this.requests.recordStepDecision(ctx.companyId, currentStep.id, {
+      status: 'APPROVED',
+      decidedAt: new Date(),
+      comment,
+      approverId: ctx.employeeId ?? currentStep.approverId,
     });
 
-    const remaining = await this.prisma.approvalStep.count({
-      where: { requestId, status: 'PENDING' },
-    });
+    const remaining = await this.requests.countPendingSteps(ctx.companyId, requestId);
 
     // BR-APV-01: chỉ APPROVED khi TẤT CẢ cấp bắt buộc đã duyệt.
     if (remaining > 0) {
@@ -456,9 +437,9 @@ export class RequestService {
       return this.getDetail(ctx.companyId, requestId);
     }
 
-    await this.prisma.leaveRequest.update({
-      where: { id: requestId },
-      data: { status: RequestStatus.APPROVED, decidedAt: new Date() },
+    await this.requests.updateStatus(ctx.companyId, requestId, {
+      status: RequestStatus.APPROVED,
+      decidedAt: new Date(),
     });
 
     // BR-REQ-01: trừ phép TẠI THỜI ĐIỂM ĐƯỢC DUYỆT, không phải lúc gửi.
@@ -482,103 +463,47 @@ export class RequestService {
   // ===========================================================================
 
   async list(ctx: TenantContext, query: RequestQueryDto, departmentScope: string[] | null) {
-    const where: Prisma.LeaveRequestWhereInput = { companyId: ctx.companyId };
-
-    if (query.mineOnly && ctx.employeeId) {
-      where.employeeId = ctx.employeeId;
-    } else if (query.employeeId) {
-      where.employeeId = query.employeeId;
-    }
-
-    if (query.status) where.status = query.status;
-    if (query.requestTypeCode) where.requestType = { code: query.requestTypeCode };
-    if (query.from || query.to) {
-      where.AND = [
-        ...(query.to ? [{ startAt: { lte: new Date(query.to) } }] : []),
-        ...(query.from ? [{ endAt: { gte: new Date(query.from) } }] : []),
-      ];
-    }
-
     // ScopeGuard: MANAGER chỉ thấy đơn của phòng ban mình quản lý.
-    if (departmentScope || query.departmentId) {
-      const employees = await this.prisma.employee.findMany({
-        where: {
-          companyId: ctx.companyId,
-          ...(query.departmentId ? { departmentId: query.departmentId } : {}),
-          ...(departmentScope ? { departmentId: { in: departmentScope } } : {}),
-        },
-        select: { id: true },
-      });
-      where.employeeId = { in: employees.map((employee) => employee.id) };
-    }
+    const employeeIdScope =
+      departmentScope || query.departmentId
+        ? await this.requests.findEmployeeIdsInScope(
+            ctx.companyId,
+            query.departmentId,
+            departmentScope,
+          )
+        : null;
 
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.leaveRequest.findMany({
-        where,
-        include: {
-          requestType: { select: { code: true, name: true, unit: true, deductFrom: true } },
-          employee: { select: { id: true, fullName: true, employeeCode: true, departmentId: true } },
-          approvalSteps: { orderBy: { order: 'asc' } },
-          _count: { select: { attachments: true } },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip: query.skip,
-        take: query.take,
-      }),
-      this.prisma.leaveRequest.count({ where }),
-    ]);
+    const { items, total } = await this.requests.search(ctx.companyId, {
+      employeeId:
+        query.mineOnly && ctx.employeeId ? ctx.employeeId : (query.employeeId ?? undefined),
+      status: query.status,
+      requestTypeCode: query.requestTypeCode,
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+      employeeIdScope,
+      skip: query.skip,
+      take: query.take,
+    });
 
     return new PaginatedResult(items, buildMeta(query.page, query.pageSize, total));
   }
 
   /** "Đơn tôi cần duyệt" — dựa trên ApprovalStep đang PENDING. */
   async listPendingApproval(ctx: TenantContext, query: RequestQueryDto) {
-    const roleApprovers = this.approverRolesFor(ctx.roles);
-
-    const where: Prisma.LeaveRequestWhereInput = {
-      companyId: ctx.companyId,
-      status: RequestStatus.PENDING,
-      // Không bao giờ hiện đơn của chính mình (BR-APV-03).
-      ...(ctx.employeeId ? { employeeId: { not: ctx.employeeId } } : {}),
-      approvalSteps: {
-        some: {
-          status: 'PENDING',
-          OR: [
-            ...(ctx.employeeId ? [{ approverId: ctx.employeeId }] : []),
-            { approverId: null, approverRole: { in: roleApprovers } },
-          ],
-        },
+    const { items, total } = await this.requests.searchPendingApproval(
+      ctx.companyId,
+      {
+        employeeId: ctx.employeeId ?? null,
+        approverRoles: this.approverRolesFor(ctx.roles),
       },
-    };
-
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.leaveRequest.findMany({
-        where,
-        include: {
-          requestType: { select: { code: true, name: true, unit: true } },
-          employee: { select: { id: true, fullName: true, employeeCode: true, departmentId: true } },
-          approvalSteps: { orderBy: { order: 'asc' } },
-        },
-        orderBy: { submittedAt: 'asc' },
-        skip: query.skip,
-        take: query.take,
-      }),
-      this.prisma.leaveRequest.count({ where }),
-    ]);
+      { skip: query.skip, take: query.take },
+    );
 
     return new PaginatedResult(items, buildMeta(query.page, query.pageSize, total));
   }
 
   async getDetail(companyId: string, requestId: string) {
-    const request = await this.prisma.leaveRequest.findFirst({
-      where: { id: requestId, companyId },
-      include: {
-        requestType: true,
-        employee: { select: { id: true, fullName: true, employeeCode: true, departmentId: true } },
-        approvalSteps: { orderBy: { order: 'asc' } },
-        attachments: true,
-      },
-    });
+    const request = await this.requests.findDetail(companyId, requestId);
     if (!request) {
       throw new AppException('REQ_NOT_FOUND');
     }
@@ -586,10 +511,7 @@ export class RequestService {
     const approverIds = request.approvalSteps
       .map((step) => step.approverId)
       .filter((id): id is string => Boolean(id));
-    const approvers = await this.prisma.employee.findMany({
-      where: { id: { in: approverIds } },
-      select: { id: true, fullName: true },
-    });
+    const approvers = await this.requests.findEmployeeNames(companyId, approverIds);
     const approverMap = new Map(approvers.map((approver) => [approver.id, approver.fullName]));
 
     return {
@@ -632,9 +554,11 @@ export class RequestService {
       throw new AppException('REQ_ATTACHMENT_INVALID', { sizeBytes: file.size, maxMb });
     }
 
-    const count = await this.prisma.requestAttachment.count({ where: { requestId } });
+    const count = await this.requests.countAttachments(ctx.companyId, requestId);
     if (count >= maxCount) {
-      throw new AppException('REQ_ATTACHMENT_INVALID', { reason: `Tối đa ${maxCount} file mỗi đơn.` });
+      throw new AppException('REQ_ATTACHMENT_INVALID', {
+        reason: `Tối đa ${maxCount} file mỗi đơn.`,
+      });
     }
 
     const key = this.storage.buildRequestAttachmentKey(
@@ -644,15 +568,12 @@ export class RequestService {
     );
     await this.storage.upload(key, file.buffer, file.mimetype);
 
-    return this.prisma.requestAttachment.create({
-      data: {
-        companyId: ctx.companyId,
-        requestId,
-        fileKey: key,
-        fileName: file.originalname,
-        mimeType: file.mimetype,
-        sizeBytes: file.size,
-      },
+    return this.requests.createAttachment(ctx.companyId, {
+      requestId,
+      fileKey: key,
+      fileName: file.originalname,
+      mimeType: file.mimetype,
+      sizeBytes: file.size,
     });
   }
 
@@ -672,32 +593,26 @@ export class RequestService {
     requestType: RequestType,
     employee: Employee,
   ): Promise<void> {
-    const flow = await this.prisma.approvalFlow.findUnique({
-      where: { requestTypeId: requestType.id },
-      include: { steps: { orderBy: { order: 'asc' } } },
-    });
+    const flowSteps = await this.requests.findFlowSteps(companyId, requestType.id);
 
     // Không cấu hình luồng → mặc định 1 cấp: quản lý trực tiếp.
-    const steps: Array<Pick<ApprovalFlowStep, 'order' | 'approverRole' | 'condition'>> =
-      flow?.steps.length
-        ? flow.steps
-        : [{ order: 1, approverRole: 'DIRECT_MANAGER', condition: null }];
+    const steps: FlowStepTemplate[] = flowSteps.length
+      ? flowSteps
+      : [{ order: 1, approverRole: 'DIRECT_MANAGER', condition: null }];
 
     const quantity = Number(request.quantity);
     const applicable = steps.filter((step) => this.stepApplies(step.condition, quantity));
 
-    await this.prisma.approvalStep.deleteMany({ where: { requestId: request.id } });
-    await this.prisma.approvalStep.createMany({
-      data: await Promise.all(
-        applicable.map(async (step) => ({
-          companyId,
-          requestId: request.id,
-          order: step.order,
-          approverRole: step.approverRole,
-          approverId: await this.resolveApprover(companyId, step.approverRole, employee),
-          status: 'PENDING',
-        })),
-      ),
+    const seeds = await Promise.all(
+      applicable.map(async (step) => ({
+        order: step.order,
+        approverRole: step.approverRole,
+        approverId: await this.resolveApprover(companyId, step.approverRole, employee),
+      })),
+    );
+
+    await this.transactions.run(async (tx) => {
+      await this.requests.replaceApprovalSteps(companyId, request.id, seeds, tx);
     });
   }
 
@@ -740,13 +655,13 @@ export class RequestService {
   ): Promise<string | null> {
     if (approverRole === 'DIRECT_MANAGER' || approverRole === 'DEPARTMENT_HEAD') {
       if (!employee.departmentId) return null;
-      const department = await this.prisma.department.findFirst({
-        where: { id: employee.departmentId, companyId },
-        select: { managerId: true },
-      });
+      const managerId = await this.requests.findDepartmentManagerId(
+        companyId,
+        employee.departmentId,
+      );
       // Trưởng phòng không tự duyệt đơn của chính mình (BR-APV-03).
-      if (department?.managerId && department.managerId !== employee.id) {
-        return department.managerId;
+      if (managerId && managerId !== employee.id) {
+        return managerId;
       }
       return null;
     }
@@ -843,11 +758,7 @@ export class RequestService {
     if (requestType.deductFrom !== 'ANNUAL_LEAVE') return;
     const year = new Date().getUTCFullYear();
 
-    await this.prisma.leaveBalance.upsert({
-      where: { employeeId_year: { employeeId, year } },
-      create: { companyId, employeeId, year, entitledDays: 0, pendingDays: quantity },
-      update: { pendingDays: { increment: quantity } },
-    });
+    await this.requests.reservePendingDays(companyId, employeeId, year, quantity);
   }
 
   /** BR-REQ-01 — trừ phép TẠI THỜI ĐIỂM DUYỆT. */
@@ -860,14 +771,7 @@ export class RequestService {
     if (requestType.deductFrom !== 'ANNUAL_LEAVE') return;
     const year = new Date().getUTCFullYear();
 
-    await this.prisma.leaveBalance.upsert({
-      where: { employeeId_year: { employeeId, year } },
-      create: { companyId, employeeId, year, entitledDays: 0, usedDays: quantity },
-      update: {
-        usedDays: { increment: quantity },
-        pendingDays: { decrement: quantity },
-      },
-    });
+    await this.requests.commitUsedDays(companyId, employeeId, year, quantity);
   }
 
   private async releaseLeaveReservation(
@@ -880,14 +784,7 @@ export class RequestService {
     if (requestType.deductFrom !== 'ANNUAL_LEAVE') return;
     const year = new Date().getUTCFullYear();
 
-    await this.prisma.leaveBalance
-      .update({
-        where: { employeeId_year: { employeeId, year } },
-        data: wasApproved
-          ? { usedDays: { decrement: quantity } }
-          : { pendingDays: { decrement: quantity } },
-      })
-      .catch(() => undefined);
+    await this.requests.releaseDays(employeeId, year, quantity, wasApproved);
   }
 
   // ===========================================================================
@@ -902,17 +799,13 @@ export class RequestService {
     endAt: Date,
     excludeRequestId?: string,
   ): Promise<void> {
-    const overlapping = await this.prisma.leaveRequest.findFirst({
-      where: {
-        companyId,
-        employeeId,
-        status: { in: [RequestStatus.PENDING, RequestStatus.APPROVED] },
-        startAt: { lte: endAt },
-        endAt: { gte: startAt },
-        ...(excludeRequestId ? { id: { not: excludeRequestId } } : {}),
-      },
-      select: { id: true, startAt: true, endAt: true },
-    });
+    const overlapping = await this.requests.findOverlapping(
+      companyId,
+      employeeId,
+      startAt,
+      endAt,
+      excludeRequestId,
+    );
 
     if (overlapping) {
       throw new AppException('REQ_OVERLAP', {
@@ -927,15 +820,7 @@ export class RequestService {
 
   /** BR-REQ-04 / BR-07 */
   private async assertPeriodOpen(companyId: string, startAt: Date, endAt: Date): Promise<void> {
-    const closed = await this.prisma.payrollPeriod.findFirst({
-      where: {
-        companyId,
-        status: PayrollPeriodStatus.CLOSED,
-        startDate: { lte: endAt },
-        endDate: { gte: startAt },
-      },
-      select: { name: true },
-    });
+    const closed = await this.requests.findClosedPeriodOverlapping(companyId, startAt, endAt);
     if (closed) {
       throw new AppException('REQ_PERIOD_LOCKED', { period: closed.name });
     }
@@ -952,10 +837,7 @@ export class RequestService {
     }
     if (isHalfDay) return 0.5;
 
-    const days = eachWorkDate(
-      toWorkDate(startAt, 'UTC'),
-      toWorkDate(endAt, 'UTC'),
-    ).length;
+    const days = eachWorkDate(toWorkDate(startAt, 'UTC'), toWorkDate(endAt, 'UTC')).length;
     return Math.max(days, 1);
   }
 
@@ -976,14 +858,7 @@ export class RequestService {
   }
 
   private async notifyApprovers(companyId: string, requestId: string): Promise<void> {
-    const request = await this.prisma.leaveRequest.findUnique({
-      where: { id: requestId },
-      include: {
-        requestType: { select: { name: true } },
-        employee: { select: { fullName: true } },
-        approvalSteps: { where: { status: 'PENDING' }, orderBy: { order: 'asc' }, take: 1 },
-      },
-    });
+    const request = await this.requests.findNextPendingStepContext(companyId, requestId);
     if (!request) return;
 
     const step = request.approvalSteps[0];
@@ -1038,9 +913,7 @@ export class RequestService {
     if (!ctx.employeeId || !ctx.companyId) {
       throw new AppException('AUTH_COMPANY_REQUIRED');
     }
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: ctx.employeeId, companyId: ctx.companyId, deletedAt: null },
-    });
+    const employee = await this.requests.findEmployee(ctx.companyId, ctx.employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }
@@ -1048,19 +921,30 @@ export class RequestService {
   }
 
   private async requireRequestType(companyId: string, code: string): Promise<RequestType> {
-    const requestType = await this.prisma.requestType.findFirst({
-      where: { companyId, code, isActive: true },
-    });
+    const requestType = await this.requests.findRequestTypeByCode(companyId, code);
     if (!requestType) {
       throw new AppException('REQ_TYPE_NOT_FOUND', { code });
     }
     return requestType;
   }
 
+  /**
+   * Loại đơn của một đơn đã tồn tại.
+   *
+   * Tách khỏi `requireRequestType` vì tra theo id chứ không theo mã, và vẫn phải
+   * kèm `companyId` — id lấy từ bản ghi đơn nhưng ràng buộc tenant không được
+   * dựa vào việc "id này chắc chắn đúng công ty" (BR-09).
+   */
+  private async requireRequestTypeById(companyId: string, id: string): Promise<RequestType> {
+    const requestType = await this.requests.findRequestTypeById(companyId, id);
+    if (!requestType) {
+      throw new AppException('REQ_TYPE_NOT_FOUND');
+    }
+    return requestType;
+  }
+
   private async requireOwnRequest(ctx: TenantContext, requestId: string): Promise<LeaveRequest> {
-    const request = await this.prisma.leaveRequest.findFirst({
-      where: { id: requestId, companyId: ctx.companyId },
-    });
+    const request = await this.requests.findById(ctx.companyId, requestId);
     if (!request) {
       throw new AppException('REQ_NOT_FOUND');
     }

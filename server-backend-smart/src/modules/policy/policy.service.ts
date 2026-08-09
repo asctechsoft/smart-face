@@ -1,16 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Company, Prisma, Shift } from '@prisma/client';
+import { Company, Prisma } from '@prisma/client';
 import { AppException } from 'src/common/errors';
 import { DEFAULT_TIMEZONE, isValidTimeOfDay, weekdayMaskOf } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { RedisService } from 'src/infra/redis/redis.service';
 import { RedisKeys } from 'src/infra/redis/redis.keys';
-import {
-  LABOR_LAW_MINIMUMS,
-  POLICY_DEFAULTS,
-  PolicyKey,
-  PolicyKeys,
-} from './policy.constants';
+import { LABOR_LAW_MINIMUMS, POLICY_DEFAULTS, PolicyKey, PolicyKeys } from './policy.constants';
+import { PolicyRepository, ShiftWithSegments } from './policy.repository';
 
 const POLICY_CACHE_TTL_SECONDS = 300;
 
@@ -25,7 +21,8 @@ export class PolicyService {
   private readonly logger = new Logger(PolicyService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly policies: PolicyRepository,
+    private readonly transactions: TransactionManager,
     private readonly redis: RedisService,
   ) {}
 
@@ -36,14 +33,7 @@ export class PolicyService {
   /** Toàn bộ chính sách đang hiệu lực của công ty, đã trộn với giá trị mặc định. */
   async resolveAll(companyId: string, at: Date = new Date()): Promise<Record<string, unknown>> {
     return this.redis.remember(RedisKeys.policy(companyId), POLICY_CACHE_TTL_SECONDS, async () => {
-      const rows = await this.prisma.companyPolicy.findMany({
-        where: {
-          companyId,
-          effectiveFrom: { lte: at },
-          OR: [{ effectiveTo: null }, { effectiveTo: { gte: at } }],
-        },
-        orderBy: { effectiveFrom: 'asc' },
-      });
+      const rows = await this.policies.findEffectivePolicies(companyId, at);
 
       const resolved: Record<string, unknown> = { ...POLICY_DEFAULTS };
       // effectiveFrom tăng dần → bản ghi mới nhất còn hiệu lực ghi đè bản cũ.
@@ -88,14 +78,9 @@ export class PolicyService {
   ): Promise<void> {
     this.assertLegalCompliance(key, value);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.companyPolicy.updateMany({
-        where: { companyId, key, effectiveTo: null },
-        data: { effectiveTo: effectiveFrom },
-      });
-      await tx.companyPolicy.create({
-        data: { companyId, key, value, effectiveFrom, updatedBy },
-      });
+    await this.transactions.run(async (tx) => {
+      await this.policies.closeOpenPolicy(companyId, key, effectiveFrom, tx);
+      await this.policies.createPolicy(companyId, { key, value, effectiveFrom, updatedBy }, tx);
     });
 
     await this.invalidate(companyId);
@@ -111,15 +96,10 @@ export class PolicyService {
       this.assertLegalCompliance(key as PolicyKey, value);
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.transactions.run(async (tx) => {
       for (const [key, value] of Object.entries(entries)) {
-        await tx.companyPolicy.updateMany({
-          where: { companyId, key, effectiveTo: null },
-          data: { effectiveTo: effectiveFrom },
-        });
-        await tx.companyPolicy.create({
-          data: { companyId, key, value, effectiveFrom, updatedBy },
-        });
+        await this.policies.closeOpenPolicy(companyId, key, effectiveFrom, tx);
+        await this.policies.createPolicy(companyId, { key, value, effectiveFrom, updatedBy }, tx);
       }
     });
 
@@ -170,9 +150,7 @@ export class PolicyService {
   // ---------------------------------------------------------------------------
 
   async getCompany(companyId: string): Promise<Company> {
-    const company = await this.prisma.company.findFirst({
-      where: { id: companyId, deletedAt: null },
-    });
+    const company = await this.policies.findCompany(companyId);
     if (!company) {
       throw new AppException('TEN_NOT_FOUND');
     }
@@ -182,17 +160,10 @@ export class PolicyService {
   /** Timezone dùng cho mọi phép tính "ngày làm việc" (D5). */
   async getTimezone(companyId: string, branchId?: string | null): Promise<string> {
     if (branchId) {
-      const branch = await this.prisma.branch.findFirst({
-        where: { id: branchId, companyId },
-        select: { timezone: true },
-      });
-      if (branch?.timezone) return branch.timezone;
+      const branchTimezone = await this.policies.findBranchTimezone(companyId, branchId);
+      if (branchTimezone) return branchTimezone;
     }
-    const company = await this.prisma.company.findUnique({
-      where: { id: companyId },
-      select: { timezone: true },
-    });
-    return company?.timezone ?? DEFAULT_TIMEZONE;
+    return (await this.policies.findCompanyTimezone(companyId)) ?? DEFAULT_TIMEZONE;
   }
 
   // ---------------------------------------------------------------------------
@@ -212,28 +183,12 @@ export class PolicyService {
     companyId: string,
     employeeId: string,
     workDate: Date,
-  ): Promise<(Shift & { segments: { order: number; startTime: string; endTime: string }[] }) | null> {
-    const assignment = await this.prisma.shiftAssignment.findUnique({
-      where: { employeeId_workDate: { employeeId, workDate } },
-      include: { shift: { include: { segments: { orderBy: { order: 'asc' } } } } },
-    });
-
-    if (assignment?.shift && assignment.shift.companyId === companyId) {
-      return assignment.shift;
-    }
+  ): Promise<ShiftWithSegments | null> {
+    const assigned = await this.policies.findAssignedShift(companyId, employeeId, workDate);
+    if (assigned) return assigned;
 
     const mask = weekdayMaskOf(workDate);
-    const defaults = await this.prisma.shift.findMany({
-      where: {
-        companyId,
-        isDefault: true,
-        deletedAt: null,
-        effectiveFrom: { lte: workDate },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gte: workDate } }],
-      },
-      include: { segments: { orderBy: { order: 'asc' } } },
-      orderBy: { effectiveFrom: 'desc' },
-    });
+    const defaults = await this.policies.findDefaultShifts(companyId, workDate);
 
     return (
       defaults.find((shift) => shift.weekdayMask === 0 || (shift.weekdayMask & mask) !== 0) ?? null
@@ -242,12 +197,7 @@ export class PolicyService {
 
   /** Ngày lễ áp dụng cho công ty/chi nhánh (FR-WEB-POL-06). */
   async findHoliday(companyId: string, workDate: Date, branchId?: string | null) {
-    const holiday = await this.prisma.holiday.findFirst({
-      where: {
-        companyId,
-        OR: [{ date: workDate }, { substituteDate: workDate }],
-      },
-    });
+    const holiday = await this.policies.findHolidayOnDate(companyId, workDate);
     if (!holiday) return null;
 
     // branchIds rỗng = áp dụng toàn công ty

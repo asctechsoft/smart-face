@@ -25,7 +25,7 @@ Yêu cầu phi chức năng chỉ có giá trị khi **đo được**. "Hệ th�
 | `NFR-SEC-08` | Chống các lỗ hổng OWASP Top 10 | Quét SAST/DAST trong CI, không có lỗ hổng mức High/Critical khi release | Must |
 | `NFR-SEC-09` | Mật khẩu/secret không nằm trong mã nguồn | Quét secret trong CI (gitleaks/trufflehog), toàn bộ secret qua biến môi trường hoặc secret manager | Must |
 | `NFR-SEC-10` | Audit log append-only | Thử UPDATE/DELETE trực tiếp trên DB bị chặn bởi rule (`BR-08`) | Must |
-| `NFR-SEC-11` | 2FA cho tài khoản Admin hệ thống | Bắt buộc TOTP khi đăng nhập Web Admin | Should |
+| `NFR-SEC-11` | 2FA cho tài khoản Admin hệ thống | Bắt buộc OTP qua SMS khi đăng nhập Web Admin | Should |
 | `NFR-SEC-12` | Ảnh chấm công không truy cập được bằng URL công khai | Chỉ qua presigned URL TTL ≤ 5 phút | Must |
 
 ### 1.1. Cách kiểm chứng cách ly tenant (`NFR-SEC-05`)

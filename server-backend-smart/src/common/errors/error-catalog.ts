@@ -140,32 +140,69 @@ export const ERROR_CATALOG = {
   },
 
   // ==========================================================================
-  //  AUTH_ — Đăng nhập bằng tên miền + email + mật khẩu
+  //  AUTH_ — Đăng nhập qua Firebase Authentication
   // ==========================================================================
+  //
+  // Việc đối chiếu email + mật khẩu diễn ra bên Firebase, nên các mã lỗi cũ về
+  // "sai thông tin đăng nhập" và "khoá tạm do sai nhiều lần" không còn phát sinh
+  // ở đây nữa — client nhận lỗi tương ứng thẳng từ Firebase SDK
+  // (`auth/wrong-password`, `auth/too-many-requests`) và tự hiển thị.
+  //
+  // Những mã dưới đây là phần Backend vẫn quyết định: token có dùng được không,
+  // uid đã được cấp hồ sơ chưa, và có vào đúng công ty không.
 
-  /**
-   * ⚠ MỘT mã lỗi duy nhất cho: tên miền sai, email không tồn tại, mật khẩu sai.
-   *
-   * Phân biệt ra sẽ biến màn hình đăng nhập thành công cụ dò: kẻ tấn công gõ
-   * bừa email, thấy "email không tồn tại" thì loại, thấy "mật khẩu sai" thì
-   * biết email đó có thật và chuyển sang dò mật khẩu. Danh sách email nhân viên
-   * của một công ty là thứ có giá trị với cả tuyển dụng lẫn lừa đảo.
-   *
-   * `AuthService` cũng phải mất thời gian như nhau ở cả ba nhánh — xem
-   * `assertPasswordMatches`.
-   */
-  AUTH_INVALID_CREDENTIALS: {
+  AUTH_FIREBASE_TOKEN_INVALID: {
     status: HttpStatus.UNAUTHORIZED,
-    message: 'Tên miền, email hoặc mật khẩu không đúng.',
-    messageEn: 'Invalid domain, email, or password.',
-    hint: 'Kiểm tra lại thông tin công ty cấp cho bạn.',
+    message: 'Phiên đăng nhập không hợp lệ.',
+    messageEn: 'The sign-in token is not valid.',
+    hint: 'Đăng nhập lại với Firebase rồi thử lại.',
     retryable: true,
   },
-  AUTH_ACCOUNT_LOCKED: {
-    status: HttpStatus.TOO_MANY_REQUESTS,
-    message: 'Tài khoản tạm khoá do nhập sai mật khẩu nhiều lần.',
-    messageEn: 'Account temporarily locked after too many failed attempts.',
-    hint: 'Thử lại sau ít phút, hoặc liên hệ nhân sự để mở khoá.',
+  AUTH_FIREBASE_TOKEN_EXPIRED: {
+    status: HttpStatus.UNAUTHORIZED,
+    message: 'Phiên đăng nhập đã hết hạn.',
+    messageEn: 'The sign-in token has expired.',
+    hint: 'Gọi `user.getIdToken(true)` để lấy token mới rồi thử lại.',
+    retryable: true,
+  },
+  /**
+   * Token hợp lệ nhưng uid chưa gắn với `UserAccount` nào.
+   *
+   * Xảy ra khi ai đó tự đăng ký thẳng qua Firebase SDK ở phía client. Đây không
+   * phải lỗi xác thực mà là chưa được cấp quyền vào: tài khoản trong hệ thống
+   * chỉ do HR cấp, không có đường tự đăng ký.
+   */
+  AUTH_ACCOUNT_NOT_PROVISIONED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Tài khoản chưa được cấp quyền sử dụng hệ thống.',
+    messageEn: 'This account has not been provisioned.',
+    hint: 'Liên hệ bộ phận nhân sự của công ty để được cấp tài khoản.',
+    retryable: false,
+  },
+  /**
+   * Tên miền không khớp công ty của tài khoản.
+   *
+   * Không gộp vào một mã chung với "tên miền không tồn tại": cả hai đều trả về
+   * mã này, nên gõ bừa tên miền cũng không biết được tên miền nào có thật.
+   */
+  AUTH_DOMAIN_MISMATCH: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Tên miền không đúng với công ty của tài khoản.',
+    messageEn: 'The domain does not match this account’s company.',
+    hint: 'Kiểm tra lại tên miền công ty cấp cho bạn.',
+    retryable: true,
+  },
+  /**
+   * Thao tác nhạy cảm nhưng lần xác thực gần nhất đã quá cũ.
+   *
+   * Firebase ID token sống một giờ, nên token hợp lệ KHÔNG chứng minh được người
+   * đang thao tác biết mật khẩu. Ngưỡng đặt ở `FIREBASE_FRESH_AUTH_WINDOW_SECONDS`.
+   */
+  AUTH_REAUTH_STALE: {
+    status: HttpStatus.UNAUTHORIZED,
+    message: 'Cần xác thực lại để tiếp tục.',
+    messageEn: 'Recent authentication is required to continue.',
+    hint: 'Gọi `reauthenticateWithCredential` của Firebase rồi gửi lại ID token mới.',
     retryable: true,
   },
   AUTH_MUST_CHANGE_PASSWORD: {
@@ -182,12 +219,10 @@ export const ERROR_CATALOG = {
     hint: 'Xem `details.reasons` để biết cần sửa gì.',
     retryable: true,
   },
-  AUTH_PASSWORD_REUSED: {
-    status: HttpStatus.UNPROCESSABLE_ENTITY,
-    message: 'Mật khẩu mới phải khác mật khẩu hiện tại.',
-    messageEn: 'The new password must differ from the current one.',
-    retryable: true,
-  },
+  // `AUTH_PASSWORD_REUSED` đã bị bỏ: Backend không còn giữ mật khẩu cũ nên không
+  // so sánh được, và Firebase cũng không kiểm điều này. Giữ lại một mã lỗi mà
+  // không chỗ nào ném ra chỉ khiến client viết nhánh xử lý chết.
+
   AUTH_COMPANY_INACTIVE: {
     status: HttpStatus.FORBIDDEN,
     message: 'Công ty đang tạm ngưng sử dụng dịch vụ.',
@@ -196,20 +231,24 @@ export const ERROR_CATALOG = {
   },
 
   // ==========================================================================
-  //  AUTH_2FA_ — Xác thực 2 lớp bằng TOTP
+  //  AUTH_2FA_ — Xác thực 2 lớp bằng OTP gửi qua SMS
   // ==========================================================================
+  //
+  // Chi tiết về mã sai / hết hạn / khoá do nhập sai nhiều lần dùng chung nhóm
+  // `AUTH_OTP_*` ở đầu file. Nhóm này chỉ nói về TRẠNG THÁI của lớp thứ hai.
+
   AUTH_2FA_REQUIRED: {
     status: HttpStatus.UNAUTHORIZED,
     message: 'Cần nhập mã xác thực 2 lớp.',
     messageEn: 'A two-factor authentication code is required.',
-    hint: 'Dùng `twoFactorToken` trả về kèm mã từ ứng dụng xác thực.',
+    hint: 'Mã đã được gửi tới số điện thoại đã đăng ký.',
     retryable: true,
   },
   AUTH_2FA_INVALID: {
     status: HttpStatus.UNAUTHORIZED,
-    message: 'Mã xác thực không đúng hoặc đã hết hạn.',
-    messageEn: 'The verification code is incorrect or has expired.',
-    hint: 'Mã đổi mỗi 30 giây. Kiểm tra đồng hồ điện thoại có đúng giờ không.',
+    message: 'Phiên xác thực 2 lớp không hợp lệ hoặc đã hết hạn.',
+    messageEn: 'The two-factor session is invalid or has expired.',
+    hint: 'Đăng nhập lại để nhận mã mới.',
     retryable: true,
   },
   AUTH_2FA_ALREADY_ENABLED: {
@@ -311,7 +350,8 @@ export const ERROR_CATALOG = {
   FACE_DUPLICATE_IDENTITY: {
     status: HttpStatus.CONFLICT,
     message: 'Khuôn mặt này đã được đăng ký cho tài khoản khác. Vui lòng liên hệ quản trị viên.',
-    messageEn: 'This face is already enrolled for another account. Please contact your administrator.',
+    messageEn:
+      'This face is already enrolled for another account. Please contact your administrator.',
     retryable: false,
   },
   FACE_MAX_ATTEMPTS: {

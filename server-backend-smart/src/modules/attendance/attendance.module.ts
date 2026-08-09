@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { AttendanceAdminController, ExportJobController } from './attendance-admin.controller';
 import { AttendanceAdminService } from './attendance-admin.service';
 import { AttendanceController } from './attendance.controller';
+import { AttendanceRepository } from './attendance.repository';
 import { AttendanceService } from './attendance.service';
 import { FraudModule } from '../fraud/fraud.module';
 
@@ -22,7 +23,7 @@ import { FraudModule } from '../fraud/fraud.module';
 @Module({
   imports: [forwardRef(() => FraudModule)],
   controllers: [AttendanceController, AttendanceAdminController, ExportJobController],
-  providers: [AttendanceService, AttendanceAdminService],
-  exports: [AttendanceService, AttendanceAdminService],
+  providers: [AttendanceRepository, AttendanceService, AttendanceAdminService],
+  exports: [AttendanceRepository, AttendanceService, AttendanceAdminService],
 })
 export class AttendanceModule {}

@@ -3,9 +3,10 @@ import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import ExcelJS from 'exceljs';
 import { formatWorkDate, parseWorkDate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { StorageService } from 'src/infra/storage/storage.service';
+import { JobsRepository } from '../jobs.repository';
 import { PayrollService } from 'src/modules/payroll/payroll.service';
+import type { AttendanceExportParams } from 'src/modules/attendance/attendance-admin.service';
 import { JOBS, QUEUES } from '../queue.constants';
 
 /**
@@ -22,7 +23,7 @@ export class ExportProcessor extends WorkerHost {
   private readonly logger = new Logger(ExportProcessor.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly jobs: JobsRepository,
     private readonly storage: StorageService,
     private readonly payroll: PayrollService,
   ) {
@@ -35,22 +36,20 @@ export class ExportProcessor extends WorkerHost {
     // Trạng thái theo dõi được lưu trong bảng `ExportJob` của database, KHÔNG chỉ
     // trong BullMQ. Client hỏi tiến độ qua `GET /v1/jobs/:id` — endpoint đó không
     // nên phụ thuộc vào Redis, và trạng thái phải sống sót qua lần Redis restart.
-    await this.prisma.exportJob.update({
-      where: { id: exportJobId },
-      data: { status: 'PROCESSING', progress: 10 },
-    });
+    await this.jobs.markExportProcessing(exportJobId);
 
     try {
-      const exportJob = await this.prisma.exportJob.findUniqueOrThrow({
-        where: { id: exportJobId },
-      });
+      const exportJob = await this.jobs.findExportJob(exportJobId);
 
       const result =
         job.name === JOBS.EXPORT_PAYROLL
-          ? await this.exportPayroll(exportJob.companyId, exportJob.params as Record<string, string>)
-          : await this.exportAttendance(
+          ? await this.exportPayroll(
               exportJob.companyId,
               exportJob.params as Record<string, string>,
+            )
+          : await this.exportAttendance(
+              exportJob.companyId,
+              exportJob.params as unknown as AttendanceExportParams,
             );
 
       const key = this.storage.buildExportKey(exportJob.companyId, exportJobId, result.fileName);
@@ -60,54 +59,44 @@ export class ExportProcessor extends WorkerHost {
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
       );
 
-      await this.prisma.exportJob.update({
-        where: { id: exportJobId },
-        data: {
-          status: 'DONE',
-          progress: 100,
-          fileKey: key,
-          fileName: result.fileName,
-          completedAt: new Date(),
-        },
-      });
+      await this.jobs.markExportDone(exportJobId, { fileKey: key, fileName: result.fileName });
 
       return { key, rowCount: result.rowCount };
     } catch (error) {
       this.logger.error(`Export ${exportJobId} thất bại: ${(error as Error).message}`);
-      await this.prisma.exportJob.update({
-        where: { id: exportJobId },
-        data: {
-          status: 'FAILED',
-          errorCode: 'EXPORT_FAILED',
-          errorMessage: (error as Error).message,
-          completedAt: new Date(),
-        },
-      });
+      await this.jobs.markExportFailed(exportJobId, (error as Error).message);
       throw error;
     }
   }
 
   // ---------------------------------------------------------------------------
 
-  private async exportAttendance(companyId: string, params: Record<string, string>) {
+  /**
+   * Phạm vi phòng ban lấy từ `params.departmentIds` — đã được
+   * `AttendanceAdminService.requestExport()` áp quyền lúc nhận request. Worker
+   * chạy ở pod khác, không có JWT, nên KHÔNG có cách nào tự suy lại phạm vi.
+   *
+   * Job cũ (tạo trước bản vá này) không có trường đó. Chúng bị từ chối thay vì
+   * mặc định "toàn công ty": một job của MANAGER chạy lại sau khi deploy mà rơi
+   * về hành vi cũ thì đúng là lỗ hổng mà bản vá này đang bịt.
+   */
+  private async exportAttendance(companyId: string, params: AttendanceExportParams) {
+    if (!('departmentIds' in params)) {
+      throw new Error(
+        'Job export được tạo trước bản vá phạm vi phòng ban, không xác định được quyền. Vui lòng gửi lại yêu cầu xuất.',
+      );
+    }
+
     const from = params.from ? parseWorkDate(params.from) : new Date(0);
     const to = params.to ? parseWorkDate(params.to) : new Date();
 
-    const dailies = await this.prisma.attendanceDaily.findMany({
-      where: { companyId, workDate: { gte: from, lte: to } },
-      orderBy: [{ workDate: 'asc' }, { employeeId: 'asc' }],
-    });
-
-    const employees = await this.prisma.employee.findMany({
-      where: { companyId, deletedAt: null },
-      select: {
-        id: true,
-        fullName: true,
-        employeeCode: true,
-        department: { select: { name: true } },
-      },
-    });
+    const employees = await this.jobs.findEmployeesForExport(companyId, params.departmentIds);
     const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
+
+    // Bỏ trống khi không giới hạn phòng ban — tránh dựng mệnh đề `IN` vài nghìn
+    // phần tử cho công ty lớn, trong khi `companyId` đã đủ khoanh vùng.
+    const scopedEmployeeIds = params.departmentIds ? employees.map((e) => e.id) : undefined;
+    const dailies = await this.jobs.findDailiesForExport(companyId, from, to, scopedEmployeeIds);
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'SmartFace';

@@ -1,7 +1,6 @@
 import { Test } from '@nestjs/testing';
-import { FaceProfileStatus } from '@prisma/client';
 import { AppException } from 'src/common/errors';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { RedisService } from 'src/infra/redis/redis.service';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
@@ -9,6 +8,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../notification/notification.service';
 import { PolicyKeys } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
+import { BiometricRepository } from './biometric.repository';
 import { BiometricService } from './biometric.service';
 import type { TenantContext } from 'src/common/types/request-context';
 
@@ -29,10 +29,19 @@ import type { TenantContext } from 'src/common/types/request-context';
 describe('BiometricService — đăng ký khuôn mặt', () => {
   let service: BiometricService;
 
-  const prisma = {
-    faceProfile: { count: jest.fn(), findMany: jest.fn() },
-    employee: { findFirst: jest.fn(), findUnique: jest.fn(), updateMany: jest.fn() },
-    biometricKey: { findUnique: jest.fn(), upsert: jest.fn() },
+  const biometrics = {
+    countActiveFaceProfiles: jest.fn(),
+    findOtherActiveEmbeddings: jest.fn(),
+    findEmployee: jest.fn(),
+    findEmployeeCode: jest.fn(),
+    activateIfPending: jest.fn(),
+    findFingerprintKey: jest.fn(),
+    upsertFingerprintKey: jest.fn(),
+  };
+  // Ranh giới transaction thật do TransactionManager giữ; ở test chỉ cần chạy
+  // thẳng callback để lời gọi repository bên trong vẫn được ghi nhận.
+  const transactions = {
+    run: jest.fn((handler: (tx: unknown) => unknown) => handler({})),
   };
   const redis = { setJson: jest.fn(), getJson: jest.fn(), del: jest.fn() };
   const ai = { randomLivenessAction: jest.fn().mockReturnValue('BLINK') };
@@ -54,7 +63,8 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
     const moduleRef = await Test.createTestingModule({
       providers: [
         BiometricService,
-        { provide: PrismaService, useValue: prisma },
+        { provide: BiometricRepository, useValue: biometrics },
+        { provide: TransactionManager, useValue: transactions },
         { provide: RedisService, useValue: redis },
         { provide: AiGatewayService, useValue: ai },
         { provide: PolicyService, useValue: policy },
@@ -66,14 +76,15 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
 
     service = moduleRef.get(BiometricService);
 
-    prisma.employee.findFirst.mockResolvedValue({
+    biometrics.findEmployee.mockResolvedValue({
       id: 'emp_1',
       companyId: 'cmp_1',
       fullName: 'Nguyễn Văn Đức',
     });
-    prisma.employee.updateMany.mockResolvedValue({ count: 0 });
-    prisma.biometricKey.findUnique.mockResolvedValue(null);
-    prisma.biometricKey.upsert.mockResolvedValue({ id: 'bio_1', createdAt: new Date() });
+    biometrics.activateIfPending.mockResolvedValue(undefined);
+    biometrics.findFingerprintKey.mockResolvedValue(null);
+    biometrics.upsertFingerprintKey.mockResolvedValue({ id: 'bio_1', createdAt: new Date() });
+    transactions.run.mockImplementation((handler: (tx: unknown) => unknown) => handler({}));
     policy.getNumber.mockResolvedValue(112);
   });
 
@@ -83,7 +94,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
 
   describe('đăng ký lần đầu (onboarding)', () => {
     beforeEach(() => {
-      prisma.faceProfile.count.mockResolvedValue(0);
+      biometrics.countActiveFaceProfiles.mockResolvedValue(0);
     });
 
     it('không đòi xác thực lại', async () => {
@@ -121,7 +132,11 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
 
       const [, session, ttl] = redis.setJson.mock.calls[0];
       expect(ttl).toBe(300);
-      expect(session).toMatchObject({ employeeId: 'emp_1', companyId: 'cmp_1', isReEnrollment: false });
+      expect(session).toMatchObject({
+        employeeId: 'emp_1',
+        companyId: 'cmp_1',
+        isReEnrollment: false,
+      });
     });
   });
 
@@ -131,7 +146,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
 
   describe('đăng ký đè lên hồ sơ đang có', () => {
     beforeEach(() => {
-      prisma.faceProfile.count.mockResolvedValue(4);
+      biometrics.countActiveFaceProfiles.mockResolvedValue(4);
     });
 
     it('CHẶN khi không có reauthToken', async () => {
@@ -170,9 +185,9 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
       // phải xin OTP lần nữa.
       await service.startFaceEnrollment(ctx, { reauthVerified: true });
 
-      expect(prisma.faceProfile.count).toHaveBeenCalledWith({
-        where: { employeeId: 'emp_1', status: FaceProfileStatus.ACTIVE },
-      });
+      // Bộ lọc `status = ACTIVE` nằm trong BiometricRepository — service chỉ hỏi
+      // "có bao nhiêu hồ sơ đang dùng", không tự dựng điều kiện truy vấn.
+      expect(biometrics.countActiveFaceProfiles).toHaveBeenCalledWith('cmp_1', 'emp_1');
     });
   });
 
@@ -189,7 +204,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
   });
 
   it('không cho đăng ký hộ nhân viên của công ty khác', async () => {
-    prisma.employee.findFirst.mockResolvedValue(null);
+    biometrics.findEmployee.mockResolvedValue(null);
 
     await expect(service.startFaceEnrollment(ctx)).rejects.toMatchObject({
       code: 'EMP_NOT_FOUND',
@@ -219,7 +234,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
         service.registerFingerprint(ctx, 'may_cua_ke_tan_cong', PEM, 'ES256'),
       ).rejects.toMatchObject({ code: 'AUTH_REAUTH_REQUIRED' });
 
-      expect(prisma.biometricKey.upsert).not.toHaveBeenCalled();
+      expect(biometrics.upsertFingerprintKey).not.toHaveBeenCalled();
     });
 
     it('CHO QUA khi deviceId khác nhưng đã xác thực lại', async () => {
@@ -233,9 +248,9 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
     it('CHO QUA khi đăng ký cho chính thiết bị đang đăng nhập — không phiền người dùng thật', async () => {
       // App luôn đăng ký cho máy nó đang chạy. Đổi điện thoại thì đăng nhập lại,
       // token mới mang deviceId mới, hai bên vẫn khớp. Chốt này không tạo ma sát.
-      await expect(
-        service.registerFingerprint(ctx, 'dev_1', PEM, 'ES256'),
-      ).resolves.toMatchObject({ keyId: 'bio_1' });
+      await expect(service.registerFingerprint(ctx, 'dev_1', PEM, 'ES256')).resolves.toMatchObject({
+        keyId: 'bio_1',
+      });
     });
 
     it('CHẶN khi token không gắn thiết bị (token của Web)', async () => {
@@ -261,7 +276,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
     });
 
     it('thay khoá trên thiết bị đã có → báo HR', async () => {
-      prisma.biometricKey.findUnique.mockResolvedValue({
+      biometrics.findFingerprintKey.mockResolvedValue({
         publicKey: '-----BEGIN PUBLIC KEY-----\nKHOA_CU\n-----END PUBLIC KEY-----',
         revokedAt: null,
       });
@@ -270,7 +285,8 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
       const moduleRef = await Test.createTestingModule({
         providers: [
           BiometricService,
-          { provide: PrismaService, useValue: prisma },
+          { provide: BiometricRepository, useValue: biometrics },
+          { provide: TransactionManager, useValue: transactions },
           { provide: RedisService, useValue: redis },
           { provide: AiGatewayService, useValue: ai },
           { provide: PolicyService, useValue: policy },
@@ -288,13 +304,14 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
     });
 
     it('đăng ký LẦN ĐẦU trên một thiết bị thì KHÔNG báo HR', async () => {
-      prisma.biometricKey.findUnique.mockResolvedValue(null);
+      biometrics.findFingerprintKey.mockResolvedValue(null);
 
       const notifications = { notify: jest.fn(), broadcast: jest.fn() };
       const moduleRef = await Test.createTestingModule({
         providers: [
           BiometricService,
-          { provide: PrismaService, useValue: prisma },
+          { provide: BiometricRepository, useValue: biometrics },
+          { provide: TransactionManager, useValue: transactions },
           { provide: RedisService, useValue: redis },
           { provide: AiGatewayService, useValue: ai },
           { provide: PolicyService, useValue: policy },

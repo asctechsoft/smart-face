@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { AppException } from 'src/common/errors';
 import { randomToken, sha256 } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { AuthRepository } from './auth.repository';
 import { PolicyService } from '../policy/policy.service';
 import { PolicyKeys } from '../policy/policy.constants';
 import type { DeviceInfoDto } from './dto/auth.dto';
@@ -26,7 +26,7 @@ export class DeviceService {
   private readonly logger = new Logger(DeviceService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly devices: AuthRepository,
     private readonly policy: PolicyService,
   ) {}
 
@@ -43,23 +43,18 @@ export class DeviceService {
     info: DeviceInfoDto | undefined,
     companyId: string | null,
   ): Promise<DeviceLinkResult> {
-    const existing = await this.prisma.deviceBinding.findUnique({
-      where: { userId_deviceId: { userId, deviceId } },
-    });
+    const existing = await this.devices.findDeviceBinding(userId, deviceId);
 
     if (existing && existing.isActive && !existing.revokedAt) {
-      await this.prisma.deviceBinding.update({
-        where: { id: existing.id },
-        data: {
-          lastSeenAt: new Date(),
-          deviceModel: info?.model ?? existing.deviceModel,
-          osName: info?.os ?? existing.osName,
-          osVersion: info?.osVersion ?? existing.osVersion,
-          appVersion: info?.appVersion ?? existing.appVersion,
-          isRooted: info?.isRooted ?? existing.isRooted,
-          pushToken: info?.pushToken ?? existing.pushToken,
-          companyId: companyId ?? existing.companyId,
-        },
+      await this.devices.refreshDeviceProfile(existing.id, {
+        lastSeenAt: new Date(),
+        deviceModel: info?.model ?? existing.deviceModel,
+        osName: info?.os ?? existing.osName,
+        osVersion: info?.osVersion ?? existing.osVersion,
+        appVersion: info?.appVersion ?? existing.appVersion,
+        isRooted: info?.isRooted ?? existing.isRooted,
+        pushToken: info?.pushToken ?? existing.pushToken,
+        companyId: companyId ?? existing.companyId,
       });
       // Thiết bị đã liên kết và còn hiệu lực → chỉ cập nhật thông tin, KHÔNG cấp
       // `deviceSecret` mới. Cấp lại mỗi lần đăng nhập sẽ làm hỏng chữ ký HMAC
@@ -78,18 +73,16 @@ export class DeviceService {
 
     let previousDeviceRevoked = false;
     if (bindingEnabled) {
-      const revoked = await this.prisma.deviceBinding.updateMany({
-        where: { userId, isActive: true, deviceId: { not: deviceId } },
-        data: {
-          isActive: false,
-          revokedAt: new Date(),
-          revokedReason: 'NEW_DEVICE_LINKED',
-        },
-      });
-      previousDeviceRevoked = revoked.count > 0;
+      const revokedCount = await this.devices.revokeOtherDevices(
+        userId,
+        deviceId,
+        'NEW_DEVICE_LINKED',
+        new Date(),
+      );
+      previousDeviceRevoked = revokedCount > 0;
 
       if (previousDeviceRevoked) {
-        this.logger.log(`Thu hồi ${revoked.count} thiết bị cũ của user ${userId} (BR-11)`);
+        this.logger.log(`Thu hồi ${revokedCount} thiết bị cũ của user ${userId} (BR-11)`);
       }
     }
 
@@ -98,36 +91,16 @@ export class DeviceService {
     // secure enclave của máy.
     const deviceSecret = randomToken(32);
 
-    await this.prisma.deviceBinding.upsert({
-      where: { userId_deviceId: { userId, deviceId } },
-      create: {
-        userId,
-        companyId,
-        deviceId,
-        deviceModel: info?.model,
-        osName: info?.os,
-        osVersion: info?.osVersion,
-        appVersion: info?.appVersion,
-        isRooted: info?.isRooted ?? false,
-        pushToken: info?.pushToken,
-        deviceSecretHash: sha256(deviceSecret),
-        isActive: true,
-        lastSeenAt: new Date(),
-      },
-      update: {
-        companyId,
-        deviceModel: info?.model,
-        osName: info?.os,
-        osVersion: info?.osVersion,
-        appVersion: info?.appVersion,
-        isRooted: info?.isRooted ?? false,
-        pushToken: info?.pushToken,
-        deviceSecretHash: sha256(deviceSecret),
-        isActive: true,
-        revokedAt: null,
-        revokedReason: null,
-        lastSeenAt: new Date(),
-      },
+    await this.devices.upsertDeviceBinding(userId, deviceId, {
+      companyId,
+      deviceModel: info?.model,
+      osName: info?.os,
+      osVersion: info?.osVersion,
+      appVersion: info?.appVersion,
+      isRooted: info?.isRooted ?? false,
+      pushToken: info?.pushToken,
+      deviceSecretHash: sha256(deviceSecret),
+      lastSeenAt: new Date(),
     });
 
     // ⚠ CHÚ Ý KỸ CHỖ NÀY: trả về `sha256(deviceSecret)`, KHÔNG phải giá trị gốc.
@@ -142,58 +115,35 @@ export class DeviceService {
   }
 
   async assertActive(userId: string, deviceId: string): Promise<void> {
-    const device = await this.prisma.deviceBinding.findUnique({
-      where: { userId_deviceId: { userId, deviceId } },
-    });
+    const device = await this.devices.findDeviceBinding(userId, deviceId);
     if (!device || !device.isActive || device.revokedAt) {
       throw new AppException('FRAUD_UNKNOWN_DEVICE');
     }
   }
 
   async touch(userId: string, deviceId: string): Promise<void> {
-    await this.prisma.deviceBinding
-      .updateMany({
-        where: { userId, deviceId },
-        data: { lastSeenAt: new Date() },
-      })
-      .catch(() => undefined);
+    await this.devices.touchDeviceBinding(userId, deviceId, new Date());
   }
 
   /** FR-WEB-INV-06 — danh sách thiết bị đã liên kết của một nhân viên. */
   async listForUser(userId: string) {
-    return this.prisma.deviceBinding.findMany({
-      where: { userId },
-      orderBy: [{ isActive: 'desc' }, { lastSeenAt: 'desc' }],
-      select: {
-        id: true,
-        deviceId: true,
-        deviceModel: true,
-        osName: true,
-        osVersion: true,
-        appVersion: true,
-        isRooted: true,
-        isActive: true,
-        lastSeenAt: true,
-        createdAt: true,
-        revokedAt: true,
-        revokedReason: true,
-      },
-    });
+    return this.devices.listDeviceBindings(userId);
   }
 
   /** FR-ADM-USR-04 — thu hồi liên kết thiết bị (mất máy, đổi máy). */
   async revoke(userId: string, deviceId: string, revokedBy: string, reason: string) {
-    const result = await this.prisma.deviceBinding.updateMany({
-      where: { userId, deviceId },
-      data: { isActive: false, revokedAt: new Date(), revokedBy, revokedReason: reason },
-    });
+    const revokedAt = new Date();
+    const revoked = await this.devices.revokeDeviceBinding(
+      userId,
+      deviceId,
+      revokedBy,
+      reason,
+      revokedAt,
+    );
 
     // Khoá vân tay gắn với thiết bị này cũng phải vô hiệu (BR-11).
-    await this.prisma.biometricKey.updateMany({
-      where: { deviceId, revokedAt: null, employee: { userId } },
-      data: { revokedAt: new Date(), revokedReason: reason },
-    });
+    await this.devices.revokeBiometricKeysForDevice(userId, deviceId, reason, revokedAt);
 
-    return { revoked: result.count };
+    return { revoked };
   }
 }

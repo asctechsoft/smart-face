@@ -171,20 +171,40 @@ GET /v1/attendance?page=1&pageSize=20&sort=-recordedAt
 
 ## 2. API Xác thực (`/auth`)
 
-> **Đăng nhập bằng tên miền + email + mật khẩu.** Tài khoản do công ty cấp sẵn,
-> nhân viên không tự đăng ký. Không còn đăng nhập bằng OTP, không còn mã mời.
+> **Danh tính do Firebase Authentication quản lý.** Client đăng nhập với Firebase
+> (email + mật khẩu qua SDK) rồi đổi ID token lấy phiên làm việc của Backend.
+> Backend **không bao giờ nhận mật khẩu** và không lưu mật khẩu dưới bất kỳ dạng nào.
 >
-> Xác thực 2 lớp là **tuỳ chọn**, dùng TOTP (Google Authenticator), người dùng
-> tự bật.
+> Tài khoản do công ty cấp sẵn, nhân viên không tự đăng ký. Không còn mã mời.
+>
+> Xác thực 2 lớp là **tuỳ chọn**, dùng **OTP gửi qua SMS**, người dùng tự bật.
 
-### `POST /v1/auth/login`
+### Ai làm việc gì
+
+| Việc | Firebase | Backend |
+|---|:--:|:--:|
+| Giữ email + mật khẩu, chống dò mật khẩu | ✔ | |
+| Xác minh thông tin đăng nhập | ✔ | |
+| Phiên làm việc (access + refresh token, xoay vòng) | | ✔ |
+| Ràng buộc thiết bị (AF-16), thu hồi theo từng thiết bị | | ✔ |
+| Xác thực 2 lớp (OTP) | | ✔ |
+| Vai trò, công ty, phạm vi phòng ban | | ✔ |
+
+Backend vẫn cấp token riêng thay vì dùng thẳng Firebase ID token vì ID token cấp
+theo *người dùng* chứ không theo *phiên*: không đặt được `deviceId` cho từng máy,
+không thu hồi được phiên của đúng một thiết bị, không phát hiện được việc dùng
+lại refresh token, và đẩy vai trò sang custom claims thì thu hồi quyền phải chờ
+tới một giờ thay vì 15 phút. Lý do đầy đủ ở đầu `src/modules/auth/auth.service.ts`.
+
+### `POST /v1/auth/session`
+
+Thay cho `POST /auth/login` cũ.
 
 ```jsonc
 // Request
 {
   "domain": "amobi.vn",              // tên miền công ty cấp; chấp nhận cả "https://amobi.vn/"
-  "email": "duc@amobi.vn",
-  "password": "...",
+  "firebaseIdToken": "eyJ...",       // user.getIdToken() sau khi đăng nhập Firebase
   "deviceId": "a3f9c2e1-...",        // BẮT BUỘC với App; Web quản lý không cần
   "deviceInfo": { "model": "iPhone 14", "os": "iOS", "osVersion": "17.5", "appVersion": "1.0.0" }
 }
@@ -208,23 +228,41 @@ GET /v1/attendance?page=1&pageSize=20&sort=-recordedAt
   }
 }
 
-// 200 — tài khoản đã bật xác thực 2 lớp: CHƯA cấp token
+// 200 — tài khoản đã bật xác thực 2 lớp: CHƯA cấp token, OTP vừa được gửi
 {
   "success": true,
-  "data": { "nextStep": "TWO_FACTOR", "twoFactorToken": "...", "expiresIn": 300 }
+  "data": {
+    "nextStep": "TWO_FACTOR",
+    "twoFactorToken": "...", "expiresIn": 300,
+    "maskedPhone": "090****567",        // KHÔNG bao giờ trả số đầy đủ
+    "codeExpiresIn": 300, "resendAfter": 60
+  }
 }
 ```
 
-> ⚠ **Sai tên miền, email không tồn tại và sai mật khẩu đều trả CÙNG một mã lỗi
-> `AUTH_INVALID_CREDENTIALS`** — và Backend tốn thời gian như nhau ở cả ba nhánh
-> (khi không có tài khoản vẫn băm mật khẩu với một chuỗi giả rồi mới báo lỗi).
->
-> Phân biệt ra sẽ biến màn hình đăng nhập thành công cụ dò danh sách email nhân
-> viên. Chênh lệch thời gian phản hồi cũng rò rỉ đúng thông tin đó mà không cần
-> đọc thông báo lỗi.
+Ví dụ phía client (Web):
 
-Lỗi: `AUTH_INVALID_CREDENTIALS` (401) · `AUTH_ACCOUNT_LOCKED` (429, sai 8 lần → khoá 15 phút) ·
-`AUTH_ACCOUNT_SUSPENDED` (403) · `AUTH_COMPANY_INACTIVE` (403) · `SYS_RATE_LIMITED` (429)
+```ts
+const cred = await signInWithEmailAndPassword(auth, email, password);
+const res  = await api.post('/v1/auth/session', {
+  domain, firebaseIdToken: await cred.user.getIdToken(),
+});
+```
+
+> ⚠ **Lỗi sai email/mật khẩu không còn do Backend trả về.** Client nhận thẳng từ
+> Firebase SDK (`auth/wrong-password`, `auth/user-not-found`,
+> `auth/too-many-requests`) và tự hiển thị. Việc khoá tạm sau nhiều lần sai cũng
+> do Firebase làm — Backend không còn đếm nữa.
+>
+> ⚠ **Tên miền phải khớp công ty của tài khoản.** Firebase chỉ xác nhận danh
+> tính, nó không biết gì về ranh giới công ty; đây là nơi DUY NHẤT kiểm điều đó.
+> Tên miền không tồn tại và tên miền sai công ty trả **cùng** mã lỗi, để gõ bừa
+> không dò ra được tên miền nào có thật.
+
+Lỗi: `AUTH_FIREBASE_TOKEN_INVALID` (401) · `AUTH_FIREBASE_TOKEN_EXPIRED` (401) ·
+`AUTH_ACCOUNT_NOT_PROVISIONED` (403, uid hợp lệ nhưng chưa được HR cấp hồ sơ) ·
+`AUTH_DOMAIN_MISMATCH` (403) · `AUTH_ACCOUNT_SUSPENDED` (403) ·
+`AUTH_COMPANY_INACTIVE` (403) · `SYS_RATE_LIMITED` (429)
 
 **Quản trị viên nền tảng** không thuộc công ty nào nên gõ tên miền quy ước, mặc
 định `system` (đặt qua `SYSTEM_ADMIN_DOMAIN`). Tên miền này bị cấm cấp cho công
@@ -232,24 +270,35 @@ ty — trùng thì công ty đó vĩnh viễn không đăng nhập được.
 
 ---
 
-### `POST /v1/auth/2fa/verify`
+### `POST /v1/auth/2fa/verify` · `POST /v1/auth/2fa/resend`
 
-Bước hai khi tài khoản đã bật xác thực 2 lớp.
+Bước hai khi tài khoản đã bật xác thực 2 lớp. Mã OTP đã được gửi tự động ở bước
+`/auth/session`, không cần gọi thêm gì để nhận mã.
 
 ```jsonc
-// Request
+// POST /v1/auth/2fa/verify
 { "twoFactorToken": "...", "code": "123456" }   // hoặc một mã dự phòng "abcd-efgh"
+// 200 → trả về đúng cấu trúc như /auth/session thành công
 
-// 200 → trả về đúng cấu trúc như /auth/login thành công
+// POST /v1/auth/2fa/resend  { "twoFactorToken": "..." } → 200
+{ "maskedPhone": "090****567", "codeExpiresIn": 300, "resendAfter": 60 }
 ```
 
-`twoFactorToken` sống 5 phút, **dùng một lần** — tiêu thụ ngay khi gọi, kể cả
-khi mã sai, nên không thử được nhiều mã trên cùng một phiên.
+`twoFactorToken` sống 5 phút, **dùng một lần** — tiêu thụ ngay khi dùng thành
+công, nên không thử được nhiều mã trên cùng một phiên.
 
-Cùng một mã TOTP **không dùng lại được** trong cửa sổ 90 giây. Không có chốt đó
-thì người nhìn trộm màn hình gõ lại được ngay mã vừa thấy.
+Mã OTP **dùng một lần rồi xoá**. Nhập sai quá `OTP_MAX_ATTEMPTS` lần → khoá
+`OTP_LOCK_SECONDS` giây. Phạm vi đếm theo **tài khoản**, không theo số điện
+thoại: hai người khai chung một số mà đếm theo số thì người này nhập sai năm lần
+là người kia bị khoá.
 
-Lỗi: `AUTH_2FA_INVALID` (401) · `AUTH_2FA_NOT_ENABLED` (422)
+**Mã dự phòng được thử trước** khi tính là nhập sai OTP — ngược lại thì người mất
+điện thoại, đúng đối tượng mà mã dự phòng sinh ra để cứu, sẽ tự khoá mình sau vài
+lần thử.
+
+Lỗi: `AUTH_2FA_INVALID` (401, phiên hết hạn) · `AUTH_2FA_NOT_ENABLED` (422) ·
+`AUTH_OTP_INVALID` (401) · `AUTH_OTP_EXPIRED` (401) · `AUTH_OTP_MAX_ATTEMPTS` (429) ·
+`AUTH_OTP_RESEND_TOO_SOON` (429) · `AUTH_OTP_SEND_LIMIT` (429)
 
 ---
 
@@ -257,9 +306,20 @@ Lỗi: `AUTH_2FA_INVALID` (401) · `AUTH_2FA_NOT_ENABLED` (422)
 
 **Bắt buộc sau khi đăng nhập lần đầu bằng mật khẩu tạm.**
 
+Không còn trường `currentPassword`: Backend không giữ mật khẩu nên không đối
+chiếu được. Client phải cho người dùng gõ lại mật khẩu cũ qua Firebase rồi gửi
+lên ID token vừa làm mới — `auth_time` trong token chứng minh việc gõ lại vừa xảy
+ra (ngưỡng đặt ở `FIREBASE_FRESH_AUTH_WINDOW_SECONDS`, mặc định 300 giây).
+
+```ts
+// Client phải làm bước này trước
+await reauthenticateWithCredential(user, EmailAuthProvider.credential(email, currentPassword));
+const firebaseIdToken = await user.getIdToken(true);
+```
+
 ```jsonc
 // Request
-{ "currentPassword": "...", "newPassword": "..." }
+{ "firebaseIdToken": "eyJ...", "newPassword": "..." }
 
 // 200
 {
@@ -287,45 +347,69 @@ Lỗi: `AUTH_2FA_INVALID` (401) · `AUTH_2FA_NOT_ENABLED` (422)
 | Độ dài tối thiểu | 12 ký tự |
 | Nếu chỉ gồm chữ số | phải từ 16 ký tự |
 | Tối đa | 128 ký tự |
-| Cấm | trùng mật khẩu hiện tại · chứa phần đầu email · nằm trong danh sách phổ biến |
+| Cấm | chứa phần đầu email · nằm trong danh sách phổ biến · chỉ một ký tự lặp lại |
 
 Cố tình **không** có quy tắc "phải có chữ hoa, số và ký tự đặc biệt". Quy tắc
 kiểu đó đẩy người dùng tới đúng một khuôn `Matkhau@123` — thoả mọi điều kiện mà
 nằm đầu mọi danh sách dò (NIST SP 800-63B đã bỏ khuyến nghị này).
 
-Đổi xong **thu hồi toàn bộ phiên khác**: nếu mật khẩu đã lộ và kẻ tấn công đang
-có phiên mở, đổi mật khẩu mà không thu hồi thì phiên của hắn vẫn sống.
+> ⚠ **Chính sách này chỉ áp dụng cho những đường đi QUA Backend**: cấp tài khoản
+> và endpoint này. Firebase bản chưa nâng cấp Identity Platform chỉ ép được tối
+> thiểu 6 ký tự, nên nếu sau này bật màn hình "quên mật khẩu" mặc định của
+> Firebase thì đường đó sẽ lách qua bảng trên. Muốn giữ chuẩn 12 ký tự thì luồng
+> đặt lại mật khẩu cũng phải đi qua Backend.
+>
+> Quy tắc "không trùng mật khẩu hiện tại" đã **bỏ** — Backend không còn giữ mật
+> khẩu cũ để so sánh, và Firebase cũng không kiểm điều này.
 
-Lỗi: `AUTH_INVALID_CREDENTIALS` (401) · `AUTH_PASSWORD_TOO_WEAK` (422, kèm `details.reasons`) ·
-`AUTH_PASSWORD_REUSED` (422)
+Đổi xong **thu hồi toàn bộ phiên khác ở CẢ HAI phía** (Backend và Firebase): bỏ
+sót bên nào thì bên đó vẫn cho vào bằng mật khẩu cũ.
+
+Lỗi: `AUTH_FIREBASE_TOKEN_INVALID` (401) · `AUTH_REAUTH_STALE` (401, token quá cũ) ·
+`AUTH_PASSWORD_TOO_WEAK` (422, kèm `details.reasons`)
 
 ---
 
 ### `POST /v1/auth/2fa/setup` · `2fa/enable` · `2fa/disable`
 
 ```jsonc
-// POST /v1/auth/2fa/setup → 200
+// POST /v1/auth/2fa/setup  { "phone": "0912345678" } → 200
 {
-  "secret": "JBSWY3DPEHPK3PXP...",
-  "otpauthUri": "otpauth://totp/SmartFace%3Aduc%40amobi.vn?secret=...&issuer=SmartFace&algorithm=SHA1&digits=6&period=30",
-  "manualEntryKey": "JBSW Y3DP EHPK 3PXP"    // cho người không quét được mã QR
+  "maskedPhone": "091****678",
+  "codeExpiresIn": 300,      // mã OTP còn hiệu lực bao lâu
+  "resendAfter": 60,         // phải chờ bao lâu mới gửi lại được
+  "setupExpiresIn": 600      // hết hạn này phải gọi lại setup
 }
 
 // POST /v1/auth/2fa/enable  { "code": "123456" } → 200
 {
   "enabled": true,
+  "maskedPhone": "091****678",
   "recoveryCodes": ["abcd-efgh", "..."]     // hiển thị MỘT LẦN, server chỉ lưu bản băm
 }
 
-// POST /v1/auth/2fa/disable  { "password": "..." } → 200
+// POST /v1/auth/2fa/disable  { "firebaseIdToken": "eyJ..." } → 200
 { "enabled": false }
 ```
 
-`setup` lưu secret nhưng **chưa bật**. Phải nhập đúng một mã sinh từ secret đó
-(`enable`) mới bật thật — bật ngay ở bước `setup` sẽ khoá chính người dùng ra
-ngoài nếu họ quét mã QR hỏng.
+`setup` gửi mã tới số vừa khai nhưng **chưa ghi số vào tài khoản**. Chỉ khi nhập
+đúng mã (`enable`) số mới được lưu — ghi trước rồi mới xác minh nghĩa là gõ nhầm
+một chữ số cũng đủ khiến mọi mã OTP về sau bay tới máy người lạ, và người dùng
+thì tự khoá mình ra ngoài.
 
-Mã dự phòng dùng **một lần rồi mất**, dành cho trường hợp mất thiết bị.
+Số nhận OTP lưu ở cột riêng `twoFactorPhone`, **tách khỏi** số liên lạc trong hồ
+sơ nhân sự: đổi số liên lạc không được âm thầm chuyển hướng OTP.
+
+`disable` đòi ID token vừa làm mới (người dùng gõ lại mật khẩu), thay cho trường
+`password` trước đây.
+
+Mã dự phòng dùng **một lần rồi mất**, dành cho trường hợp mất điện thoại.
+
+> **Vì sao không dùng MFA của Firebase.** MFA qua SMS đòi nâng cấp Identity
+> Platform (tính tiền theo MAU), và từ 09/2024 mọi tin nhắn của Firebase Phone
+> Auth đòi gói Blaze có gắn thanh toán. Dự án đang ở gói Spark nên cả hai đường
+> đều đóng. Đổi lại, toàn bộ ngưỡng chống lạm dụng (`OTP_*` trong `.env`) nằm
+> trong tay mình.
 
 ---
 
@@ -336,22 +420,26 @@ Phát hiện dùng lại token cũ → thu hồi toàn bộ phiên của tài kh
 
 ---
 
-### `POST /v1/auth/reauth/verify`
+### `POST /v1/auth/reauth/code` · `POST /v1/auth/reauth/verify`
 
 Lấy `reauthToken` (dùng một lần, TTL 5 phút) cho thao tác nhạy cảm: đổi/xoá
 khuôn mặt, đăng ký vân tay cho thiết bị khác.
 
 ```jsonc
-// Request
-{ "password": "...", "totpCode": "123456" }   // totpCode bắt buộc nếu đã bật 2FA
+// POST /v1/auth/reauth/code → 200   (chỉ cần gọi khi đã bật 2 lớp)
+{ "maskedPhone": "090****567", "codeExpiresIn": 300, "resendAfter": 60 }
+
+// POST /v1/auth/reauth/verify
+{ "firebaseIdToken": "eyJ...", "twoFactorCode": "123456" }  // twoFactorCode bắt buộc nếu đã bật 2FA
 
 // 200
 { "reauthToken": "...", "expiresIn": 300 }
 ```
 
-> Dùng **mật khẩu** chứ không dùng OTP SMS. Kẻ cầm được điện thoại đang đăng
-> nhập cũng nhận được SMS gửi tới chính máy đó — OTP không phải rào cản trong
-> đúng kịch bản mà chốt này sinh ra để chặn.
+> Neo vào **mật khẩu** (qua ID token vừa làm mới của Firebase) chứ không phải chỉ
+> OTP. Kẻ cầm được điện thoại đang đăng nhập cũng nhận được SMS gửi tới chính máy
+> đó — OTP một mình không phải rào cản trong đúng kịch bản mà chốt này sinh ra để
+> chặn; mật khẩu thì hắn không có.
 
 ---
 

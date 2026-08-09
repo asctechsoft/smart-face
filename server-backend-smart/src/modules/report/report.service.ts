@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { AttendanceDecision, DailyStatus, Prisma, RequestStatus } from '@prisma/client';
 import { formatWorkDate, parseWorkDate, toWorkDate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { RedisService } from 'src/infra/redis/redis.service';
 import { RedisKeys } from 'src/infra/redis/redis.keys';
 import { PolicyService } from '../policy/policy.service';
+import { ReportRepository } from './report.repository';
 
 // 2 phút — điểm cân bằng giữa tải database và cảm giác "số liệu tươi".
 // Dài hơn thì quản lý thấy số cũ và mất tin tưởng vào dashboard; ngắn hơn thì
@@ -16,13 +15,14 @@ const DASHBOARD_CACHE_TTL_SECONDS = 120;
  *
  * Hai nguyên tắc hiệu năng bắt buộc:
  *   - Query trên `AttendanceDaily` (đã tính sẵn), KHÔNG trên `AttendanceLog`
- *     (bảng lớn nhất hệ thống) — docs/04 mục 9.1.
+ *     (bảng lớn nhất hệ thống) — docs/04 mục 9.1. Ràng buộc này được thực thi ở
+ *     `ReportRepository`, nơi không có phương thức nào đọc bảng thô.
  *   - Dashboard là màn hình mở nhiều nhất → BẮT BUỘC cache Redis (docs/04 mục 2.2).
  */
 @Injectable()
 export class ReportService {
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly reports: ReportRepository,
     private readonly redis: RedisService,
     private readonly policy: PolicyService,
   ) {}
@@ -55,53 +55,20 @@ export class ReportService {
         const today = toWorkDate(new Date(), timezone);
         const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
 
-        const employeeWhere: Prisma.EmployeeWhereInput = {
+        const employeeIds = await this.reports.findActiveEmployeeIds(companyId, departmentScope);
+
+        const counters = await this.reports.loadDashboardCounters(
           companyId,
-          deletedAt: null,
-          status: 'ACTIVE',
-          ...(departmentScope ? { departmentId: { in: departmentScope } } : {}),
-        };
+          employeeIds,
+          today,
+          monthStart,
+        );
 
-        const employees = await this.prisma.employee.findMany({
-          where: employeeWhere,
-          select: { id: true },
-        });
-        const employeeIds = employees.map((employee) => employee.id);
-
-        const [todayDailies, pendingRequests, otAggregate, unreviewedFlags] = await Promise.all([
-          this.prisma.attendanceDaily.findMany({
-            where: { companyId, workDate: today, employeeId: { in: employeeIds } },
-            select: { status: true, lateMinutes: true, firstCheckInAt: true, lastCheckOutAt: true },
-          }),
-          this.prisma.leaveRequest.count({
-            where: {
-              companyId,
-              status: RequestStatus.PENDING,
-              ...(employeeIds.length ? { employeeId: { in: employeeIds } } : {}),
-            },
-          }),
-          this.prisma.attendanceDaily.aggregate({
-            where: {
-              companyId,
-              workDate: { gte: monthStart, lte: today },
-              employeeId: { in: employeeIds },
-            },
-            _sum: { otMinutes: true },
-          }),
-          this.prisma.fraudFlag.count({
-            where: {
-              companyId,
-              reviewedAt: null,
-              ...(employeeIds.length ? { employeeId: { in: employeeIds } } : {}),
-            },
-          }),
-        ]);
-
-        const checkedIn = todayDailies.filter((row) => row.firstCheckInAt !== null).length;
-        const stillWorking = todayDailies.filter(
+        const checkedIn = counters.todayDailies.filter((row) => row.firstCheckInAt !== null).length;
+        const stillWorking = counters.todayDailies.filter(
           (row) => row.firstCheckInAt !== null && row.lastCheckOutAt === null,
         ).length;
-        const lateCount = todayDailies.filter((row) => row.lateMinutes > 0).length;
+        const lateCount = counters.todayDailies.filter((row) => row.lateMinutes > 0).length;
 
         return {
           workDate: formatWorkDate(today),
@@ -109,9 +76,9 @@ export class ReportService {
           checkedInToday: checkedIn,
           currentlyWorking: stillWorking,
           lateToday: lateCount,
-          pendingRequests,
-          otMinutesThisMonth: otAggregate._sum.otMinutes ?? 0,
-          unreviewedFraudFlags: unreviewedFlags,
+          pendingRequests: counters.pendingRequests,
+          otMinutesThisMonth: counters.otMinutesThisMonth,
+          unreviewedFraudFlags: counters.unreviewedFraudFlags,
         };
       },
     );
@@ -122,30 +89,13 @@ export class ReportService {
     const timezone = await this.policy.getTimezone(companyId);
     const today = toWorkDate(new Date(), timezone);
 
-    const employeeFilter = departmentScope
-      ? await this.prisma.employee
-          .findMany({
-            where: { companyId, departmentId: { in: departmentScope } },
-            select: { id: true },
-          })
-          .then((rows) => rows.map((row) => row.id))
-      : null;
+    const employeeIds = await this.reports.findEmployeeIdsInScope(companyId, departmentScope);
+    const flags = await this.reports.findUnreviewedFlagsForDay(companyId, today, employeeIds);
 
-    const flags = await this.prisma.fraudFlag.findMany({
-      where: {
-        companyId,
-        reviewedAt: null,
-        attendanceLog: { workDate: today },
-        ...(employeeFilter ? { employeeId: { in: employeeFilter } } : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    });
-
-    const employees = await this.prisma.employee.findMany({
-      where: { id: { in: flags.map((flag) => flag.employeeId) } },
-      select: { id: true, fullName: true, employeeCode: true },
-    });
+    const employees = await this.reports.findEmployeeLabels(
+      companyId,
+      flags.map((flag) => flag.employeeId),
+    );
     const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
 
     const byCode = flags.reduce<Record<string, number>>((acc, flag) => {
@@ -178,23 +128,20 @@ export class ReportService {
     to: string,
     departmentScope: string[] | null,
   ) {
-    const employeeIds = await this.resolveEmployeeIds(companyId, departmentScope);
+    const employeeIds = await this.reports.findEmployeeIdsInScope(companyId, departmentScope);
 
-    const rows = await this.prisma.attendanceDaily.groupBy({
-      by: ['workDate', 'status'],
-      where: {
-        companyId,
-        workDate: { gte: parseWorkDate(from), lte: parseWorkDate(to) },
-        ...(employeeIds ? { employeeId: { in: employeeIds } } : {}),
-      },
-      _count: { _all: true },
-    });
+    const rows = await this.reports.groupDailyStatusByDate(
+      companyId,
+      parseWorkDate(from),
+      parseWorkDate(to),
+      employeeIds,
+    );
 
     const byDate = new Map<string, Record<string, number>>();
     for (const row of rows) {
       const key = formatWorkDate(row.workDate);
       const bucket = byDate.get(key) ?? {};
-      bucket[row.status] = row._count._all;
+      bucket[row.status] = row.count;
       byDate.set(key, bucket);
     }
 
@@ -211,57 +158,42 @@ export class ReportService {
     departmentScope: string[] | null,
     minOccurrences = 3,
   ) {
-    const employeeIds = await this.resolveEmployeeIds(companyId, departmentScope);
+    const employeeIds = await this.reports.findEmployeeIdsInScope(companyId, departmentScope);
 
-    const rows = await this.prisma.attendanceDaily.groupBy({
-      by: ['employeeId'],
-      where: {
-        companyId,
-        workDate: { gte: parseWorkDate(from), lte: parseWorkDate(to) },
-        status: {
-          in: [
-            DailyStatus.LATE,
-            DailyStatus.EARLY_LEAVE,
-            DailyStatus.LATE_AND_EARLY,
-            DailyStatus.INSUFFICIENT,
-            DailyStatus.MISSING_RECORD,
-          ],
-        },
-        ...(employeeIds ? { employeeId: { in: employeeIds } } : {}),
-      },
-      _count: { _all: true },
-      _sum: { lateMinutes: true, earlyLeaveMinutes: true },
-    });
+    const rows = await this.reports.groupViolationsByEmployee(
+      companyId,
+      parseWorkDate(from),
+      parseWorkDate(to),
+      employeeIds,
+    );
 
-    const filtered = rows.filter((row) => row._count._all >= minOccurrences);
-    const employees = await this.prisma.employee.findMany({
-      where: { id: { in: filtered.map((row) => row.employeeId) } },
-      select: { id: true, fullName: true, employeeCode: true, departmentId: true },
-    });
+    const filtered = rows.filter((row) => row.violationCount >= minOccurrences);
+    const employees = await this.reports.findEmployeeLabels(
+      companyId,
+      filtered.map((row) => row.employeeId),
+    );
     const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
 
     return filtered
       .map((row) => ({
         employee: employeeMap.get(row.employeeId) ?? null,
-        violationCount: row._count._all,
-        lateMinutesTotal: row._sum.lateMinutes ?? 0,
-        earlyLeaveMinutesTotal: row._sum.earlyLeaveMinutes ?? 0,
+        violationCount: row.violationCount,
+        lateMinutesTotal: row.lateMinutesTotal,
+        earlyLeaveMinutesTotal: row.earlyLeaveMinutesTotal,
       }))
       .sort((a, b) => b.violationCount - a.violationCount);
   }
 
   /** FR-WEB-REP-03 — sử dụng phép năm. */
   async leaveUsage(companyId: string, year: number, departmentScope: string[] | null) {
-    const employeeIds = await this.resolveEmployeeIds(companyId, departmentScope);
+    const employeeIds = await this.reports.findEmployeeIdsInScope(companyId, departmentScope);
 
-    const balances = await this.prisma.leaveBalance.findMany({
-      where: { companyId, year, ...(employeeIds ? { employeeId: { in: employeeIds } } : {}) },
-    });
+    const balances = await this.reports.findLeaveBalances(companyId, year, employeeIds);
 
-    const employees = await this.prisma.employee.findMany({
-      where: { id: { in: balances.map((row) => row.employeeId) } },
-      select: { id: true, fullName: true, employeeCode: true, departmentId: true },
-    });
+    const employees = await this.reports.findEmployeeLabels(
+      companyId,
+      balances.map((row) => row.employeeId),
+    );
     const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
 
     return balances.map((balance) => {
@@ -285,37 +217,27 @@ export class ReportService {
     to: string,
     departmentScope: string[] | null,
   ) {
-    const employees = await this.prisma.employee.findMany({
-      where: {
-        companyId,
-        deletedAt: null,
-        ...(departmentScope ? { departmentId: { in: departmentScope } } : {}),
-      },
-      select: { id: true, fullName: true, employeeCode: true, departmentId: true },
-    });
+    const employees = await this.reports.findEmployeesForOvertime(companyId, departmentScope);
     const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
 
-    const rows = await this.prisma.attendanceDaily.groupBy({
-      by: ['employeeId'],
-      where: {
-        companyId,
-        workDate: { gte: parseWorkDate(from), lte: parseWorkDate(to) },
-        employeeId: { in: employees.map((employee) => employee.id) },
-        otMinutes: { gt: 0 },
-      },
-      _sum: { otMinutes: true },
-    });
+    const rows = await this.reports.groupOvertimeByEmployee(
+      companyId,
+      parseWorkDate(from),
+      parseWorkDate(to),
+      employees.map((employee) => employee.id),
+    );
 
-    const departments = await this.prisma.department.findMany({
-      where: { companyId, deletedAt: null },
-      select: { id: true, name: true },
-    });
-    const departmentMap = new Map(departments.map((department) => [department.id, department.name]));
+    const departments = await this.reports.findDepartmentNames(companyId);
+    const departmentMap = new Map(
+      departments.map((department) => [department.id, department.name]),
+    );
 
-    const byDepartment = new Map<string, { name: string; otMinutes: number; employeeCount: number }>();
+    const byDepartment = new Map<
+      string,
+      { name: string; otMinutes: number; employeeCount: number }
+    >();
     const byEmployee = rows.map((row) => {
       const employee = employeeMap.get(row.employeeId);
-      const otMinutes = row._sum.otMinutes ?? 0;
       const departmentId = employee?.departmentId ?? 'unassigned';
 
       const bucket = byDepartment.get(departmentId) ?? {
@@ -323,11 +245,11 @@ export class ReportService {
         otMinutes: 0,
         employeeCount: 0,
       };
-      bucket.otMinutes += otMinutes;
+      bucket.otMinutes += row.otMinutes;
       bucket.employeeCount += 1;
       byDepartment.set(departmentId, bucket);
 
-      return { employee: employee ?? null, otMinutes };
+      return { employee: employee ?? null, otMinutes: row.otMinutes };
     });
 
     return {
@@ -343,23 +265,18 @@ export class ReportService {
   /** FR-APP-STAT-02 — thống kê chuyên cần cá nhân. */
   async myStats(companyId: string, employeeId: string, from: string, to: string) {
     const [dailies, requests] = await Promise.all([
-      this.prisma.attendanceDaily.findMany({
-        where: {
-          companyId,
-          employeeId,
-          workDate: { gte: parseWorkDate(from), lte: parseWorkDate(to) },
-        },
-      }),
-      this.prisma.leaveRequest.groupBy({
-        by: ['status'],
-        where: {
-          companyId,
-          employeeId,
-          startAt: { gte: new Date(from) },
-          endAt: { lte: new Date(`${to}T23:59:59.999Z`) },
-        },
-        _count: { _all: true },
-      }),
+      this.reports.findDailiesForEmployee(
+        companyId,
+        employeeId,
+        parseWorkDate(from),
+        parseWorkDate(to),
+      ),
+      this.reports.countRequestsByStatus(
+        companyId,
+        employeeId,
+        new Date(from),
+        new Date(`${to}T23:59:59.999Z`),
+      ),
     ]);
 
     return {
@@ -376,21 +293,9 @@ export class ReportService {
         return acc;
       }, {}),
       requestCounts: requests.reduce<Record<string, number>>((acc, row) => {
-        acc[row.status] = row._count._all;
+        acc[row.status] = row.count;
         return acc;
       }, {}),
     };
-  }
-
-  private async resolveEmployeeIds(
-    companyId: string,
-    departmentScope: string[] | null,
-  ): Promise<string[] | null> {
-    if (!departmentScope) return null;
-    const employees = await this.prisma.employee.findMany({
-      where: { companyId, departmentId: { in: departmentScope } },
-      select: { id: true },
-    });
-    return employees.map((employee) => employee.id);
   }
 }

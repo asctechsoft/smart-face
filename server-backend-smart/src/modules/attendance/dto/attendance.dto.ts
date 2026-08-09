@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
@@ -360,8 +361,15 @@ export class AdjustAttendanceDto {
  * Endpoint trả về `jobId`, client hỏi tiến độ qua `GET /v1/jobs/:id`.
  */
 export class ExportAttendanceDto extends DateRangeQueryDto {
-  @ApiPropertyOptional({ type: [String] })
+  /**
+   * Bỏ trống = toàn bộ phạm vi người yêu cầu được phép xem, KHÔNG phải toàn công ty.
+   * Với `MANAGER`, kết quả luôn bị giao với phạm vi phòng ban trong JWT — xem
+   * `resolveExportDepartmentFilter()` ở `attendance-admin.service.ts`.
+   */
+  @ApiPropertyOptional({ type: [String], description: 'Bỏ trống = toàn bộ phạm vi được phép' })
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
   departmentIds?: string[];
 
   @ApiPropertyOptional({ enum: ['XLSX', 'CSV'], default: 'XLSX' })

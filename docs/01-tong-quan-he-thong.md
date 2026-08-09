@@ -226,10 +226,17 @@ còn làm ở đâu, và mật khẩu do A cấp không được mở dữ liệ
 
 ### Đăng nhập bằng OTP
 
-Không còn. OTP giờ chỉ dùng cho các luồng thông báo khác.
+Không còn là cách đăng nhập. Lớp thứ nhất do **Firebase Authentication** đảm
+nhiệm: client đăng nhập với Firebase bằng email + mật khẩu, rồi đổi ID token lấy
+phiên của Backend. Backend không bao giờ nhận và không lưu mật khẩu.
 
-**Xác thực 2 lớp** là tuỳ chọn, người dùng tự bật, dùng **TOTP** (Google
-Authenticator) chứ không phải SMS.
+**Xác thực 2 lớp** là tuỳ chọn, người dùng tự bật, dùng **OTP gửi qua SMS** tới
+số điện thoại đã xác minh riêng cho mục đích này.
+
+Không dùng TOTP (Google Authenticator) nữa, và cũng không dùng MFA của Firebase —
+MFA đó đòi nâng cấp Identity Platform, còn Firebase Phone Auth thì từ 09/2024 đòi
+gói Blaze có gắn thanh toán. Backend tự điều phối thử thách lớp hai, nhờ vậy giữ
+được toàn quyền với các ngưỡng chống lạm dụng.
 
 ## 10. Từ điển thuật ngữ
 

@@ -1,8 +1,7 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { AttendanceDecision, FaceProfileStatus } from '@prisma/client';
 import { Job } from 'bullmq';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { JobsRepository } from '../jobs.repository';
 import { FraudService } from 'src/modules/fraud/fraud.service';
 import { FraudCodes } from 'src/modules/fraud/fraud.types';
 import { PolicyKeys } from 'src/modules/policy/policy.constants';
@@ -23,14 +22,14 @@ export class AiBatchProcessor extends WorkerHost {
   private readonly logger = new Logger(AiBatchProcessor.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly jobs: JobsRepository,
     private readonly policy: PolicyService,
     private readonly fraud: FraudService,
   ) {
     super();
   }
 
-  async process(job: Job): Promise<unknown> {
+  async process(_job: Job): Promise<unknown> {
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     // So với TRUNG BÌNH LỊCH SỬ CỦA CHÍNH NGƯỜI ĐÓ, không so với một ngưỡng cố
@@ -39,30 +38,16 @@ export class AiBatchProcessor extends WorkerHost {
     // đều có điểm nền thấp hơn mà vẫn hoàn toàn là chính họ. Ngưỡng chung sẽ
     // liên tục báo nhầm đúng những người đó. Điều đáng ngờ là điểm TỤT SO VỚI
     // CHÍNH MÌNH, không phải điểm thấp hơn người khác.
-    const companies = await this.prisma.company.findMany({
-      where: { status: { in: ['TRIAL', 'ACTIVE'] }, deletedAt: null },
-      select: { id: true },
-    });
+    const companyIds = await this.jobs.acrossTenantsFindOperatingCompanyIds();
 
     let sampled = 0;
     let flagged = 0;
 
-    for (const company of companies) {
-      const percent = await this.policy.getNumber(
-        company.id,
-        PolicyKeys.FRAUD_RANDOM_AUDIT_PERCENT,
-      );
+    for (const companyId of companyIds) {
+      const percent = await this.policy.getNumber(companyId, PolicyKeys.FRAUD_RANDOM_AUDIT_PERCENT);
       if (percent <= 0) continue;
 
-      const logs = await this.prisma.attendanceLog.findMany({
-        where: {
-          companyId: company.id,
-          recordedAt: { gte: since },
-          matchScore: { not: null },
-          decision: { not: AttendanceDecision.REJECTED },
-        },
-        select: { id: true, employeeId: true, matchScore: true, recordedAt: true },
-      });
+      const logs = await this.jobs.findAuditCandidates(companyId, since);
       if (logs.length === 0) continue;
 
       const sampleSize = Math.max(1, Math.ceil((logs.length * percent) / 100));
@@ -71,36 +56,27 @@ export class AiBatchProcessor extends WorkerHost {
 
       for (const log of sample) {
         // Trung bình lịch sử 30 ngày của CHÍNH nhân viên đó.
-        const history = await this.prisma.attendanceLog.aggregate({
-          where: {
-            companyId: company.id,
-            employeeId: log.employeeId,
-            matchScore: { not: null },
-            recordedAt: {
-              gte: new Date(log.recordedAt.getTime() - 30 * 24 * 60 * 60 * 1000),
-              lt: log.recordedAt,
-            },
-          },
-          _avg: { matchScore: true },
-          _count: { _all: true },
-        });
+        const history = await this.jobs.averageMatchScore(
+          companyId,
+          log.employeeId,
+          new Date(log.recordedAt.getTime() - 30 * 24 * 60 * 60 * 1000),
+          log.recordedAt,
+        );
 
         // Cần đủ mẫu mới so được.
-        if (history._count._all < 5 || history._avg.matchScore === null) continue;
+        if (history.sampleCount < 5 || history.average === null) continue;
 
-        const average = history._avg.matchScore;
+        const average = history.average;
         const current = log.matchScore as number;
 
         // Thấp hơn 20% so với trung bình lịch sử → đáng ngờ.
         if (current >= average * 0.8) continue;
 
-        const hasProfile = await this.prisma.faceProfile.count({
-          where: { employeeId: log.employeeId, status: FaceProfileStatus.ACTIVE },
-        });
+        const hasProfile = await this.jobs.countActiveFaceProfiles(companyId, log.employeeId);
         if (hasProfile === 0) continue;
 
         await this.fraud.persistFlags({
-          companyId: company.id,
+          companyId,
           employeeId: log.employeeId,
           attendanceLogId: log.id,
           signals: [
@@ -112,7 +88,7 @@ export class AiBatchProcessor extends WorkerHost {
               details: {
                 matchScore: current,
                 historicalAverage: average,
-                sampleCount: history._count._all,
+                sampleCount: history.sampleCount,
               },
             },
           ],
@@ -122,7 +98,7 @@ export class AiBatchProcessor extends WorkerHost {
     }
 
     this.logger.log(`Random audit: lấy mẫu ${sampled} lượt, gắn cờ ${flagged}`);
-    return { sampled, flagged, companyCount: companies.length };
+    return { sampled, flagged, companyCount: companyIds.length };
   }
 
   private pickRandom<T>(items: T[], count: number): T[] {

@@ -5,7 +5,6 @@ import request from 'supertest';
 import { AppModule } from 'src/app.module';
 import { AllExceptionsFilter } from 'src/common/filters/all-exceptions.filter';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
-import { PasswordService } from 'src/modules/auth/password.service';
 import { TokenService } from 'src/modules/auth/token.service';
 
 /**
@@ -25,13 +24,20 @@ import { TokenService } from 'src/modules/auth/token.service';
  *   4. Lặp lại với vai trò MANAGER và EMPLOYEE.
  *
  * Yêu cầu: DATABASE_URL trỏ tới database TEST (dữ liệu sẽ bị xoá), Redis chạy.
+ *
+ * Cần thêm `FIREBASE_PROJECT_ID` vì test này nạp cả `AppModule`, và
+ * `FirebaseService` cố tình chết lúc khởi động khi thiếu cấu hình. Không cần
+ * Firebase thật — test cấp token thẳng qua `TokenService` chứ không đi qua màn
+ * hình đăng nhập, nên trỏ vào Auth Emulator là đủ:
+ *
+ *   FIREBASE_PROJECT_ID=demo-smartface FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
+ *
  * Chạy: `npm run test:e2e`
  */
 describe('Cách ly dữ liệu multi-tenant (NFR-SEC-05)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let tokens: TokenService;
-  let passwords: PasswordService;
 
   const suffix = `iso${Date.now().toString(36)}`;
   const fixtures = {
@@ -50,7 +56,6 @@ describe('Cách ly dữ liệu multi-tenant (NFR-SEC-05)', () => {
 
     prisma = app.get(PrismaService);
     tokens = app.get(TokenService);
-    passwords = app.get(PasswordService);
 
     await seedTenant('a', `${suffix}a`);
     await seedTenant('b', `${suffix}b`);
@@ -73,9 +78,10 @@ describe('Cách ly dữ liệu multi-tenant (NFR-SEC-05)', () => {
       },
     });
 
-    // Mật khẩu không dùng tới — test này cấp token thẳng qua TokenService thay
-    // vì đi qua màn hình đăng nhập. Nhưng cột `passwordHash` là NOT NULL.
-    const passwordHash = await passwords.hash('KhongDungToiTrongTest2026');
+    // Test này cấp token thẳng qua TokenService thay vì đi qua màn hình đăng
+    // nhập, nên không cần tài khoản Firebase thật. Nhưng cột `firebaseUid` là
+    // NOT NULL và UNIQUE nên vẫn phải điền một giá trị riêng cho từng dòng.
+    const fakeUid = (role: string) => `test-uid-${code}-${role}-${Date.now()}`;
     const phoneOf = (prefix: string) =>
       `${prefix}${Date.now().toString().slice(-8)}${key === 'a' ? '1' : '2'}`.slice(0, 10);
 
@@ -85,7 +91,7 @@ describe('Cách ly dữ liệu multi-tenant (NFR-SEC-05)', () => {
         email: `hr@${code}.test`,
         phone: phoneOf('09'),
         fullName: `HR ${code}`,
-        passwordHash,
+        firebaseUid: fakeUid('hr'),
         mustChangePassword: false,
       },
     });
@@ -107,7 +113,7 @@ describe('Cách ly dữ liệu multi-tenant (NFR-SEC-05)', () => {
         email: `nv@${code}.test`,
         phone: phoneOf('08'),
         fullName: `NV ${code}`,
-        passwordHash,
+        firebaseUid: fakeUid('nv'),
         mustChangePassword: false,
       },
     });

@@ -5,7 +5,7 @@ import { Employee, SystemRole } from '@prisma/client';
 import { ulid } from 'ulid';
 import { AppException } from 'src/common/errors';
 import { randomToken, sha256 } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { AuthRepository } from './auth.repository';
 import type { JwtPayload } from 'src/common/types/request-context';
 
 export interface IssuedTokens {
@@ -30,7 +30,7 @@ export class TokenService {
   constructor(
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
-    private readonly prisma: PrismaService,
+    private readonly accounts: AuthRepository,
   ) {}
 
   async issue(params: {
@@ -64,13 +64,11 @@ export class TokenService {
     // Web không có deviceId → dùng một mã ổn định để vẫn ràng buộc được phiên.
     const deviceId = params.deviceId ?? 'web';
     const refreshToken = randomToken();
-    await this.prisma.refreshToken.create({
-      data: {
-        userId: params.userId,
-        tokenHash: sha256(refreshToken),
-        deviceId,
-        expiresAt: new Date(Date.now() + refreshTtl * 1000),
-      },
+    await this.accounts.createRefreshToken({
+      userId: params.userId,
+      tokenHash: sha256(refreshToken),
+      deviceId,
+      expiresAt: new Date(Date.now() + refreshTtl * 1000),
     });
 
     return { accessToken, refreshToken, expiresIn: accessTtl };
@@ -91,7 +89,7 @@ export class TokenService {
     }>,
   ): Promise<IssuedTokens> {
     const tokenHash = sha256(refreshToken);
-    const stored = await this.prisma.refreshToken.findUnique({ where: { tokenHash } });
+    const stored = await this.accounts.findRefreshTokenByHash(tokenHash);
 
     if (!stored) {
       throw new AppException('AUTH_REFRESH_INVALID');
@@ -121,24 +119,15 @@ export class TokenService {
       mustChangePassword,
     });
 
-    const replacement = await this.prisma.refreshToken.findUnique({
-      where: { tokenHash: sha256(issued.refreshToken) },
-      select: { id: true },
-    });
+    const replacement = await this.accounts.findRefreshTokenIdByHash(sha256(issued.refreshToken));
 
-    await this.prisma.refreshToken.update({
-      where: { id: stored.id },
-      data: { revokedAt: new Date(), replacedById: replacement?.id },
-    });
+    await this.accounts.markRefreshTokenReplaced(stored.id, replacement?.id, new Date());
 
     return issued;
   }
 
   async revoke(refreshToken: string): Promise<void> {
-    await this.prisma.refreshToken.updateMany({
-      where: { tokenHash: sha256(refreshToken), revokedAt: null },
-      data: { revokedAt: new Date(), revokedReason: 'LOGOUT' },
-    });
+    await this.accounts.revokeRefreshTokenByHash(sha256(refreshToken), 'LOGOUT', new Date());
   }
 
   /**
@@ -148,18 +137,10 @@ export class TokenService {
    * reset sinh trắc học (docs/02 mục 8.1).
    */
   async revokeAllForUser(userId: string, reason: string): Promise<number> {
-    const result = await this.prisma.refreshToken.updateMany({
-      where: { userId, revokedAt: null },
-      data: { revokedAt: new Date(), revokedReason: reason },
-    });
-    return result.count;
+    return this.accounts.revokeRefreshTokensForUser(userId, reason, new Date());
   }
 
   async revokeAllForDevice(userId: string, deviceId: string, reason: string): Promise<number> {
-    const result = await this.prisma.refreshToken.updateMany({
-      where: { userId, deviceId, revokedAt: null },
-      data: { revokedAt: new Date(), revokedReason: reason },
-    });
-    return result.count;
+    return this.accounts.revokeRefreshTokensForDevice(userId, deviceId, reason, new Date());
   }
 }

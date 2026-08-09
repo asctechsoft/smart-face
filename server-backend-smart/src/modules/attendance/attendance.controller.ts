@@ -20,9 +20,12 @@ import { RateLimit } from 'src/common/guards/rate-limit.guard';
 import { VerifyBodyHashInterceptor } from 'src/common/interceptors';
 import { AppException } from 'src/common/errors';
 import { PaginatedResult } from 'src/common/dto';
-import { buildMeta, formatWorkDate, parseWorkDate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
-import type { AuthenticatedRequest, RequestContext, TenantContext } from 'src/common/types/request-context';
+import { buildMeta, formatWorkDate } from 'src/common/utils';
+import type {
+  AuthenticatedRequest,
+  RequestContext,
+  TenantContext,
+} from 'src/common/types/request-context';
 import { AttendanceAdminService } from './attendance-admin.service';
 import { AttendanceService } from './attendance.service';
 import { AttendanceHistoryQueryDto, CheckInDto } from './dto/attendance.dto';
@@ -47,7 +50,6 @@ export class AttendanceController {
   constructor(
     private readonly attendance: AttendanceService,
     private readonly admin: AttendanceAdminService,
-    private readonly prisma: PrismaService,
   ) {}
 
   @Get('challenge')
@@ -119,13 +121,7 @@ export class AttendanceController {
     //
     // `request.ip` lấy từ Express, đã áp `trust proxy` cấu hình ở main.ts —
     // KHÔNG đọc thẳng header `X-Forwarded-For`, vì client tự đặt được (AF-02b).
-    return this.attendance.punch(
-      ctx,
-      dto,
-      image?.buffer,
-      AttendanceType.CHECK_IN,
-      request.ip,
-    );
+    return this.attendance.punch(ctx, dto, image?.buffer, AttendanceType.CHECK_IN, request.ip);
   }
 
   @Post('check-out')
@@ -156,13 +152,7 @@ export class AttendanceController {
     @UploadedFile() image: Express.Multer.File | undefined,
     @Req() request: AuthenticatedRequest,
   ) {
-    return this.attendance.punch(
-      ctx,
-      dto,
-      image?.buffer,
-      AttendanceType.CHECK_OUT,
-      request.ip,
-    );
+    return this.attendance.punch(ctx, dto, image?.buffer, AttendanceType.CHECK_OUT, request.ip);
   }
 
   @Get('today')
@@ -185,35 +175,15 @@ export class AttendanceController {
       throw new AppException('AUTH_COMPANY_REQUIRED');
     }
 
-    // Hai điều kiện đầu là chốt an toàn, không phải bộ lọc tiện dụng:
-    // `companyId` cách ly giữa các công ty (BR-09), `employeeId` bảo đảm không
-    // ai đọc được lịch sử của người khác. Cả hai đều lấy từ JWT.
-    const where = {
-      companyId: ctx.companyId,
-      employeeId: ctx.employeeId,
-      ...(query.from || query.to
-        ? {
-            workDate: {
-              ...(query.from ? { gte: parseWorkDate(query.from) } : {}),
-              ...(query.to ? { lte: parseWorkDate(query.to) } : {}),
-            },
-          }
-        : {}),
-      ...(query.status ? { status: query.status } : {}),
-    };
-
-    // Gói `findMany` + `count` trong một transaction để hai truy vấn nhìn thấy
-    // cùng một ảnh chụp dữ liệu. Chạy rời nhau thì một bản ghi được chèn xen vào
-    // giữa sẽ cho tổng số lệch với số phần tử trả về, và trang cuối bị nhảy.
-    const [items, total] = await this.prisma.$transaction([
-      this.prisma.attendanceDaily.findMany({
-        where,
-        orderBy: { workDate: 'desc' },
-        skip: query.skip,
-        take: query.take,
-      }),
-      this.prisma.attendanceDaily.count({ where }),
-    ]);
+    // `companyId` và `employeeId` lấy từ JWT, truyền xuống Service như chốt an
+    // toàn chứ không phải bộ lọc tiện dụng — xem `AttendanceService.getHistory`.
+    const { items, total } = await this.attendance.getHistory(ctx.companyId, ctx.employeeId, {
+      from: query.from,
+      to: query.to,
+      status: query.status,
+      skip: query.skip,
+      take: query.take,
+    });
 
     // `formatWorkDate` đổi Date sang chuỗi 'YYYY-MM-DD'. Trả Date thô thì
     // JSON.stringify sinh ra ISO kèm giờ UTC — ngày công 2026-08-02 của Việt Nam

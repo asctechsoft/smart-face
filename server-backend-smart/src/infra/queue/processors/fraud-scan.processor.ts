@@ -1,9 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { AttendanceDecision, AttendanceType, DailyStatus, RequestStatus } from '@prisma/client';
 import { Job } from 'bullmq';
 import { derivedSpeedMps, toWorkDate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { JobsRepository } from '../jobs.repository';
 import { FraudService } from 'src/modules/fraud/fraud.service';
 import { FraudCodes, FraudSignal } from 'src/modules/fraud/fraud.types';
 import { PolicyKeys } from 'src/modules/policy/policy.constants';
@@ -23,7 +22,7 @@ export class FraudScanProcessor extends WorkerHost {
   private readonly logger = new Logger(FraudScanProcessor.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly jobs: JobsRepository,
     private readonly policy: PolicyService,
     private readonly fraud: FraudService,
   ) {
@@ -48,24 +47,7 @@ export class FraudScanProcessor extends WorkerHost {
   private async scanImpossibleTravel() {
     const since = new Date(Date.now() - 60 * 60 * 1000);
 
-    const logs = await this.prisma.attendanceLog.findMany({
-      where: {
-        recordedAt: { gte: since },
-        latitude: { not: null },
-        longitude: { not: null },
-        decision: { not: AttendanceDecision.REJECTED },
-      },
-      orderBy: [{ employeeId: 'asc' }, { recordedAt: 'asc' }],
-      select: {
-        id: true,
-        companyId: true,
-        employeeId: true,
-        latitude: true,
-        longitude: true,
-        gpsAccuracy: true,
-        recordedAt: true,
-      },
-    });
+    const logs = await this.jobs.acrossTenantsFindLocatedPunchesSince(since);
 
     const byEmployee = new Map<string, typeof logs>();
     for (const log of logs) {
@@ -79,13 +61,17 @@ export class FraudScanProcessor extends WorkerHost {
         const previous = employeeLogs[index - 1];
         const current = employeeLogs[index];
 
-        const elapsedSeconds = (current.recordedAt.getTime() - previous.recordedAt.getTime()) / 1000;
+        const elapsedSeconds =
+          (current.recordedAt.getTime() - previous.recordedAt.getTime()) / 1000;
         // Ngoại lệ: khoảng quá ngắn là nhiễu GPS.
         if (elapsedSeconds < 60) continue;
         // Ngoại lệ: sai số GPS lớn ở một trong hai điểm.
         if ((previous.gpsAccuracy ?? 0) > 100 || (current.gpsAccuracy ?? 0) > 100) continue;
         // Ngoại lệ: có đơn công tác đã duyệt.
-        if (await this.hasApprovedTrip(current.companyId, employeeId, current.recordedAt)) continue;
+        if (
+          await this.jobs.hasApprovedBusinessTrip(current.companyId, employeeId, current.recordedAt)
+        )
+          continue;
 
         const speed = derivedSpeedMps(
           { latitude: previous.latitude as number, longitude: previous.longitude as number },
@@ -101,7 +87,7 @@ export class FraudScanProcessor extends WorkerHost {
         const signal = this.buildTravelSignal(speed, impossibleMps, suspiciousMps, elapsedSeconds);
         if (!signal) continue;
 
-        if (await this.alreadyFlagged(current.id, signal.code)) continue;
+        if (await this.jobs.hasFlagForLog(current.id, signal.code)) continue;
 
         await this.fraud.persistFlags({
           companyId: current.companyId,
@@ -147,20 +133,7 @@ export class FraudScanProcessor extends WorkerHost {
   private async scanShortAttendance() {
     const yesterday = toWorkDate(new Date(Date.now() - 24 * 60 * 60 * 1000), 'UTC');
 
-    const dailies = await this.prisma.attendanceDaily.findMany({
-      where: {
-        workDate: yesterday,
-        workedMinutes: { gt: 0 },
-        status: { notIn: [DailyStatus.ON_LEAVE, DailyStatus.HOLIDAY] },
-      },
-      select: {
-        companyId: true,
-        employeeId: true,
-        workedMinutes: true,
-        workDate: true,
-        shiftId: true,
-      },
-    });
+    const dailies = await this.jobs.acrossTenantsFindWorkedDailies(yesterday);
 
     let flagged = 0;
 
@@ -176,7 +149,9 @@ export class FraudScanProcessor extends WorkerHost {
       if (expectedMinutes <= 0) continue;
 
       // Ngoại lệ: có đơn về sớm / xin ra ngoài / nghỉ nửa ngày đã duyệt.
-      if (await this.hasApprovedRequestOnDate(daily.companyId, daily.employeeId, daily.workDate)) {
+      if (
+        await this.jobs.hasApprovedRequestOnDate(daily.companyId, daily.employeeId, daily.workDate)
+      ) {
         continue;
       }
 
@@ -212,33 +187,25 @@ export class FraudScanProcessor extends WorkerHost {
   private async scanMissingCheckout() {
     const yesterday = toWorkDate(new Date(Date.now() - 24 * 60 * 60 * 1000), 'UTC');
 
-    const dailies = await this.prisma.attendanceDaily.findMany({
-      where: { workDate: yesterday, status: DailyStatus.MISSING_RECORD },
-      select: { companyId: true, employeeId: true, workDate: true, firstCheckInAt: true },
-    });
+    const dailies = await this.jobs.acrossTenantsFindMissingRecordDailies(yesterday);
 
     let flagged = 0;
 
     for (const daily of dailies) {
-      const lastLog = await this.prisma.attendanceLog.findFirst({
-        where: {
-          companyId: daily.companyId,
-          employeeId: daily.employeeId,
-          workDate: daily.workDate,
-          type: AttendanceType.CHECK_IN,
-        },
-        orderBy: { recordedAt: 'desc' },
-        select: { id: true },
-      });
+      const lastLogId = await this.jobs.findLastCheckInId(
+        daily.companyId,
+        daily.employeeId,
+        daily.workDate,
+      );
 
-      if (lastLog && (await this.alreadyFlagged(lastLog.id, FraudCodes.MISSING_CHECKOUT))) {
+      if (lastLogId && (await this.jobs.hasFlagForLog(lastLogId, FraudCodes.MISSING_CHECKOUT))) {
         continue;
       }
 
       await this.fraud.persistFlags({
         companyId: daily.companyId,
         employeeId: daily.employeeId,
-        attendanceLogId: lastLog?.id ?? null,
+        attendanceLogId: lastLogId,
         signals: [
           {
             code: FraudCodes.MISSING_CHECKOUT,
@@ -256,43 +223,4 @@ export class FraudScanProcessor extends WorkerHost {
   }
 
   // ---------------------------------------------------------------------------
-
-  private async hasApprovedTrip(companyId: string, employeeId: string, at: Date) {
-    const trip = await this.prisma.leaveRequest.findFirst({
-      where: {
-        companyId,
-        employeeId,
-        status: RequestStatus.APPROVED,
-        startAt: { lte: at },
-        endAt: { gte: at },
-        requestType: { code: { in: ['BUSINESS_TRIP', 'CONG_TAC'] } },
-      },
-      select: { id: true },
-    });
-    return Boolean(trip);
-  }
-
-  private async hasApprovedRequestOnDate(companyId: string, employeeId: string, workDate: Date) {
-    const dayEnd = new Date(workDate.getTime() + 24 * 60 * 60 * 1000);
-    const request = await this.prisma.leaveRequest.findFirst({
-      where: {
-        companyId,
-        employeeId,
-        status: RequestStatus.APPROVED,
-        startAt: { lt: dayEnd },
-        endAt: { gte: workDate },
-      },
-      select: { id: true },
-    });
-    return Boolean(request);
-  }
-
-  /** Job chạy mỗi 15 phút — không gắn cờ trùng cho cùng một bản ghi. */
-  private async alreadyFlagged(attendanceLogId: string, code: string): Promise<boolean> {
-    const existing = await this.prisma.fraudFlag.findFirst({
-      where: { attendanceLogId, code },
-      select: { id: true },
-    });
-    return Boolean(existing);
-  }
 }

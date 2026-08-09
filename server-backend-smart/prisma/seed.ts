@@ -18,11 +18,76 @@
 import 'dotenv/config';
 
 import { PrismaClient, ShiftType, SystemRole } from '@prisma/client';
+import { cert, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import { buildUniqueEmployeeCode } from '../src/common/utils/employee-code.util';
-import { PasswordService } from '../src/modules/auth/password.service';
 
 const prisma = new PrismaClient();
-const passwords = new PasswordService();
+
+// ---------------------------------------------------------------------------
+//  Firebase — nơi giữ mật khẩu của tài khoản seed
+// ---------------------------------------------------------------------------
+//
+// Seed phải tạo tài khoản ở CẢ HAI nơi, vì `UserAccount.firebaseUid` là bắt buộc
+// và Backend không còn lưu mật khẩu. Chạy seed mà bỏ qua bước này sẽ sinh ra một
+// cơ sở dữ liệu mà không tài khoản nào đăng nhập được.
+//
+// Cách dùng khuyến nghị khi phát triển — dùng Auth Emulator, không đụng dự án thật:
+//
+//   firebase emulators:start --only auth
+//   FIREBASE_AUTH_EMULATOR_HOST=localhost:9099 FIREBASE_PROJECT_ID=demo-smartface npm run seed
+
+const emulatorHost = process.env.FIREBASE_AUTH_EMULATOR_HOST ?? '';
+const projectId = process.env.FIREBASE_PROJECT_ID ?? '';
+
+if (!projectId) {
+  throw new Error(
+    'Thiếu FIREBASE_PROJECT_ID. Seed cần tạo tài khoản bên Firebase vì Backend không còn ' +
+      'lưu mật khẩu. Dùng Auth Emulator cho môi trường phát triển — xem chú thích trong seed.ts.',
+  );
+}
+
+const firebaseApp = initializeApp(
+  emulatorHost
+    ? { projectId }
+    : {
+        projectId,
+        credential: cert({
+          projectId,
+          clientEmail: process.env.FIREBASE_CLIENT_EMAIL ?? '',
+          privateKey: (process.env.FIREBASE_PRIVATE_KEY ?? '').replace(/\\n/g, '\n'),
+        }),
+      },
+  'smartface-seed',
+);
+const firebaseAuth = getAuth(firebaseApp);
+
+/**
+ * Tạo tài khoản Firebase, hoặc đặt lại mật khẩu nếu email đã tồn tại.
+ *
+ * Seed phải chạy lại được nhiều lần (`prisma db seed` sau mỗi lần reset). Nếu
+ * gặp email đã có mà báo lỗi thì lần chạy thứ hai luôn hỏng — nên ở đây dùng
+ * kiểu "tạo hoặc cập nhật".
+ */
+async function upsertFirebaseUser(email: string, fullName: string): Promise<string> {
+  try {
+    const existing = await firebaseAuth.getUserByEmail(email);
+    await firebaseAuth.updateUser(existing.uid, {
+      password: SEED_PASSWORD,
+      displayName: fullName,
+      disabled: false,
+    });
+    return existing.uid;
+  } catch {
+    const created = await firebaseAuth.createUser({
+      email,
+      password: SEED_PASSWORD,
+      displayName: fullName,
+      emailVerified: true,
+    });
+    return created.uid;
+  }
+}
 
 const COMPANY_CODE = 'amobi';
 const COMPANY_DOMAIN = 'amobi.vn';
@@ -101,7 +166,7 @@ async function main(): Promise<void> {
   // `companyId = null` — quản trị viên nền tảng không thuộc công ty nào. Ràng
   // buộc duy nhất cho nhóm này là chỉ mục một phần trong
   // prisma/sql/02_auth_constraints.sql, nên ở đây phải tự tra trước khi tạo.
-  const passwordHash = await passwords.hash(SEED_PASSWORD);
+  const adminUid = await upsertFirebaseUser(ADMIN_EMAIL, 'Quản trị hệ thống');
 
   const existingAdmin = await prisma.userAccount.findFirst({
     where: { companyId: null, email: ADMIN_EMAIL },
@@ -109,7 +174,7 @@ async function main(): Promise<void> {
   if (existingAdmin) {
     await prisma.userAccount.update({
       where: { id: existingAdmin.id },
-      data: { isSystemAdmin: true, passwordHash, mustChangePassword: false },
+      data: { isSystemAdmin: true, firebaseUid: adminUid, mustChangePassword: false },
     });
   } else {
     await prisma.userAccount.create({
@@ -117,7 +182,7 @@ async function main(): Promise<void> {
         companyId: null,
         email: ADMIN_EMAIL,
         fullName: 'Quản trị hệ thống',
-        passwordHash,
+        firebaseUid: adminUid,
         mustChangePassword: false,
         isSystemAdmin: true,
       },
@@ -516,7 +581,7 @@ async function main(): Promise<void> {
         email: sample.email,
         phone: sample.phone,
         fullName: sample.fullName,
-        passwordHash,
+        firebaseUid: await upsertFirebaseUser(sample.email, sample.fullName),
         // Seed dùng cho phát triển: không bắt đổi mật khẩu để đỡ vướng.
         mustChangePassword: false,
         passwordChangedAt: new Date(),
@@ -609,8 +674,13 @@ async function main(): Promise<void> {
   console.log('');
   console.log('✅ Seed hoàn tất.');
   console.log('');
-  console.log('   Đăng nhập: POST /v1/auth/login  { domain, email, password }');
+  console.log('   Đăng nhập 2 bước:');
+  console.log('     ① Firebase SDK: signInWithEmailAndPassword(email, password)');
+  console.log('     ② POST /v1/auth/session  { domain, firebaseIdToken }');
   console.log(`   Mật khẩu chung: ${SEED_PASSWORD}`);
+  if (emulatorHost) {
+    console.log(`   Tài khoản đã tạo trên Auth Emulator tại ${emulatorHost}`);
+  }
   console.log('');
   console.log(`     Admin nền tảng : ${ADMIN_EMAIL}          (không cần tên miền)`);
   console.log(`     Admin công ty  : an@amobi.vn    tên miền ${COMPANY_DOMAIN}`);

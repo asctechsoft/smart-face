@@ -3,7 +3,6 @@ import { AttendanceDecision, Prisma, SystemRole } from '@prisma/client';
 import { PaginatedResult } from 'src/common/dto';
 import { AppException } from 'src/common/errors';
 import { buildMeta, derivedSpeedMps, isExactSameCoordinate } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PolicyService } from '../policy/policy.service';
 import { FraudWeights, PolicyKeys } from '../policy/policy.constants';
 import { NotificationService } from '../notification/notification.service';
@@ -15,6 +14,7 @@ import {
   FraudSignal,
 } from './fraud.types';
 import { FraudFlagQueryDto } from './dto/fraud.dto';
+import { FraudRepository } from './fraud.repository';
 
 /**
  * Fraud scoring — docs/06-anti-fraud.md mục 7.
@@ -33,7 +33,7 @@ export class FraudService {
   private readonly logger = new Logger(FraudService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly frauds: FraudRepository,
     private readonly policy: PolicyService,
     private readonly notifications: NotificationService,
     private readonly realtime: RealtimeGateway,
@@ -127,11 +127,7 @@ export class FraudService {
     // đứng yên tại chỗ — hai lượt chấm công cách nhau 8 tiếng mà ra đúng từng
     // chữ số thì toạ độ đó là một hằng số ai đó nhập vào, không phải đo được.
     if (input.latitude != null && input.longitude != null) {
-      const previous = await this.prisma.attendanceLog.findFirst({
-        where: { companyId: input.companyId, employeeId: input.employeeId },
-        orderBy: { recordedAt: 'desc' },
-        select: { latitude: true, longitude: true },
-      });
+      const previous = await this.frauds.findLastCoordinate(input.companyId, input.employeeId);
       if (
         previous?.latitude != null &&
         previous.longitude != null &&
@@ -269,16 +265,7 @@ export class FraudService {
   ): Promise<FraudSignal[]> {
     if (input.latitude == null || input.longitude == null) return [];
 
-    const previous = await this.prisma.attendanceLog.findFirst({
-      where: {
-        companyId: input.companyId,
-        employeeId: input.employeeId,
-        latitude: { not: null },
-        longitude: { not: null },
-      },
-      orderBy: { recordedAt: 'desc' },
-      select: { latitude: true, longitude: true, recordedAt: true, gpsAccuracy: true },
-    });
+    const previous = await this.frauds.findLastLocatedPunch(input.companyId, input.employeeId);
     if (!previous?.latitude || !previous.longitude) return [];
 
     const elapsedSeconds = (input.recordedAt.getTime() - previous.recordedAt.getTime()) / 1000;
@@ -288,17 +275,11 @@ export class FraudService {
     if ((previous.gpsAccuracy ?? 0) > 100 || (input.gpsAccuracy ?? 0) > 100) return [];
 
     // Ngoại lệ: nhân viên có đơn công tác đã duyệt (đi máy bay).
-    const onBusinessTrip = await this.prisma.leaveRequest.findFirst({
-      where: {
-        companyId: input.companyId,
-        employeeId: input.employeeId,
-        status: 'APPROVED',
-        startAt: { lte: input.recordedAt },
-        endAt: { gte: input.recordedAt },
-        requestType: { code: { in: ['BUSINESS_TRIP', 'CONG_TAC'] } },
-      },
-      select: { id: true },
-    });
+    const onBusinessTrip = await this.frauds.hasApprovedBusinessTrip(
+      input.companyId,
+      input.employeeId,
+      input.recordedAt,
+    );
     if (onBusinessTrip) return [];
 
     const speed = derivedSpeedMps(
@@ -350,15 +331,12 @@ export class FraudService {
     );
     const since = new Date(input.recordedAt.getTime() - windowMinutes * 60_000);
 
-    const other = await this.prisma.attendanceLog.findFirst({
-      where: {
-        companyId: input.companyId,
-        employeeId: input.employeeId,
-        recordedAt: { gte: since },
-        deviceId: { not: null, notIn: [input.deviceId] },
-      },
-      select: { deviceId: true, recordedAt: true },
-    });
+    const other = await this.frauds.findRecentPunchFromOtherDevice(
+      input.companyId,
+      input.employeeId,
+      input.deviceId,
+      since,
+    );
     if (!other) return [];
 
     return [
@@ -393,9 +371,9 @@ export class FraudService {
   }): Promise<void> {
     if (params.signals.length === 0) return;
 
-    await this.prisma.fraudFlag.createMany({
-      data: params.signals.map((signal) => ({
-        companyId: params.companyId,
+    await this.frauds.createFlags(
+      params.companyId,
+      params.signals.map((signal) => ({
         employeeId: params.employeeId,
         attendanceLogId: params.attendanceLogId,
         code: signal.code,
@@ -403,7 +381,7 @@ export class FraudService {
         score: signal.score,
         details: (signal.details ?? {}) as Prisma.InputJsonValue,
       })),
-    });
+    );
 
     // AF-09: cờ mức CAO cảnh báo NGAY, không đợi job nền.
     const highSeverity = params.signals.filter((signal) => signal.severity === 'HIGH');
@@ -429,68 +407,27 @@ export class FraudService {
    * @param departmentScope null = không giới hạn (Admin/HR); mảng = chỉ các phòng
    *        ban MANAGER được phân công. Do controller truyền vào, không lấy từ query.
    */
-  async listFlags(
-    companyId: string,
-    query: FraudFlagQueryDto,
-    departmentScope: string[] | null,
-  ) {
-    const where: Prisma.FraudFlagWhereInput = { companyId };
-
-    if (query.severity) where.severity = query.severity;
-    if (query.code) where.code = query.code;
-    if (query.employeeId) where.employeeId = query.employeeId;
-    if (query.reviewed === 'true') where.reviewedAt = { not: null };
-    if (query.reviewed === 'false') where.reviewedAt = null;
-    if (query.from || query.to) {
-      where.createdAt = {
-        ...(query.from ? { gte: new Date(query.from) } : {}),
-        ...(query.to ? { lte: new Date(query.to) } : {}),
-      };
-    }
-
+  async listFlags(companyId: string, query: FraudFlagQueryDto, departmentScope: string[] | null) {
     // ScopeGuard: MANAGER chỉ thấy cờ của nhân viên trong phòng ban mình quản lý.
-    if (departmentScope || query.departmentId) {
-      const employees = await this.prisma.employee.findMany({
-        where: {
-          companyId,
-          ...(query.departmentId ? { departmentId: query.departmentId } : {}),
-          ...(departmentScope ? { departmentId: { in: departmentScope } } : {}),
-        },
-        select: { id: true },
-      });
-      where.employeeId = { in: employees.map((employee) => employee.id) };
-    }
+    const employeeIdScope =
+      departmentScope || query.departmentId
+        ? await this.frauds.findEmployeeIdsInScope(companyId, query.departmentId, departmentScope)
+        : null;
 
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.fraudFlag.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        skip: query.skip,
-        take: query.take,
-        include: {
-          attendanceLog: {
-            select: {
-              id: true,
-              type: true,
-              recordedAt: true,
-              workDate: true,
-              fraudScore: true,
-              decision: true,
-              latitude: true,
-              longitude: true,
-              distanceToBranchM: true,
-            },
-          },
-        },
-      }),
-      this.prisma.fraudFlag.count({ where }),
-    ]);
+    const { items: rows, total } = await this.frauds.searchFlags(companyId, {
+      severity: query.severity,
+      code: query.code,
+      employeeId: query.employeeId,
+      reviewed: query.reviewed,
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+      employeeIdScope,
+      skip: query.skip,
+      take: query.take,
+    });
 
     const employeeIds = [...new Set(rows.map((row) => row.employeeId))];
-    const employees = await this.prisma.employee.findMany({
-      where: { id: { in: employeeIds }, companyId },
-      select: { id: true, fullName: true, employeeCode: true, departmentId: true },
-    });
+    const employees = await this.frauds.findEmployeeLabels(companyId, employeeIds);
     const employeeMap = new Map(employees.map((employee) => [employee.id, employee]));
 
     const items = rows.map((row) => ({
@@ -502,51 +439,19 @@ export class FraudService {
   }
 
   async getFlag(companyId: string, flagId: string) {
-    const flag = await this.prisma.fraudFlag.findFirst({
-      where: { id: flagId, companyId },
-      include: { attendanceLog: true },
-    });
+    const flag = await this.frauds.findFlagWithLog(companyId, flagId);
     if (!flag) {
       throw new AppException('SYS_NOT_FOUND', { reason: 'Không tìm thấy cờ nghi vấn.' });
     }
 
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: flag.employeeId, companyId },
-      select: { id: true, fullName: true, employeeCode: true, departmentId: true },
-    });
+    const employee = await this.frauds.findEmployeeLabel(companyId, flag.employeeId);
 
     return { ...flag, employee };
   }
 
   /** Thống kê cho dashboard (AF-21). */
   async stats(companyId: string, from?: Date, to?: Date) {
-    const where: Prisma.FraudFlagWhereInput = { companyId };
-    if (from || to) {
-      where.createdAt = { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) };
-    }
-
-    // groupBy tách khỏi $transaction([...]) vì gộp mảng làm mất kiểu narrow của `_count`.
-    const [total, high, pending, reviewed] = await this.prisma.$transaction([
-      this.prisma.fraudFlag.count({ where }),
-      this.prisma.fraudFlag.count({ where: { ...where, severity: 'HIGH' } }),
-      this.prisma.fraudFlag.count({ where: { ...where, reviewedAt: null } }),
-      this.prisma.fraudFlag.count({ where: { ...where, reviewedAt: { not: null } } }),
-    ]);
-
-    const byCode = await this.prisma.fraudFlag.groupBy({
-      by: ['code'],
-      where,
-      _count: { code: true },
-      orderBy: { _count: { code: 'desc' } },
-    });
-
-    return {
-      total,
-      high,
-      pending,
-      reviewed,
-      byCode: byCode.map((row) => ({ code: row.code, count: row._count.code })),
-    };
+    return this.frauds.countStats(companyId, from, to);
   }
 
   /**
@@ -565,19 +470,16 @@ export class FraudService {
     reason: string,
     reviewedBy: string,
   ) {
-    const flag = await this.prisma.fraudFlag.findFirst({ where: { id: flagId, companyId } });
+    const flag = await this.frauds.findFlag(companyId, flagId);
     if (!flag) {
       throw new AppException('SYS_NOT_FOUND', { reason: 'Không tìm thấy cờ nghi vấn.' });
     }
 
-    const updated = await this.prisma.fraudFlag.update({
-      where: { id: flagId },
-      data: {
-        reviewedBy,
-        reviewedAt: new Date(),
-        reviewDecision: decision,
-        reviewReason: reason,
-      },
+    const updated = await this.frauds.recordReview(companyId, flagId, {
+      reviewedBy,
+      reviewedAt: new Date(),
+      reviewDecision: decision,
+      reviewReason: reason,
     });
 
     if (decision === 'VOID') {
@@ -596,8 +498,6 @@ export class FraudService {
 
   /** Các cờ chưa xử lý trong khoảng thời gian — chặn chốt kỳ lương (docs/04 mục 7.2). */
   async countUnreviewedInRange(companyId: string, from: Date, to: Date): Promise<number> {
-    return this.prisma.fraudFlag.count({
-      where: { companyId, reviewedAt: null, createdAt: { gte: from, lte: to } },
-    });
+    return this.frauds.countUnreviewedInRange(companyId, from, to);
   }
 }

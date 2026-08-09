@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AttendanceModule } from '../attendance/attendance.module';
 import { FraudController } from './fraud.controller';
+import { FraudRepository } from './fraud.repository';
 import { FraudService } from './fraud.service';
 
 /**
@@ -11,7 +12,7 @@ import { FraudService } from './fraud.service';
 @Module({
   imports: [forwardRef(() => AttendanceModule)],
   controllers: [FraudController],
-  providers: [FraudService],
-  exports: [FraudService],
+  providers: [FraudRepository, FraudService],
+  exports: [FraudRepository, FraudService],
 })
 export class FraudModule {}

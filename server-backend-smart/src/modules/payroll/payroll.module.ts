@@ -2,6 +2,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { FraudModule } from '../fraud/fraud.module';
 import { PayrollEngineService } from './payroll-engine.service';
 import { PayrollController } from './payroll.controller';
+import { PayrollRepository } from './payroll.repository';
 import { PayrollService } from './payroll.service';
 
 /**
@@ -21,7 +22,7 @@ import { PayrollService } from './payroll.service';
 @Module({
   imports: [forwardRef(() => FraudModule)],
   controllers: [PayrollController],
-  providers: [PayrollService, PayrollEngineService],
-  exports: [PayrollService, PayrollEngineService],
+  providers: [PayrollRepository, PayrollService, PayrollEngineService],
+  exports: [PayrollRepository, PayrollService, PayrollEngineService],
 })
 export class PayrollModule {}

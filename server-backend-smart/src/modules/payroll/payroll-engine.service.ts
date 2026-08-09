@@ -1,20 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
-import {
-  AttendanceDecision,
-  AttendanceType,
-  DailyStatus,
-  Prisma,
-  RequestStatus,
-} from '@prisma/client';
+import { AttendanceType, DailyStatus, Prisma } from '@prisma/client';
 import {
   combineWorkDateAndTime,
   formatWorkDate,
   isWeekend,
   minutesBetween,
 } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { PolicyKeys } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
+import { PayrollRepository } from './payroll.repository';
 
 export const CALC_ENGINE_VERSION = 'payroll-engine@1.0.0';
 
@@ -64,7 +58,7 @@ export class PayrollEngineService {
   private readonly logger = new Logger(PayrollEngineService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly payrolls: PayrollRepository,
     private readonly policy: PolicyService,
   ) {}
 
@@ -79,49 +73,24 @@ export class PayrollEngineService {
   ): Promise<DailyCalculationResult> {
     const result = await this.calculate(companyId, employeeId, workDate);
 
-    await this.prisma.attendanceDaily.upsert({
-      where: { employeeId_workDate: { employeeId, workDate } },
-      create: {
-        companyId,
-        employeeId,
-        workDate,
-        shiftId: result.shiftId,
-        firstCheckInAt: result.firstCheckInAt,
-        lastCheckOutAt: result.lastCheckOutAt,
-        workedMinutes: result.workedMinutes,
-        breakMinutes: result.breakMinutes,
-        lateMinutes: result.lateMinutes,
-        earlyLeaveMinutes: result.earlyLeaveMinutes,
-        otMinutes: result.otMinutes,
-        otMultiplier: result.otMultiplier,
-        makeupMinutes: result.makeupMinutes,
-        standardDays: result.standardDays,
-        status: result.status,
-        appliedRequestIds: result.appliedRequestIds,
-        hasFraudFlag: result.hasFraudFlag,
-        calculatedAt: new Date(),
-        calcEngineVersion: CALC_ENGINE_VERSION,
-        breakdown: result.breakdown as Prisma.InputJsonValue,
-      },
-      update: {
-        shiftId: result.shiftId,
-        firstCheckInAt: result.firstCheckInAt,
-        lastCheckOutAt: result.lastCheckOutAt,
-        workedMinutes: result.workedMinutes,
-        breakMinutes: result.breakMinutes,
-        lateMinutes: result.lateMinutes,
-        earlyLeaveMinutes: result.earlyLeaveMinutes,
-        otMinutes: result.otMinutes,
-        otMultiplier: result.otMultiplier,
-        makeupMinutes: result.makeupMinutes,
-        standardDays: result.standardDays,
-        status: result.status,
-        appliedRequestIds: result.appliedRequestIds,
-        hasFraudFlag: result.hasFraudFlag,
-        calculatedAt: new Date(),
-        calcEngineVersion: CALC_ENGINE_VERSION,
-        breakdown: result.breakdown as Prisma.InputJsonValue,
-      },
+    await this.payrolls.upsertDaily(companyId, employeeId, workDate, {
+      shiftId: result.shiftId,
+      firstCheckInAt: result.firstCheckInAt,
+      lastCheckOutAt: result.lastCheckOutAt,
+      workedMinutes: result.workedMinutes,
+      breakMinutes: result.breakMinutes,
+      lateMinutes: result.lateMinutes,
+      earlyLeaveMinutes: result.earlyLeaveMinutes,
+      otMinutes: result.otMinutes,
+      otMultiplier: result.otMultiplier,
+      makeupMinutes: result.makeupMinutes,
+      standardDays: result.standardDays,
+      status: result.status,
+      appliedRequestIds: result.appliedRequestIds,
+      hasFraudFlag: result.hasFraudFlag,
+      calculatedAt: new Date(),
+      calcEngineVersion: CALC_ENGINE_VERSION,
+      breakdown: result.breakdown as Prisma.InputJsonValue,
     });
 
     return result;
@@ -138,41 +107,25 @@ export class PayrollEngineService {
     const [shift, holiday, logs, approvedRequests, fraudFlagCount, makeup] = await Promise.all([
       this.policy.resolveShiftForDate(companyId, employeeId, workDate),
       this.policy.findHoliday(companyId, workDate),
-      this.prisma.attendanceLog.findMany({
-        where: {
-          companyId,
-          employeeId,
-          workDate,
-          // PENDING_REVIEW chưa được duyệt thì KHÔNG tính công.
-          decision: { in: [AttendanceDecision.ACCEPTED, AttendanceDecision.FLAGGED] },
-          type: { in: [AttendanceType.CHECK_IN, AttendanceType.CHECK_OUT] },
-        },
-        orderBy: { recordedAt: 'asc' },
-        select: { id: true, type: true, recordedAt: true },
-      }),
+      // PENDING_REVIEW chưa được duyệt thì KHÔNG tính công — bộ lọc nằm trong
+      // PayrollRepository.findCountablePunches.
+      this.payrolls.findCountablePunches(companyId, employeeId, workDate),
       this.findApprovedRequestsForDate(companyId, employeeId, workDate, timezone),
-      this.prisma.fraudFlag.count({
-        where: { companyId, employeeId, attendanceLog: { workDate } },
-      }),
-      this.prisma.makeupWorkRecord.aggregate({
-        where: { companyId, employeeId, makeupWorkDate: workDate },
-        _sum: { makeupMinutes: true },
-      }),
+      this.payrolls.countFraudFlagsForDay(companyId, employeeId, workDate),
+      this.payrolls.sumMakeupMinutes(companyId, employeeId, workDate),
     ]);
 
     // Bỏ các lượt đã bị VOID bằng bản ghi điều chỉnh (BR-ADJ-01, AF-23).
-    const voided = await this.prisma.attendanceAdjustment.findMany({
-      where: { companyId, employeeId, workDate, adjustType: 'VOID' },
-      select: { attendanceLogId: true },
-    });
-    const voidedIds = new Set(voided.map((row) => row.attendanceLogId).filter(Boolean));
+    const voidedIds = new Set(
+      await this.payrolls.findVoidedLogIds(companyId, employeeId, workDate),
+    );
 
     // Áp bản ghi MODIFY_TIME lên giờ đã ghi (bản ghi gốc vẫn nguyên vẹn).
-    const modifications = await this.prisma.attendanceAdjustment.findMany({
-      where: { companyId, employeeId, workDate, adjustType: 'MODIFY_TIME' },
-      orderBy: { createdAt: 'asc' },
-      select: { attendanceLogId: true, afterValue: true },
-    });
+    const modifications = await this.payrolls.findTimeModifications(
+      companyId,
+      employeeId,
+      workDate,
+    );
     const timeOverrides = new Map<string, Date>();
     for (const modification of modifications) {
       const after = modification.afterValue as { recordedAt?: string } | null;
@@ -249,7 +202,7 @@ export class PayrollEngineService {
       PolicyKeys.PAYROLL_ROUNDING_MINUTES,
     );
 
-    const makeupMinutes = makeup._sum.makeupMinutes ?? 0;
+    const makeupMinutes = makeup;
     const countedMinutes = this.applyRounding(workedMinutes + makeupMinutes, roundingMinutes);
 
     // Đơn nghỉ phép có lương tính đủ công cho phần được nghỉ.
@@ -453,25 +406,7 @@ export class PayrollEngineService {
     const dayStart = combineWorkDateAndTime(workDate, '00:00', timezone);
     const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
-    const requests = await this.prisma.leaveRequest.findMany({
-      where: {
-        companyId,
-        employeeId,
-        status: RequestStatus.APPROVED,
-        startAt: { lt: dayEnd },
-        endAt: { gte: dayStart },
-      },
-      include: { requestType: { select: { code: true, deductFrom: true, unit: true } } },
-    });
-
-    return requests.map((request) => ({
-      id: request.id,
-      code: request.requestType.code,
-      deductFrom: request.requestType.deductFrom,
-      unit: request.requestType.unit,
-      isHalfDay: request.isHalfDay,
-      quantity: Number(request.quantity),
-    }));
+    return this.payrolls.findApprovedRequestsInRange(companyId, employeeId, dayStart, dayEnd);
   }
 
   /**

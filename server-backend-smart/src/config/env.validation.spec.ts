@@ -22,6 +22,9 @@ describe('validateEnv — chốt chặn cấu hình production', () => {
       JWT_ALGORITHM: 'RS256',
       JWT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----',
       JWT_PUBLIC_KEY: '-----BEGIN PUBLIC KEY-----',
+      FIREBASE_PROJECT_ID: 'smartface-prod',
+      FIREBASE_CLIENT_EMAIL: 'sa@smartface-prod.iam.gserviceaccount.com',
+      FIREBASE_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----',
       ATTENDANCE_SIGNATURE_REQUIRED: 'true',
       TRUSTED_PROXY_HOPS: '1',
       ...overrides,
@@ -130,6 +133,15 @@ describe('validateEnv — chốt chặn cấu hình production', () => {
     expect(() => validateEnv(productionEnv({ OTP_DEBUG_RETURN: 'true' }))).toThrow(/OTP/);
   });
 
+  it('CHẶN khi trỏ vào Firebase Auth Emulator ở production', () => {
+    // Emulator KHÔNG kiểm chữ ký ID token: nó nhận token do bất kỳ ai tự dựng.
+    // Trỏ vào đó ở production nghĩa là ai cũng đăng nhập được dưới danh nghĩa
+    // bất kỳ tài khoản nào.
+    expect(() =>
+      validateEnv(productionEnv({ FIREBASE_AUTH_EMULATOR_HOST: 'localhost:9099' })),
+    ).toThrow(/EMULATOR/);
+  });
+
   it.each([
     'REDIS_HOST',
     'AI_SERVER_URL',
@@ -137,6 +149,9 @@ describe('validateEnv — chốt chặn cấu hình production', () => {
     'S3_BUCKET',
     'S3_ACCESS_KEY',
     'S3_SECRET_KEY',
+    'FIREBASE_PROJECT_ID',
+    'FIREBASE_CLIENT_EMAIL',
+    'FIREBASE_PRIVATE_KEY',
   ])('CHẶN khi thiếu %s ở production', (key) => {
     const env = productionEnv();
     delete (env as Record<string, unknown>)[key];

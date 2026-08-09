@@ -1,11 +1,6 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import {
-  AllowPendingPassword,
-  CurrentUser,
-  Public,
-  SkipTenant,
-} from 'src/common/decorators';
+import { AllowPendingPassword, CurrentUser, Public, SkipTenant } from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
 import { RateLimit } from 'src/common/guards/rate-limit.guard';
 import type { RequestContext } from 'src/common/types/request-context';
@@ -13,12 +8,14 @@ import { AuthService } from './auth.service';
 import { DeviceService } from './device.service';
 import {
   ChangePasswordDto,
+  CreateSessionDto,
   DisableTwoFactorDto,
   EnableTwoFactorDto,
-  LoginDto,
   LogoutDto,
   ReauthVerifyDto,
   RefreshTokenDto,
+  ResendTwoFactorDto,
+  SetupTwoFactorDto,
   VerifyTwoFactorDto,
 } from './dto/auth.dto';
 
@@ -51,30 +48,32 @@ export class AuthController {
   // Đăng nhập
   // ---------------------------------------------------------------------------
 
-  @Post('login')
+  @Post('session')
   @Public()
   @HttpCode(HttpStatus.OK)
-  // Chặn dò mật khẩu hàng loạt ở tầng hạ tầng, trước cả khi chạm tới scrypt.
-  // `by: 'ip'` chứ không phải 'account': chưa đăng nhập nên chưa có tài khoản để
-  // đếm. Cũng đúng về mặt phòng thủ — kẻ dò mật khẩu thử nhiều tài khoản khác
-  // nhau, giới hạn theo tài khoản sẽ không cản được gì.
-  @RateLimit({ bucket: 'login', limit: 20, windowSeconds: 900, by: 'ip' })
+  // Mật khẩu do Firebase kiểm nên việc dò mật khẩu bị chặn ở phía Firebase. Giới
+  // hạn ở đây phục vụ việc khác: chặn dò xem uid nào đã được cấp hồ sơ, và chặn
+  // ép Backend gọi verifyIdToken liên tục.
+  @RateLimit({ bucket: 'session', limit: 20, windowSeconds: 900, by: 'ip' })
   @ApiOperation({
-    summary: 'Đăng nhập bằng tên miền + email + mật khẩu',
+    summary: 'Đổi Firebase ID token lấy phiên làm việc',
     description:
-      'Tài khoản do công ty cấp sẵn. Đăng nhập lần đầu trả `nextStep: CHANGE_PASSWORD` và token bị chặn ở mọi API khác cho tới khi đổi mật khẩu.\n\n' +
-      'Tài khoản đã bật xác thực 2 lớp sẽ nhận `nextStep: TWO_FACTOR` kèm `twoFactorToken` thay vì token đăng nhập.\n\n' +
-      '⚠ Sai tên miền, sai email và sai mật khẩu đều trả CÙNG một mã lỗi `AUTH_INVALID_CREDENTIALS`. Phân biệt ra sẽ biến màn hình đăng nhập thành công cụ dò danh sách email nhân viên.',
+      'Client đăng nhập với Firebase trước (email + mật khẩu qua SDK) rồi gửi ID token lên đây. Backend KHÔNG bao giờ nhận mật khẩu.\n\n' +
+      'Đăng nhập lần đầu trả `nextStep: CHANGE_PASSWORD` và token bị chặn ở mọi API khác cho tới khi đổi mật khẩu.\n\n' +
+      'Tài khoản đã bật xác thực 2 lớp sẽ nhận `nextStep: TWO_FACTOR` kèm `twoFactorToken`, và một mã OTP được gửi tới số đã đăng ký.\n\n' +
+      '⚠ Gõ sai tên miền trả `AUTH_DOMAIN_MISMATCH` — tên miền phải khớp công ty của tài khoản, vì Firebase chỉ xác nhận danh tính chứ không biết gì về ranh giới công ty.',
   })
   @ApiErrors(
-    'AUTH_INVALID_CREDENTIALS',
-    'AUTH_ACCOUNT_LOCKED',
+    'AUTH_FIREBASE_TOKEN_INVALID',
+    'AUTH_FIREBASE_TOKEN_EXPIRED',
+    'AUTH_ACCOUNT_NOT_PROVISIONED',
+    'AUTH_DOMAIN_MISMATCH',
     'AUTH_ACCOUNT_SUSPENDED',
     'AUTH_COMPANY_INACTIVE',
     'SYS_RATE_LIMITED',
   )
-  login(@Body() dto: LoginDto) {
-    return this.auth.login(dto);
+  createSession(@Body() dto: CreateSessionDto) {
+    return this.auth.createSession(dto);
   }
 
   @Post('2fa/verify')
@@ -82,13 +81,40 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @RateLimit({ bucket: 'login-2fa', limit: 10, windowSeconds: 900, by: 'ip' })
   @ApiOperation({
-    summary: 'Bước hai của đăng nhập — nhập mã xác thực 2 lớp',
+    summary: 'Bước hai của đăng nhập — nhập mã OTP',
     description:
-      'Nhận mã 6 số từ ứng dụng xác thực, hoặc một mã dự phòng khi mất thiết bị. Mã dự phòng dùng một lần rồi mất.',
+      'Nhận mã 6 số vừa gửi qua SMS, hoặc một mã dự phòng khi mất điện thoại. Mã dự phòng dùng một lần rồi mất.',
   })
-  @ApiErrors('AUTH_2FA_INVALID', 'AUTH_2FA_NOT_ENABLED', 'SYS_RATE_LIMITED')
+  @ApiErrors(
+    'AUTH_2FA_INVALID',
+    'AUTH_2FA_NOT_ENABLED',
+    'AUTH_OTP_INVALID',
+    'AUTH_OTP_EXPIRED',
+    'AUTH_OTP_MAX_ATTEMPTS',
+    'SYS_RATE_LIMITED',
+  )
   verifyTwoFactor(@Body() dto: VerifyTwoFactorDto) {
     return this.auth.verifyTwoFactor(dto);
+  }
+
+  @Post('2fa/resend')
+  @Public()
+  @HttpCode(HttpStatus.OK)
+  @RateLimit({ bucket: 'login-2fa-resend', limit: 5, windowSeconds: 900, by: 'ip' })
+  @ApiOperation({
+    summary: 'Gửi lại mã OTP cho một thử thách đang mở',
+    description:
+      'Giãn cách giữa hai lần gửi và số lần gửi mỗi giờ do `OtpService` cưỡng chế; giới hạn ở đây chỉ là lớp chặn thêm theo IP.',
+  })
+  @ApiErrors(
+    'AUTH_2FA_INVALID',
+    'AUTH_2FA_NOT_ENABLED',
+    'AUTH_OTP_RESEND_TOO_SOON',
+    'AUTH_OTP_SEND_LIMIT',
+    'SYS_RATE_LIMITED',
+  )
+  resendTwoFactor(@Body() dto: ResendTwoFactorDto) {
+    return this.auth.resendTwoFactorCode(dto.twoFactorToken);
   }
 
   // ---------------------------------------------------------------------------
@@ -104,11 +130,13 @@ export class AuthController {
   @ApiOperation({
     summary: 'Đổi mật khẩu',
     description:
-      'Bắt buộc sau khi đăng nhập lần đầu bằng mật khẩu tạm. Đổi xong sẽ THU HỒI toàn bộ phiên khác và cấp phiên mới — nếu mật khẩu đã lộ và kẻ tấn công đang có phiên mở, đổi mật khẩu mà không thu hồi thì phiên của hắn vẫn sống.',
+      'Bắt buộc sau khi đăng nhập lần đầu bằng mật khẩu tạm.\n\n' +
+      'Client phải gọi `reauthenticateWithCredential` của Firebase trước (người dùng gõ lại mật khẩu cũ) rồi gửi lên ID token vừa làm mới — Backend không giữ mật khẩu nên không tự đối chiếu được.\n\n' +
+      'Đổi xong sẽ THU HỒI toàn bộ phiên khác ở CẢ HAI phía (Backend và Firebase) rồi cấp phiên mới. Nếu mật khẩu đã lộ và kẻ tấn công đang có phiên mở, đổi mật khẩu mà không thu hồi thì phiên của hắn vẫn sống.',
   })
-  @ApiErrors('AUTH_INVALID_CREDENTIALS', 'AUTH_PASSWORD_TOO_WEAK', 'AUTH_PASSWORD_REUSED')
+  @ApiErrors('AUTH_FIREBASE_TOKEN_INVALID', 'AUTH_REAUTH_STALE', 'AUTH_PASSWORD_TOO_WEAK')
   changePassword(@CurrentUser() ctx: RequestContext, @Body() dto: ChangePasswordDto) {
-    return this.auth.changePassword(ctx.userId, dto.currentPassword, dto.newPassword);
+    return this.auth.changePassword(ctx.userId, dto.firebaseIdToken, dto.newPassword);
   }
 
   // ---------------------------------------------------------------------------
@@ -118,15 +146,22 @@ export class AuthController {
   @Post('2fa/setup')
   @HttpCode(HttpStatus.OK)
   @SkipTenant()
+  @RateLimit({ bucket: '2fa-setup', limit: 10, windowSeconds: 3600, by: 'account' })
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Bước 1 — sinh secret và URI mã QR',
+    summary: 'Bước 1 — khai số điện thoại và nhận mã xác minh',
     description:
-      'Chưa bật 2FA ở bước này. Phải nhập đúng một mã sinh từ secret (bước `enable`) mới bật thật — bật ngay sẽ khoá chính người dùng ra ngoài nếu họ quét mã QR hỏng.',
+      'Gửi một mã OTP tới số vừa khai. Chưa ghi số vào tài khoản ở bước này: số chỉ được lưu khi đã chứng minh người dùng nhận được tin nhắn tới đúng số đó (bước `enable`).\n\n' +
+      'Ghi trước rồi mới xác minh nghĩa là gõ nhầm một chữ số cũng đủ khiến mọi mã OTP về sau bay tới máy người lạ — và người dùng thì tự khoá mình ra ngoài.',
   })
-  @ApiErrors('AUTH_2FA_ALREADY_ENABLED')
-  setupTwoFactor(@CurrentUser() ctx: RequestContext) {
-    return this.auth.setupTwoFactor(ctx.userId);
+  @ApiErrors(
+    'AUTH_2FA_ALREADY_ENABLED',
+    'AUTH_PHONE_INVALID',
+    'AUTH_OTP_RESEND_TOO_SOON',
+    'AUTH_OTP_SEND_LIMIT',
+  )
+  setupTwoFactor(@CurrentUser() ctx: RequestContext, @Body() dto: SetupTwoFactorDto) {
+    return this.auth.setupTwoFactor(ctx.userId, dto.phone);
   }
 
   @Post('2fa/enable')
@@ -134,11 +169,17 @@ export class AuthController {
   @SkipTenant()
   @ApiBearerAuth()
   @ApiOperation({
-    summary: 'Bước 2 — xác nhận và bật',
+    summary: 'Bước 2 — xác nhận mã và bật',
     description:
       'Trả về mã dự phòng, hiển thị MỘT LẦN. Server chỉ lưu bản băm nên không cấp lại được.',
   })
-  @ApiErrors('AUTH_2FA_INVALID', 'AUTH_2FA_ALREADY_ENABLED')
+  @ApiErrors(
+    'AUTH_2FA_INVALID',
+    'AUTH_2FA_ALREADY_ENABLED',
+    'AUTH_OTP_INVALID',
+    'AUTH_OTP_EXPIRED',
+    'AUTH_OTP_MAX_ATTEMPTS',
+  )
   enableTwoFactor(@CurrentUser() ctx: RequestContext, @Body() dto: EnableTwoFactorDto) {
     return this.auth.enableTwoFactor(ctx.userId, dto.code);
   }
@@ -147,10 +188,14 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @SkipTenant()
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Tắt xác thực 2 lớp — bắt buộc xác nhận bằng mật khẩu' })
-  @ApiErrors('AUTH_2FA_NOT_ENABLED', 'AUTH_INVALID_CREDENTIALS')
+  @ApiOperation({
+    summary: 'Tắt xác thực 2 lớp — bắt buộc xác thực lại với Firebase',
+    description:
+      'Cần ID token vừa làm mới (người dùng gõ lại mật khẩu) thay cho trường `password` trước đây, vì Backend không còn giữ mật khẩu để đối chiếu.',
+  })
+  @ApiErrors('AUTH_2FA_NOT_ENABLED', 'AUTH_FIREBASE_TOKEN_INVALID', 'AUTH_REAUTH_STALE')
   disableTwoFactor(@CurrentUser() ctx: RequestContext, @Body() dto: DisableTwoFactorDto) {
-    return this.auth.disableTwoFactor(ctx.userId, dto.password);
+    return this.auth.disableTwoFactor(ctx.userId, dto.firebaseIdToken);
   }
 
   // ---------------------------------------------------------------------------
@@ -219,6 +264,21 @@ export class AuthController {
   // Xác thực lại danh tính
   // ---------------------------------------------------------------------------
 
+  @Post('reauth/code')
+  @HttpCode(HttpStatus.OK)
+  @SkipTenant()
+  @RateLimit({ bucket: 'reauth-code', limit: 5, windowSeconds: 900, by: 'account' })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Gửi mã OTP phục vụ bước xác thực lại',
+    description:
+      'Chỉ cần gọi khi tài khoản đã bật xác thực 2 lớp. Tách khỏi `reauth/verify` vì thứ tự bắt buộc là gửi mã → người dùng đọc tin nhắn → gọi verify kèm mã.',
+  })
+  @ApiErrors('AUTH_2FA_NOT_ENABLED', 'AUTH_OTP_RESEND_TOO_SOON', 'AUTH_OTP_SEND_LIMIT')
+  requestReauthCode(@CurrentUser() ctx: RequestContext) {
+    return this.auth.requestReauthCode(ctx.userId);
+  }
+
   @Post('reauth/verify')
   @HttpCode(HttpStatus.OK)
   @SkipTenant()
@@ -228,10 +288,15 @@ export class AuthController {
     summary: 'Xác thực lại và nhận reauthToken (dùng một lần, TTL 5 phút)',
     description:
       'Bắt buộc trước các thao tác nhạy cảm: đổi/xoá khuôn mặt, đăng ký vân tay cho thiết bị khác.\n\n' +
-      'Dùng MẬT KHẨU chứ không dùng OTP SMS — kẻ cầm được điện thoại đang đăng nhập cũng nhận được SMS gửi tới chính máy đó.',
+      'Neo vào MẬT KHẨU (qua ID token vừa làm mới của Firebase) chứ không phải chỉ OTP — kẻ cầm được điện thoại đang đăng nhập cũng nhận được SMS gửi tới chính máy đó.',
   })
-  @ApiErrors('AUTH_INVALID_CREDENTIALS', 'AUTH_2FA_REQUIRED', 'SYS_RATE_LIMITED')
+  @ApiErrors(
+    'AUTH_FIREBASE_TOKEN_INVALID',
+    'AUTH_REAUTH_STALE',
+    'AUTH_2FA_REQUIRED',
+    'SYS_RATE_LIMITED',
+  )
   verifyReauth(@CurrentUser() ctx: RequestContext, @Body() dto: ReauthVerifyDto) {
-    return this.auth.verifyReauth(ctx.userId, dto.password, dto.totpCode);
+    return this.auth.verifyReauth(ctx.userId, dto.firebaseIdToken, dto.twoFactorCode);
   }
 }

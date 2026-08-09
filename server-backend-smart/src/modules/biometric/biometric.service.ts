@@ -1,9 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { EmployeeStatus, FaceProfileStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { ulid } from 'ulid';
 import { AppException } from 'src/common/errors';
 import { bufferToEmbedding, embeddingToBuffer } from 'src/common/utils';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
+import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { RedisService } from 'src/infra/redis/redis.service';
 import { RedisKeys } from 'src/infra/redis/redis.keys';
 import { StorageService } from 'src/infra/storage/storage.service';
@@ -13,6 +13,7 @@ import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../notification/notification.service';
 import { PolicyKeys } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
+import { BiometricRepository } from './biometric.repository';
 import type { RequestContext, TenantContext } from 'src/common/types/request-context';
 
 const ENROLL_SESSION_TTL_SECONDS = 300;
@@ -31,7 +32,13 @@ interface EnrollSession {
   steps: EnrollStep[];
   completedOrders: number[];
   /** Embedding tạm, chỉ ghi DB khi hoàn tất toàn bộ các bước. */
-  collected: Array<{ order: number; angle: string; embedding: number[]; quality: number | null; photoKey: string | null }>;
+  collected: Array<{
+    order: number;
+    angle: string;
+    embedding: number[];
+    quality: number | null;
+    photoKey: string | null;
+  }>;
   modelVersion: string | null;
   /**
    * Phiên này ghi ĐÈ lên hồ sơ đang có hay là đăng ký lần đầu.
@@ -56,7 +63,8 @@ export class BiometricService {
   private readonly logger = new Logger(BiometricService.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly biometrics: BiometricRepository,
+    private readonly transactions: TransactionManager,
     private readonly redis: RedisService,
     private readonly ai: AiGatewayService,
     private readonly policy: PolicyService,
@@ -88,15 +96,15 @@ export class BiometricService {
   async startFaceEnrollment(ctx: TenantContext, options: { reauthVerified?: boolean } = {}) {
     const employee = await this.requireEmployee(ctx);
 
-    const activeProfiles = await this.prisma.faceProfile.count({
-      where: { employeeId: employee.id, status: FaceProfileStatus.ACTIVE },
-    });
+    const activeProfiles = await this.biometrics.countActiveFaceProfiles(
+      ctx.companyId,
+      employee.id,
+    );
     const isReEnrollment = activeProfiles > 0;
 
     if (isReEnrollment && !options.reauthVerified) {
       throw new AppException('AUTH_REAUTH_REQUIRED', {
-        reason:
-          'Bạn đã đăng ký khuôn mặt. Để đăng ký lại, cần xác thực danh tính qua OTP trước.',
+        reason: 'Bạn đã đăng ký khuôn mặt. Để đăng ký lại, cần xác thực danh tính qua OTP trước.',
       });
     }
 
@@ -143,15 +151,8 @@ export class BiometricService {
    * Ở bước CUỐI mới đối chiếu trùng danh tính (BR-10) và ghi DB — tránh gọi
    * so khớp 1:N nhiều lần không cần thiết.
    */
-  async submitFaceEnrollment(
-    ctx: TenantContext,
-    sessionId: string,
-    order: number,
-    image: Buffer,
-  ) {
-    const session = await this.redis.getJson<EnrollSession>(
-      RedisKeys.faceEnrollSession(sessionId),
-    );
+  async submitFaceEnrollment(ctx: TenantContext, sessionId: string, order: number, image: Buffer) {
+    const session = await this.redis.getJson<EnrollSession>(RedisKeys.faceEnrollSession(sessionId));
     if (!session || session.employeeId !== ctx.employeeId) {
       throw new AppException('FACE_ENROLL_SESSION_INVALID');
     }
@@ -240,19 +241,20 @@ export class BiometricService {
     }
 
     // --- Hoàn tất: kiểm tra trùng danh tính rồi ghi DB -------------------------
-    await this.assertNoDuplicateIdentity(ctx.companyId, ctx.employeeId!, session.collected[0].embedding);
+    await this.assertNoDuplicateIdentity(
+      ctx.companyId,
+      ctx.employeeId!,
+      session.collected[0].embedding,
+    );
 
     const modelVersion = session.modelVersion ?? 'unknown';
 
-    await this.prisma.$transaction(async (tx) => {
+    await this.transactions.run(async (tx) => {
       // Đăng ký lại → đánh dấu hồ sơ cũ là REPLACED, không xoá (giữ dấu vết).
-      await tx.faceProfile.updateMany({
-        where: { employeeId: ctx.employeeId!, status: FaceProfileStatus.ACTIVE },
-        data: { status: FaceProfileStatus.REPLACED, revokedAt: new Date() },
-      });
+      await this.biometrics.markProfilesReplaced(ctx.companyId, ctx.employeeId!, new Date(), tx);
 
-      await tx.faceProfile.createMany({
-        data: session.collected.map((item) => ({
+      await this.biometrics.createFaceProfiles(
+        session.collected.map((item) => ({
           companyId: ctx.companyId,
           employeeId: ctx.employeeId!,
           embeddingRaw: embeddingToBuffer(item.embedding),
@@ -261,15 +263,12 @@ export class BiometricService {
           qualityScore: item.quality,
           photoKey: item.photoKey,
           angle: item.angle,
-          status: FaceProfileStatus.ACTIVE,
         })),
-      });
+        tx,
+      );
 
       // BR-03: đã có phương thức xác thực → chuyển sang ACTIVE.
-      await tx.employee.updateMany({
-        where: { id: ctx.employeeId!, status: EmployeeStatus.PENDING_ACTIVATION },
-        data: { status: EmployeeStatus.ACTIVE },
-      });
+      await this.biometrics.activateIfPending(ctx.companyId, ctx.employeeId!, tx);
     });
 
     await this.redis.del(RedisKeys.faceEnrollSession(sessionId));
@@ -289,10 +288,7 @@ export class BiometricService {
     // hợp thiết bị bị chiếm. Đăng ký lần đầu là việc bình thường trong onboarding,
     // báo cho HR mỗi lần chỉ tạo nhiễu và làm họ bỏ qua cảnh báo thật.
     if (session.isReEnrollment) {
-      const employee = await this.prisma.employee.findUnique({
-        where: { id: ctx.employeeId! },
-        select: { fullName: true },
-      });
+      const employee = await this.biometrics.findEmployee(ctx.companyId, ctx.employeeId!);
       await this.notifyHr(ctx.companyId, employee?.fullName ?? ctx.employeeId!, 'khuôn mặt');
     }
 
@@ -316,20 +312,10 @@ export class BiometricService {
     employeeId: string,
     embedding: number[],
   ): Promise<void> {
-    const others = await this.prisma.faceProfile.findMany({
-      where: {
-        companyId,
-        status: FaceProfileStatus.ACTIVE,
-        employeeId: { not: employeeId },
-      },
-      select: { employeeId: true, embeddingRaw: true },
-    });
+    const others = await this.biometrics.findOtherActiveEmbeddings(companyId, employeeId);
     if (others.length === 0) return;
 
-    const threshold = await this.policy.getNumber(
-      companyId,
-      PolicyKeys.FACE_DUPLICATE_THRESHOLD,
-    );
+    const threshold = await this.policy.getNumber(companyId, PolicyKeys.FACE_DUPLICATE_THRESHOLD);
 
     let bestScore = 0;
     let bestEmployeeId: string | null = null;
@@ -344,10 +330,7 @@ export class BiometricService {
     }
 
     if (bestScore >= threshold && bestEmployeeId) {
-      const conflict = await this.prisma.employee.findUnique({
-        where: { id: bestEmployeeId },
-        select: { employeeCode: true },
-      });
+      const conflictCode = await this.biometrics.findEmployeeCode(companyId, bestEmployeeId);
 
       this.logger.warn(
         `BR-10: chặn đăng ký khuôn mặt cho ${employeeId} — trùng ${bestEmployeeId} (score ${bestScore.toFixed(3)})`,
@@ -357,7 +340,7 @@ export class BiometricService {
         companyId,
         type: 'IDENTITY_DUPLICATE_ALERT',
         title: 'Cảnh báo trùng danh tính sinh trắc học',
-        body: `Có nỗ lực đăng ký khuôn mặt đã thuộc về nhân viên ${conflict?.employeeCode ?? bestEmployeeId}.`,
+        body: `Có nỗ lực đăng ký khuôn mặt đã thuộc về nhân viên ${conflictCode ?? bestEmployeeId}.`,
         data: { employeeId, conflictEmployeeId: bestEmployeeId, score: bestScore },
       });
 
@@ -439,35 +422,18 @@ export class BiometricService {
       });
     }
 
-    const existing = await this.prisma.biometricKey.findUnique({
-      where: { employeeId_deviceId: { employeeId: employee.id, deviceId } },
-      select: { publicKey: true, revokedAt: true },
-    });
+    const existing = await this.biometrics.findFingerprintKey(ctx.companyId, employee.id, deviceId);
     const isReplacement = Boolean(existing) && existing?.publicKey !== publicKey;
 
-    const key = await this.prisma.biometricKey.upsert({
-      where: { employeeId_deviceId: { employeeId: employee.id, deviceId } },
-      create: {
-        companyId: ctx.companyId,
-        employeeId: employee.id,
-        deviceId,
-        publicKey,
-        algorithm,
-        attestation,
-      },
-      update: {
-        publicKey,
-        algorithm,
-        attestation,
-        revokedAt: null,
-        revokedReason: null,
-      },
-    });
-
-    // BR-03
-    await this.prisma.employee.updateMany({
-      where: { id: employee.id, status: EmployeeStatus.PENDING_ACTIVATION },
-      data: { status: EmployeeStatus.ACTIVE },
+    const key = await this.transactions.run(async (tx) => {
+      const saved = await this.biometrics.upsertFingerprintKey(
+        employee.id,
+        { companyId: ctx.companyId, deviceId, publicKey, algorithm, attestation },
+        tx,
+      );
+      // BR-03
+      await this.biometrics.activateIfPending(ctx.companyId, employee.id, tx);
+      return saved;
     });
 
     await this.audit.record(ctx, {
@@ -499,14 +465,8 @@ export class BiometricService {
     const employee = await this.requireEmployee(ctx);
 
     const [faceProfiles, fingerprintKeys] = await Promise.all([
-      this.prisma.faceProfile.findMany({
-        where: { employeeId: employee.id, status: FaceProfileStatus.ACTIVE },
-        select: { id: true, angle: true, modelVersion: true, enrolledAt: true },
-      }),
-      this.prisma.biometricKey.findMany({
-        where: { employeeId: employee.id, revokedAt: null },
-        select: { id: true, deviceId: true, algorithm: true, createdAt: true },
-      }),
+      this.biometrics.listActiveFaceProfiles(ctx.companyId, employee.id),
+      this.biometrics.listActiveFingerprintKeys(ctx.companyId, employee.id),
     ]);
 
     return {
@@ -527,14 +487,10 @@ export class BiometricService {
   async resetFace(ctx: TenantContext, reason: string) {
     const employee = await this.requireEmployee(ctx);
 
-    const result = await this.prisma.faceProfile.updateMany({
-      where: { employeeId: employee.id, status: FaceProfileStatus.ACTIVE },
-      data: {
-        status: FaceProfileStatus.REVOKED,
-        revokedAt: new Date(),
-        revokedBy: ctx.userId,
-        revokedReason: reason,
-      },
+    const revoked = await this.biometrics.revokeFaceProfiles(ctx.companyId, employee.id, {
+      revokedAt: new Date(),
+      revokedBy: ctx.userId,
+      revokedReason: reason,
     });
 
     await this.audit.record(ctx, {
@@ -542,34 +498,36 @@ export class BiometricService {
       targetType: 'EMPLOYEE',
       targetId: employee.id,
       reason,
-      before: { activeProfileCount: result.count },
+      before: { activeProfileCount: revoked },
       after: { activeProfileCount: 0 },
     });
 
     await this.notifyHr(ctx.companyId, employee.fullName, 'khuôn mặt');
 
-    return { revoked: result.count };
+    return { revoked };
   }
 
   async resetFingerprint(ctx: TenantContext, reason: string) {
     const employee = await this.requireEmployee(ctx);
 
-    const result = await this.prisma.biometricKey.updateMany({
-      where: { employeeId: employee.id, revokedAt: null },
-      data: { revokedAt: new Date(), revokedReason: reason },
-    });
+    const revoked = await this.biometrics.revokeFingerprintKeys(
+      ctx.companyId,
+      employee.id,
+      new Date(),
+      reason,
+    );
 
     await this.audit.record(ctx, {
       action: 'BIOMETRIC_FINGERPRINT_RESET',
       targetType: 'EMPLOYEE',
       targetId: employee.id,
       reason,
-      before: { activeKeyCount: result.count },
+      before: { activeKeyCount: revoked },
     });
 
     await this.notifyHr(ctx.companyId, employee.fullName, 'vân tay');
 
-    return { revoked: result.count };
+    return { revoked };
   }
 
   /**
@@ -583,9 +541,7 @@ export class BiometricService {
     options: { resetFace: boolean; resetFingerprint: boolean },
     reason: string,
   ) {
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: employeeId, companyId, deletedAt: null },
-    });
+    const employee = await this.biometrics.findEmployee(companyId, employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }
@@ -594,24 +550,20 @@ export class BiometricService {
     let fingerprintRevoked = 0;
 
     if (options.resetFace) {
-      const result = await this.prisma.faceProfile.updateMany({
-        where: { employeeId, status: FaceProfileStatus.ACTIVE },
-        data: {
-          status: FaceProfileStatus.REVOKED,
-          revokedAt: new Date(),
-          revokedBy: ctx.userId,
-          revokedReason: reason,
-        },
+      faceRevoked = await this.biometrics.revokeFaceProfiles(companyId, employeeId, {
+        revokedAt: new Date(),
+        revokedBy: ctx.userId,
+        revokedReason: reason,
       });
-      faceRevoked = result.count;
     }
 
     if (options.resetFingerprint) {
-      const result = await this.prisma.biometricKey.updateMany({
-        where: { employeeId, revokedAt: null },
-        data: { revokedAt: new Date(), revokedReason: reason },
-      });
-      fingerprintRevoked = result.count;
+      fingerprintRevoked = await this.biometrics.revokeFingerprintKeys(
+        companyId,
+        employeeId,
+        new Date(),
+        reason,
+      );
     }
 
     await this.audit.record(ctx, {
@@ -650,9 +602,7 @@ export class BiometricService {
     if (!ctx.employeeId) {
       throw new AppException('AUTH_COMPANY_REQUIRED');
     }
-    const employee = await this.prisma.employee.findFirst({
-      where: { id: ctx.employeeId, companyId: ctx.companyId, deletedAt: null },
-    });
+    const employee = await this.biometrics.findEmployee(ctx.companyId, ctx.employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
     }

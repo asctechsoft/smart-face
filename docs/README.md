@@ -34,6 +34,8 @@ Bộ tài liệu này được sinh từ **Tài liệu mô tả nghiệp vụ (P
 | [11-cach-hoat-dong-cham-cong-mat-va-van-tay.md](./11-cach-hoat-dong-cham-cong-mat-va-van-tay.md) | Cơ chế kỹ thuật của hai phương thức chấm công, vì sao vân tay khác hẳn khuôn mặt | (suy dẫn) |
 | [12-luong-cham-cong-chi-tiet.md](./12-luong-cham-cong-chi-tiet.md) | Một lượt chấm công đi qua App → Backend → AI Server: payload thật ở từng chặng, thứ tự chốt kiểm, vì sao gọi AI sau cùng | (suy dẫn) |
 | [13-luong-onboarding-va-dang-ky-khuon-mat.md](./13-luong-onboarding-va-dang-ky-khuon-mat.md) | Từ lúc được cấp tài khoản tới lúc chấm công được: OTP → mã mời → đăng ký khuôn mặt 4 góc → ghi DB. Kèm ranh giới đăng ký lần đầu vs đăng ký đè | (suy dẫn) |
+| [14-so-do-quan-he-bang-du-lieu.md](./14-so-do-quan-he-bang-du-lieu.md) | Sơ đồ quan hệ giữa các bảng dữ liệu | (suy dẫn) |
+| [15-danh-muc-api-backend.md](./15-danh-muc-api-backend.md) | **Danh mục API đã thi công**: ~100 endpoint đọc trực tiếp từ controller, mỗi endpoint có mô tả "làm gì / vì sao vậy" + ví dụ `curl` + mã lỗi. Kèm kịch bản đầu-cuối và bảng sai lầm thường gặp | (từ mã nguồn) |
 
 ---
 

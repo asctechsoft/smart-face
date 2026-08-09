@@ -1,9 +1,8 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
-import { FaceProfileStatus } from '@prisma/client';
 import { Job } from 'bullmq';
-import { PrismaService } from 'src/infra/prisma/prisma.service';
 import { StorageService } from 'src/infra/storage/storage.service';
+import { JobsRepository } from '../jobs.repository';
 import { AuditService } from 'src/modules/audit/audit.service';
 import { PolicyKeys } from 'src/modules/policy/policy.constants';
 import { PolicyService } from 'src/modules/policy/policy.service';
@@ -54,7 +53,7 @@ export class RetentionProcessor extends WorkerHost {
   private readonly logger = new Logger(RetentionProcessor.name);
 
   constructor(
-    private readonly prisma: PrismaService,
+    private readonly jobs: JobsRepository,
     private readonly policy: PolicyService,
     private readonly storage: StorageService,
     private readonly audit: AuditService,
@@ -89,16 +88,16 @@ export class RetentionProcessor extends WorkerHost {
     const companies = await this.activeCompanies();
     let totalDeleted = 0;
 
-    for (const company of companies) {
+    for (const companyId of companies) {
       const retentionDays = await this.policy.getNumber(
-        company.id,
+        companyId,
         PolicyKeys.BIOMETRIC_PHOTO_RETENTION_DAYS,
       );
 
       // Chính sách <= 0 nghĩa là "giữ vĩnh viễn". Không tự suy diễn thành
       // "xoá tất cả" — hiểu nhầm ở đây là mất sạch bằng chứng của cả công ty.
       if (retentionDays <= 0) {
-        this.logger.log(`Công ty ${company.id}: giữ ảnh vĩnh viễn, bỏ qua`);
+        this.logger.log(`Công ty ${companyId}: giữ ảnh vĩnh viễn, bỏ qua`);
         continue;
       }
 
@@ -109,36 +108,26 @@ export class RetentionProcessor extends WorkerHost {
       // Duyệt theo lô bằng con trỏ id. Không dùng `skip` vì mỗi lô xoá xong sẽ
       // làm lệch offset của lô sau.
       for (;;) {
-        const logs = await this.prisma.attendanceLog.findMany({
-          where: {
-            companyId: company.id,
-            recordedAt: { lt: cutoff },
-            photoKey: { not: null },
-            ...(cursor ? { id: { gt: cursor } } : {}),
-          },
-          select: { id: true, photoKey: true },
-          orderBy: { id: 'asc' },
-          take: BATCH_SIZE,
-        });
-
-        if (logs.length === 0) break;
-
-        const keys = logs
-          .map((log) => log.photoKey)
-          .filter((key): key is string => key !== null);
+        const rows = await this.jobs.findExpiredAttendancePhotos(
+          companyId,
+          cutoff,
+          BATCH_SIZE,
+          cursor,
+        );
+        if (rows.length === 0) break;
 
         // `deleteMany` đã tự chia lô 1000 khoá theo giới hạn của giao thức S3.
-        await this.storage.deleteMany(keys);
+        await this.storage.deleteMany(rows.map((row) => row.key));
 
-        deletedForCompany += keys.length;
-        cursor = logs[logs.length - 1].id;
+        deletedForCompany += rows.length;
+        cursor = rows[rows.length - 1].id;
 
-        if (logs.length < BATCH_SIZE) break;
+        if (rows.length < BATCH_SIZE) break;
       }
 
       if (deletedForCompany > 0) {
         totalDeleted += deletedForCompany;
-        await this.recordPurge(company.id, 'ATTENDANCE_PHOTO', deletedForCompany, {
+        await this.recordPurge(companyId, 'ATTENDANCE_PHOTO', deletedForCompany, {
           retentionDays,
           cutoff: cutoff.toISOString(),
         });
@@ -168,46 +157,27 @@ export class RetentionProcessor extends WorkerHost {
     const companies = await this.activeCompanies();
     let totalDeleted = 0;
 
-    for (const company of companies) {
+    for (const companyId of companies) {
       const delayDays = await this.policy.getNumber(
-        company.id,
+        companyId,
         PolicyKeys.BIOMETRIC_DELETE_DELAY_DAYS,
       );
       if (delayDays < 0) continue;
 
       const cutoff = daysAgo(delayDays);
 
-      const profiles = await this.prisma.faceProfile.findMany({
-        where: {
-          companyId: company.id,
-          // Chỉ hồ sơ KHÔNG còn hoạt động.
-          status: { in: [FaceProfileStatus.REVOKED, FaceProfileStatus.REPLACED] },
-          revokedAt: { lt: cutoff },
-          photoKey: { not: null },
-        },
-        select: { id: true, photoKey: true },
-        take: BATCH_SIZE * 4,
-      });
-
+      const profiles = await this.jobs.findPurgeableFaceProfiles(companyId, cutoff, BATCH_SIZE * 4);
       if (profiles.length === 0) continue;
-
-      const keys = profiles
-        .map((profile) => profile.photoKey)
-        .filter((key): key is string => key !== null);
 
       // Xoá kho TRƯỚC, cập nhật DB SAU. Ngược lại thì mất khoá là mất luôn khả
       // năng dọn, để lại tệp mồ côi vĩnh viễn không ai tìm ra.
-      await this.storage.deleteMany(keys);
+      await this.storage.deleteMany(profiles.map((profile) => profile.key));
 
-      // `face_profile` không bị rule bất biến chặn nên xoá được khoá. Làm vậy
-      // để lần chạy sau không quét lại cùng những hàng này.
-      await this.prisma.faceProfile.updateMany({
-        where: { id: { in: profiles.map((profile) => profile.id) } },
-        data: { photoKey: null },
-      });
+      // Xoá khoá ảnh để lần chạy sau không quét lại cùng những hàng này.
+      await this.jobs.clearFaceProfilePhotoKeys(profiles.map((profile) => profile.id));
 
-      totalDeleted += keys.length;
-      await this.recordPurge(company.id, 'FACE_PROFILE_PHOTO', keys.length, {
+      totalDeleted += profiles.length;
+      await this.recordPurge(companyId, 'FACE_PROFILE_PHOTO', profiles.length, {
         delayDays,
         cutoff: cutoff.toISOString(),
       });
@@ -226,39 +196,23 @@ export class RetentionProcessor extends WorkerHost {
     const companies = await this.activeCompanies();
     let totalDeleted = 0;
 
-    for (const company of companies) {
+    for (const companyId of companies) {
       const retentionDays = await this.policy.getNumber(
-        company.id,
+        companyId,
         PolicyKeys.EXPORT_FILE_RETENTION_DAYS,
       );
       if (retentionDays <= 0) continue;
 
       const cutoff = daysAgo(retentionDays);
 
-      const jobs = await this.prisma.exportJob.findMany({
-        where: {
-          companyId: company.id,
-          createdAt: { lt: cutoff },
-          fileKey: { not: null },
-        },
-        select: { id: true, fileKey: true },
-        take: BATCH_SIZE * 4,
-      });
+      const files = await this.jobs.findExpiredExportFiles(companyId, cutoff, BATCH_SIZE * 4);
+      if (files.length === 0) continue;
 
-      if (jobs.length === 0) continue;
+      await this.storage.deleteMany(files.map((file) => file.key));
+      await this.jobs.clearExportFileKeys(files.map((file) => file.id));
 
-      const keys = jobs
-        .map((exportJob) => exportJob.fileKey)
-        .filter((key): key is string => key !== null);
-
-      await this.storage.deleteMany(keys);
-      await this.prisma.exportJob.updateMany({
-        where: { id: { in: jobs.map((exportJob) => exportJob.id) } },
-        data: { fileKey: null },
-      });
-
-      totalDeleted += keys.length;
-      await this.recordPurge(company.id, 'EXPORT_FILE', keys.length, { retentionDays });
+      totalDeleted += files.length;
+      await this.recordPurge(companyId, 'EXPORT_FILE', files.length, { retentionDays });
     }
 
     this.logger.log(`Xoá ${totalDeleted} file xuất quá hạn`);
@@ -269,11 +223,14 @@ export class RetentionProcessor extends WorkerHost {
   //  Tiện ích
   // ===========================================================================
 
+  /**
+   * Mọi công ty chưa xoá — kể cả đã ngừng dịch vụ.
+   *
+   * Nghĩa vụ xoá dữ liệu cá nhân đúng hạn không mất đi khi công ty ngừng thanh
+   * toán (NFR-LEGAL-04).
+   */
   private activeCompanies() {
-    return this.prisma.company.findMany({
-      where: { deletedAt: null },
-      select: { id: true },
-    });
+    return this.jobs.acrossTenantsFindAllCompanyIds();
   }
 
   /**
