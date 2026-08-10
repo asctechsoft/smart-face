@@ -7,6 +7,7 @@ import {
   AI_ERROR_MAP,
   AiEnrollResponse,
   AiHealthResponse,
+  AiIdentifyCandidate,
   AiIdentifyResponse,
   AiVerifyResponse,
   LIVENESS_ACTIONS,
@@ -47,7 +48,10 @@ export class AiGatewayService {
   // ---------------------------------------------------------------------------
 
   /** Trích embedding từ ảnh đăng ký, kèm kiểm tra chất lượng + liveness. */
-  async enroll(image: Buffer, options: { requireLiveness: boolean; livenessAction?: LivenessAction }) {
+  async enroll(
+    image: Buffer,
+    options: { requireLiveness: boolean; livenessAction?: LivenessAction },
+  ) {
     return this.call<AiEnrollResponse>('/v1/enroll', {
       image_base64: image.toString('base64'),
       require_liveness: options.requireLiveness,
@@ -78,13 +82,36 @@ export class AiGatewayService {
    * So khớp 1:N — dùng cho kiosk (giai đoạn sau) và kiểm tra trùng danh tính (BR-10).
    *
    * ⚠ Với 1:N, ngoài ngưỡng điểm còn PHẢI kiểm tra `margin` đủ lớn.
+   *
+   * Hai cách chỉ định tập ứng viên, chọn đúng một:
+   *
+   * - `candidates` — gửi thẳng embedding lên. Dùng được ngay, không cần đồng bộ
+   *   gì. Phù hợp khi tập nhỏ (kiểm tra trùng danh tính trong một công ty).
+   * - `scopeIds` + `namespace` — dùng chỉ mục nạp sẵn trong RAM của AI Server qua
+   *   `/v1/index/*`. Dành cho kiosk khi tập lớn, không muốn đẩy hàng nghìn vector
+   *   qua mạng mỗi lượt.
+   *
+   * ⚠ `namespace` BẮT BUỘC khi dùng `scopeIds`, và phải là `companyId` (ADR-05).
+   * Thiếu nó, AI Server từ chối ngay ở tầng validate (422) chứ không âm thầm tìm
+   * xuyên công ty — nhân viên công ty A bị nhận diện thành người của công ty B là
+   * dạng rò rỉ dữ liệu chéo khách hàng nghiêm trọng nhất.
    */
-  async identify(image: Buffer, scopeIds: string[], topK = 5, requireLiveness = false) {
+  async identify(
+    image: Buffer,
+    scope: { candidates: AiIdentifyCandidate[] } | { scopeIds: string[]; namespace: string },
+    options: { topK?: number; requireLiveness?: boolean; livenessAction?: LivenessAction } = {},
+  ) {
+    const target =
+      'candidates' in scope
+        ? { candidates: scope.candidates }
+        : { scope_ids: scope.scopeIds, namespace: scope.namespace };
+
     return this.call<AiIdentifyResponse>('/v1/identify', {
       image_base64: image.toString('base64'),
-      scope_ids: scopeIds,
-      top_k: topK,
-      require_liveness: requireLiveness,
+      ...target,
+      top_k: options.topK ?? 5,
+      require_liveness: options.requireLiveness ?? false,
+      liveness_action: options.livenessAction ?? null,
     });
   }
 
@@ -121,8 +148,15 @@ export class AiGatewayService {
     return LIVENESS_ACTIONS[randomInt(LIVENESS_ACTIONS.length)];
   }
 
-  /** Ánh xạ error_code của AI Server sang AppException của Backend. */
-  toAppException(errorCode: string | undefined, details?: Record<string, unknown>): AppException {
+  /**
+   * Ánh xạ error_code của AI Server sang AppException của Backend.
+   *
+   * Nhận cả `null` vì Pydantic serialize trường trống thành `null`, không bỏ trường.
+   */
+  toAppException(
+    errorCode: string | null | undefined,
+    details?: Record<string, unknown>,
+  ): AppException {
     const mapped = (errorCode && AI_ERROR_MAP[errorCode]) || 'FACE_NOT_FOUND';
     return new AppException(mapped as ErrorCode, details);
   }

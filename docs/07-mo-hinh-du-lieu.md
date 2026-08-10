@@ -639,7 +639,7 @@ model AttendanceLog {
   matchScore        Float?
   livenessScore     Float?
   imageQuality      Json?                         // { blur, brightness, yaw, facePx }
-  livenessChallenge String?                       // "BLINK" | "TURN_LEFT" | ...
+  livenessChallenge String?                       // "TURN_LEFT" | "TURN_RIGHT" | "SMILE" | "NOD"
   aiModelVersion    String?
   aiProcessingMs    Int?
 

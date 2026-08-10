@@ -19,6 +19,7 @@ import numpy as np
 
 from ..config import Settings
 from ..errors import (
+    BAD_ANGLE,
     IMG_BACKLIT,
     IMG_BLURRY,
     IMG_TOO_DARK,
@@ -87,4 +88,27 @@ def enforce_technical_floor(quality: Quality, image: np.ndarray, settings: Setti
         raise ImageRejectedError(
             IMG_BLURRY,
             f"Ảnh nhoè (phương sai Laplacian {quality.blur:.1f}).",
+        )
+
+    _enforce_pose_floor(quality, settings)
+
+
+def _enforce_pose_floor(quality: Quality, settings: Settings) -> None:
+    """Chặn mặt nghiêng quá mức mà bước căn chỉnh không cứu được.
+
+    `yaw`/`pitch` là `None` khi model không trả được tư thế đầu (chưa nạp module
+    `landmark_3d_68`, hoặc phiên bản model khác). Không đo được thì KHÔNG từ chối —
+    ảnh vẫn có thể dùng tốt, và từ chối vì thiếu số liệu là biến một thiếu sót cấu
+    hình thành sự cố chấm công toàn hệ thống.
+    """
+    if quality.yaw is not None and abs(quality.yaw) > settings.floor_yaw:
+        raise ImageRejectedError(
+            BAD_ANGLE,
+            f"Mặt quay quá nghiêng (yaw {quality.yaw:.0f}°, sàn {settings.floor_yaw:.0f}°).",
+        )
+
+    if quality.pitch is not None and abs(quality.pitch) > settings.floor_pitch:
+        raise ImageRejectedError(
+            BAD_ANGLE,
+            f"Mặt ngẩng/cúi quá mức (pitch {quality.pitch:.0f}°, sàn {settings.floor_pitch:.0f}°).",
         )

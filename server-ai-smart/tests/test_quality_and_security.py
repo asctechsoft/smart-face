@@ -64,8 +64,14 @@ def production_settings(**overrides) -> Settings:
     return build_settings(**base)
 
 
-def quality(blur: float = 100.0, brightness: float = 128.0, face_px: int = 200) -> Quality:
-    return Quality(blur=blur, brightness=brightness, yaw=0.0, pitch=0.0, face_px=face_px)
+def quality(
+    blur: float = 100.0,
+    brightness: float = 128.0,
+    face_px: int = 200,
+    yaw: float | None = 0.0,
+    pitch: float | None = 0.0,
+) -> Quality:
+    return Quality(blur=blur, brightness=brightness, yaw=yaw, pitch=pitch, face_px=face_px)
 
 
 NEUTRAL = np.full((300, 300, 3), 128, dtype=np.uint8)
@@ -127,6 +133,43 @@ def test_bao_loi_anh_sang_truoc_loi_nhoe():
             settings_for_test(),
         )
     assert error.value.code == "IMG_TOO_DARK"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("yaw", 70.0), ("yaw", -70.0), ("pitch", 55.0), ("pitch", -55.0)],
+    ids=["quay-phai", "quay-trai", "ngua-len", "cui-xuong"],
+)
+def test_mat_nghieng_qua_san_ky_thuat_bi_tu_choi(field, value):
+    """Vượt sàn thì bước căn chỉnh 112×112 không đưa được mặt về tư thế chuẩn nữa.
+
+    Kiểm cả hai chiều: chỉ chặn một phía là bỏ lọt đúng một nửa số ảnh hỏng.
+    """
+    with pytest.raises(ImageRejectedError) as error:
+        quality_module.enforce_technical_floor(
+            quality(**{field: value}), NEUTRAL, settings_for_test()
+        )
+    assert error.value.code == "BAD_ANGLE"
+
+
+def test_goc_mat_trong_san_ky_thuat_van_di_qua():
+    """Sàn 50° cố ý rộng: luồng đăng ký có hai bước cố ý chụp lệch trục.
+
+    Đặt hẹp là tự chặn `TURN_LEFT`/`TURN_RIGHT` — hai bước bắt buộc của chính mình.
+    Ngưỡng chặt hơn (30°) nằm ở Backend và chỉ áp cho luồng chấm công.
+    """
+    quality_module.enforce_technical_floor(quality(yaw=35.0), NEUTRAL, settings_for_test())
+
+
+def test_khong_do_duoc_tu_the_dau_thi_khong_tu_choi():
+    """`yaw`/`pitch` là `None` khi model không trả được tư thế đầu.
+
+    Từ chối vì thiếu số liệu sẽ biến một thiếu sót cấu hình (chưa nạp module
+    landmark) thành sự cố chấm công toàn hệ thống. Ảnh vẫn có thể dùng tốt.
+    """
+    quality_module.enforce_technical_floor(
+        quality(yaw=None, pitch=None), NEUTRAL, settings_for_test()
+    )
 
 
 def test_do_chat_luong_tren_vung_mat_khong_phai_toan_anh():

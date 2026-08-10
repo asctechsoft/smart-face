@@ -5,7 +5,7 @@
 > Liên quan: [03 — Nghiệp vụ App](./03-nghiep-vu-app-nhan-vien.md) ·
 > [08 — Hợp đồng API](./08-hop-dong-api.md) ·
 > [12 — Một lượt chấm công đi qua những đâu](./12-luong-cham-cong-chi-tiet.md) ·
-> [AiServer/README.md](../AiServer/README.md)
+> [server-ai-smart/README.md](../server-ai-smart/README.md)
 
 Tài liệu `12` mô tả luồng **chấm công hằng ngày** — luồng đó giả định nhân viên
 đã có hồ sơ khuôn mặt trong cơ sở dữ liệu. Tài liệu này mô tả luồng chạy **trước
@@ -276,7 +276,7 @@ POST /v1/biometric/face/enroll/start
 ```
 
 Trả về
-([biometric.service.ts:88-140](../BackEnd/src/modules/biometric/biometric.service.ts#L88-L140)):
+([biometric.service.ts:88-140](../server-backend-smart/src/modules/biometric/biometric.service.ts#L88-L140)):
 
 ```jsonc
 {
@@ -287,7 +287,7 @@ Trả về
     { "order": 1, "angle": "FRONT", "action": null },
     { "order": 2, "angle": "LEFT",  "action": "TURN_LEFT" },
     { "order": 3, "angle": "RIGHT", "action": "TURN_RIGHT" },
-    { "order": 4, "angle": "FRONT", "action": "BLINK" }      // ← NGẪU NHIÊN (AF-05)
+    { "order": 4, "angle": "FRONT", "action": "NOD" }        // ← NGẪU NHIÊN (AF-05)
   ],
   "guidance": { "minFacePixels": 112, "maxFileSizeKb": 800 }
 }
@@ -306,7 +306,10 @@ qua hệ thống, nhờ đồng nghiệp chấm hộ.
 
 Ba bước đầu có hành động cố định vì mục đích là **lấy đủ góc chụp**, không phải
 kiểm tra người thật. Bước 4 mới là bước chống giả mạo: server chọn ngẫu nhiên
-trong 5 hành động (`BLINK`, `TURN_LEFT`, `TURN_RIGHT`, `SMILE`, `NOD`).
+trong 4 hành động (`TURN_LEFT`, `TURN_RIGHT`, `SMILE`, `NOD`).
+
+`BLINK` đã bị loại khỏi danh sách vì không xác minh được từ một ảnh tĩnh — lý do
+đầy đủ ở [06 — AF-05](./06-anti-fraud.md).
 
 Nếu để App chọn, kẻ gian patch app cho luôn chọn hành động đã quay sẵn video.
 
@@ -334,7 +337,7 @@ image     = <JPEG ~400KB>
 > Công thức: [08 mục 1.2.1](./08-hop-dong-api.md#121-x-body-sha256--ràng-buộc-nội-dung-của-request-multipart).
 
 Backend xử lý
-([biometric.service.ts:146-240](../BackEnd/src/modules/biometric/biometric.service.ts#L146-L240)):
+([biometric.service.ts:146-240](../server-backend-smart/src/modules/biometric/biometric.service.ts#L146-L240)):
 
 ```
 1. Lấy phiên từ Redis theo sessionId
@@ -403,7 +406,7 @@ trong công ty. Chạy 4 lần là lãng phí 4 lần.
 ### ⚠ Đánh đổi chưa xử lý xong: embedding chạm đĩa
 
 Redis hiện chạy `--appendonly yes` với volume `redis-data`
-([docker-compose.yml:24-31](../BackEnd/docker-compose.yml#L24-L31)). Nghĩa là
+([docker-compose.yml:24-31](../server-backend-smart/docker-compose.yml#L24-L31)). Nghĩa là
 embedding trong phiên đăng ký **được ghi vào file AOF trên đĩa**, và nằm lại đó
 tới lần rewrite AOF kế tiếp — lâu hơn nhiều so với TTL 5 phút của phiên.
 
@@ -555,7 +558,7 @@ action riêng `BIOMETRIC_FACE_REENROLL`. Đăng ký lần đầu thì không bá
 lần onboarding chỉ tạo nhiễu khiến HR bỏ qua cảnh báo thật.
 
 Bộ test canh giữ chốt này:
-[biometric.service.spec.ts](../BackEnd/src/modules/biometric/biometric.service.spec.ts).
+[biometric.service.spec.ts](../server-backend-smart/src/modules/biometric/biometric.service.spec.ts).
 
 ### Ba đường dẫn tới việc thay hồ sơ khuôn mặt
 

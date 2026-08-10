@@ -339,7 +339,7 @@ sequenceDiagram
         A-->>U: Cảnh báo, chặn theo chính sách (AF-01, AF-14)
     end
     A->>B: GET /attendance/challenge
-    B-->>A: {nonce, serverTime, livenessAction: "BLINK"}
+    B-->>A: {nonce, serverTime, livenessAction: "TURN_LEFT"}
     A->>A: So sánh serverTime vs giờ máy (AF-17)
     A->>U: Mở camera, yêu cầu thực hiện "chớp mắt"
     U->>A: Thực hiện

@@ -110,7 +110,7 @@ Công cụ: k6 hoặc Gatling, chạy trên staging trước mỗi release lớn
 >
 > Bốn tiền tố bốn quy tắc khác nhau — `face-profile/` **không** xoá theo tuổi vì
 > hồ sơ của nhân viên đang làm việc phải sống mãi. Chi tiết:
-> [BackEnd/docs/r2-lifecycle.md](../BackEnd/docs/r2-lifecycle.md).
+> [server-backend-smart/docs/r2-lifecycle.md](../server-backend-smart/docs/r2-lifecycle.md).
 
 ### 3.1. Ước tính tài nguyên
 

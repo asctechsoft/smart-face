@@ -44,7 +44,15 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
     run: jest.fn((handler: (tx: unknown) => unknown) => handler({})),
   };
   const redis = { setJson: jest.fn(), getJson: jest.fn(), del: jest.fn() };
-  const ai = { randomLivenessAction: jest.fn().mockReturnValue('BLINK') };
+  const ai = {
+    randomLivenessAction: jest.fn().mockReturnValue('TURN_LEFT'),
+    enroll: jest.fn(),
+    toAppException: jest.fn(),
+  };
+  const storage = {
+    buildFaceProfileKey: jest.fn().mockReturnValue('cmp_1/emp_1/FRONT.jpg'),
+    upload: jest.fn().mockResolvedValue(undefined),
+  };
   const policy = { getNumber: jest.fn(), getBoolean: jest.fn() };
 
   const ctx: TenantContext = {
@@ -68,7 +76,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
         { provide: RedisService, useValue: redis },
         { provide: AiGatewayService, useValue: ai },
         { provide: PolicyService, useValue: policy },
-        { provide: StorageService, useValue: {} },
+        { provide: StorageService, useValue: storage },
         { provide: AuditService, useValue: { record: jest.fn() } },
         { provide: NotificationService, useValue: { notify: jest.fn(), broadcast: jest.fn() } },
       ],
@@ -117,7 +125,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
       // App không được tự chọn: tự chọn thì kẻ gian patch app để luôn chọn
       // đúng hành động đã quay sẵn video.
       expect(ai.randomLivenessAction).toHaveBeenCalled();
-      expect(steps[3].action).toBe('BLINK');
+      expect(steps[3].action).toBe('TURN_LEFT');
     });
 
     it('trả ngưỡng kích thước mặt của công ty để App hướng dẫn người dùng', async () => {
@@ -290,7 +298,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
           { provide: RedisService, useValue: redis },
           { provide: AiGatewayService, useValue: ai },
           { provide: PolicyService, useValue: policy },
-          { provide: StorageService, useValue: {} },
+          { provide: StorageService, useValue: storage },
           { provide: AuditService, useValue: { record: jest.fn() } },
           { provide: NotificationService, useValue: notifications },
         ],
@@ -315,7 +323,7 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
           { provide: RedisService, useValue: redis },
           { provide: AiGatewayService, useValue: ai },
           { provide: PolicyService, useValue: policy },
-          { provide: StorageService, useValue: {} },
+          { provide: StorageService, useValue: storage },
           { provide: AuditService, useValue: { record: jest.fn() } },
           { provide: NotificationService, useValue: notifications },
         ],
@@ -325,6 +333,106 @@ describe('BiometricService — đăng ký khuôn mặt', () => {
 
       // Báo mỗi lần onboarding chỉ tạo nhiễu khiến HR bỏ qua cảnh báo thật.
       expect(notifications.broadcast).not.toHaveBeenCalled();
+    });
+  });
+
+  // ===========================================================================
+  //  AF-05 — xác minh hành động liveness khi gửi ảnh đăng ký
+  // ===========================================================================
+
+  describe('AF-05 khi submit ảnh đăng ký', () => {
+    const IMAGE = Buffer.from('anh-gia-lap');
+
+    /** Bước 2 (LEFT) có hành động, bước 1 (FRONT) thì không — hai nhánh cần phân biệt. */
+    const session = {
+      sessionId: 'enr_1',
+      employeeId: 'emp_1',
+      companyId: 'cmp_1',
+      steps: [
+        { order: 1, angle: 'FRONT', action: null },
+        { order: 2, angle: 'LEFT', action: 'TURN_LEFT' },
+      ],
+      completedOrders: [],
+      collected: [],
+      modelVersion: null,
+      isReEnrollment: false,
+    };
+
+    const aiResult = (actionVerified: boolean | null) => ({
+      face_found: true,
+      quality: { blur: 140, brightness: 128, yaw: -22, pitch: 1, face_px: 220 },
+      liveness: { score: 0.91, action_verified: actionVerified },
+      embedding: Array.from({ length: 512 }, () => 0.04),
+      model_version: 'buffalo_l@2.1',
+      processing_ms: 180,
+    });
+
+    beforeEach(() => {
+      // Bản sao mới mỗi lần: service ghi `completedOrders` vào phiên, dùng chung
+      // một object thì test sau thấy bước trước đã hoàn tất và rẽ sang nhánh ghi DB.
+      redis.getJson.mockImplementation(() => Promise.resolve(JSON.parse(JSON.stringify(session))));
+      policy.getBoolean.mockResolvedValue(true);
+      // Mặc định chung (112) là ngưỡng pixel; ngưỡng liveness phải trả riêng, nếu
+      // không thì score 0.91 bị so với 112 và mọi ảnh đều rớt trước khi tới AF-05.
+      policy.getNumber.mockImplementation((_company: string, key: string) =>
+        Promise.resolve(key === PolicyKeys.FACE_LIVENESS_THRESHOLD ? 0.7 : 112),
+      );
+    });
+
+    it('CHẶN khi action_verified = null — không đo được nghĩa là CHƯA xác minh', async () => {
+      // Đây là chốt của AF-05. Coi `null` là đạt chính là mở lỗ hổng chấm công hộ
+      // ở đúng chỗ đáng lẽ phải đóng nó lại: kẻ giơ ảnh in lên chỉ cần khiến bộ
+      // đo điểm mốc thất bại là qua được.
+      ai.enroll.mockResolvedValue(aiResult(null));
+
+      await expect(service.submitFaceEnrollment(ctx, 'enr_1', 2, IMAGE)).rejects.toMatchObject({
+        code: 'FACE_LIVENESS_FAILED',
+        details: { reason: 'ACTION_NOT_MEASURABLE' },
+      });
+    });
+
+    it('CHẶN khi action_verified = false — người dùng làm sai hành động', async () => {
+      ai.enroll.mockResolvedValue(aiResult(false));
+
+      await expect(service.submitFaceEnrollment(ctx, 'enr_1', 2, IMAGE)).rejects.toMatchObject({
+        code: 'FACE_LIVENESS_FAILED',
+      });
+    });
+
+    it('phân biệt hai nguyên nhân qua details.reason', async () => {
+      // Lỗi người dùng và lỗi hệ thống phải đọc ra khác nhau: một bên hướng dẫn
+      // người dùng làm lại, một bên là tín hiệu module landmark của AI Server hỏng.
+      ai.enroll.mockResolvedValue(aiResult(false));
+      const wrongAction = await service
+        .submitFaceEnrollment(ctx, 'enr_1', 2, IMAGE)
+        .catch((e) => e);
+
+      ai.enroll.mockResolvedValue(aiResult(null));
+      const notMeasurable = await service
+        .submitFaceEnrollment(ctx, 'enr_1', 2, IMAGE)
+        .catch((e) => e);
+
+      expect(wrongAction.details.reason).not.toBe(notMeasurable.details.reason);
+      expect(notMeasurable.details.reason).toBe('ACTION_NOT_MEASURABLE');
+    });
+
+    it('KHÔNG chặn bước không yêu cầu hành động nào (FRONT)', async () => {
+      // Bước 1 có `action: null` nên AI Server không được hỏi về hành động và trả
+      // `action_verified: null` là ĐÚNG. Siết nhầm ở đây sẽ chặn bước đầu tiên của
+      // mọi lượt đăng ký.
+      ai.enroll.mockResolvedValue(aiResult(null));
+
+      await expect(service.submitFaceEnrollment(ctx, 'enr_1', 1, IMAGE)).resolves.toMatchObject({
+        accepted: true,
+      });
+    });
+
+    it('CHO QUA khi action_verified = true', async () => {
+      ai.enroll.mockResolvedValue(aiResult(true));
+
+      await expect(service.submitFaceEnrollment(ctx, 'enr_1', 2, IMAGE)).resolves.toMatchObject({
+        accepted: true,
+      });
     });
   });
 });

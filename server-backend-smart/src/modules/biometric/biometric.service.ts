@@ -196,9 +196,24 @@ export class BiometricService {
           threshold: livenessThreshold,
         });
       }
-      if (result.liveness?.action_verified === false) {
+      // Chặn cả `null` — xem giải thích ở `attendance.service.ts`. Nhánh này chỉ
+      // chạy khi bước có `action`, nên `null` ở đây luôn là "không đo được", không
+      // phải "không yêu cầu hành động nào".
+      const actionVerified = result.liveness?.action_verified;
+      if (actionVerified !== true) {
+        if (actionVerified === false) {
+          throw new AppException('FACE_LIVENESS_FAILED', {
+            reason: `Chưa thực hiện đúng hành động được yêu cầu (${step.action}).`,
+          });
+        }
+
+        this.logger.warn(
+          `AF-05: AI Server không đo được hành động ${step.action} ở bước ${order} — ` +
+            `từ chối ảnh đăng ký. Kiểm tra module landmark_3d_68 của AI Server.`,
+        );
         throw new AppException('FACE_LIVENESS_FAILED', {
-          reason: `Chưa thực hiện đúng hành động được yêu cầu (${step.action}).`,
+          reason: 'ACTION_NOT_MEASURABLE',
+          requestedAction: step.action,
         });
       }
     }

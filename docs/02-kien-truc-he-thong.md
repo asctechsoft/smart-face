@@ -263,17 +263,19 @@ Chi tiết payload xem [08 — Hợp đồng API](./08-hop-dong-api.md).
 ```
 Ảnh vào
   │
-  ├─ 1. Kiểm tra chất lượng ảnh (blur, độ sáng, kích thước khuôn mặt, góc nghiêng)
-  │      └─ FAIL → trả error code cụ thể (IMG_TOO_DARK, IMG_BLURRY, FACE_TOO_SMALL...)
-  │
-  ├─ 2. Face detection (RetinaFace)
+  ├─ 1. Face detection (RetinaFace/SCRFD)
   │      ├─ 0 khuôn mặt  → FACE_NOT_FOUND
   │      └─ >1 khuôn mặt → MULTIPLE_FACES
   │
+  ├─ 2. Kiểm tra chất lượng TRÊN VÙNG KHUÔN MẶT vừa tìm được
+  │      (blur, độ sáng, tương phản với nền, kích thước, góc nghiêng)
+  │      └─ FAIL → trả error code cụ thể (IMG_TOO_DARK, IMG_BACKLIT,
+  │                IMG_BLURRY, FACE_TOO_SMALL, BAD_ANGLE)
+  │
   ├─ 3. Face alignment (chuẩn hoá 112×112 theo 5 điểm mốc)
   │
-  ├─ 4. Liveness / anti-spoofing (MiniFASNet)
-  │      └─ score < ngưỡng → LIVENESS_FAILED (kèm score để Backend tự quyết)
+  ├─ 4. Liveness / anti-spoofing (MiniFASNetV2, crop scale 2.7, đầu vào 80×80)
+  │      └─ trả score thô, KHÔNG kết luận đạt/không đạt (P3)
   │
   ├─ 5. Embedding (ArcFace, vector 512 chiều, đã L2-normalize)
   │
@@ -281,6 +283,22 @@ Chi tiết payload xem [08 — Hợp đồng API](./08-hop-dong-api.md).
          ├─ verify (1:1): cosine similarity với embedding đã lưu
          └─ identify (1:N): so với ma trận embedding trong scope, trả top-K + margin
 ```
+
+> **Vì sao phát hiện khuôn mặt đi TRƯỚC đo chất lượng.** Chất lượng phải đo trên
+> vùng khuôn mặt, mà muốn có vùng đó thì phải phát hiện xong. Đo trên toàn ảnh là
+> sai lầm phổ biến: người đứng trước cửa sổ sáng chói vẫn cho độ sáng trung bình
+> rất đẹp trong khi mặt tối đen — ảnh không dùng được nhưng vượt qua mọi ngưỡng.
+
+> **`LIVENESS_FAILED` không phải mã lỗi AI Server tự phát ra.** Bước 4 chỉ trả
+> `liveness.score`; ngưỡng nằm ở Backend theo từng công ty (`6.1`, `P3`). Backend
+> so score với `liveness_threshold` rồi mới ném `FACE_LIVENESS_FAILED` cho App.
+> AI Server mà tự kết luận thì đổi ngưỡng cho một công ty sẽ phải deploy lại model.
+
+> **Hai mã lỗi đã khai nhưng chưa cài đặt:** `MASK_DETECTED` và `FACE_OCCLUDED`.
+> Chúng có trong `app/errors.py` và `AI_ERROR_MAP` phía Backend nhưng không chỗ nào
+> phát ra — cần một model phân loại riêng, không suy ra được từ pipeline hiện tại.
+> `errors.py` tách sẵn hai tập `EMITTED_ERROR_CODES` và `DECLARED_ONLY_ERROR_CODES`
+> để phân biệt rõ, tránh người đọc sau tưởng là sót.
 
 ### 6.4. Ngưỡng và cấu hình
 
@@ -292,6 +310,7 @@ Ngưỡng **không hard-code trong AI Server**. Backend lưu ngưỡng theo từ
 | `face_match_threshold` (1:N) | 0.55 + margin ≥ 0.10 | 1:N khắt khe hơn nhiều, xem `00-kien-thuc-nen-tang.md` Phần 2 |
 | `liveness_threshold` | 0.70 | Cân bằng FAR/FRR |
 | `min_face_pixels` | 112 | Nhỏ hơn thì từ chối |
+| `maxYawDegrees` / `maxPitchDegrees` | 30° / 25° | **Chỉ áp cho luồng chấm công.** Luồng đăng ký cố ý chụp hai bước lệch trục (`TURN_LEFT`, `TURN_RIGHT`) — áp vào đó là tự chặn hai bước bắt buộc của chính mình. Sàn kỹ thuật tương ứng ở AI Server rộng hơn nhiều (50°/40°) |
 | `max_processing_ms` | 2000 | Vượt → timeout, trả lỗi rõ ràng |
 
 > **Lưu ý quan trọng:** ngưỡng phải được **hiệu chỉnh bằng dữ liệu thật của khách hàng**, không dùng thẳng giá trị mặc định lên production. Cần một quy trình đo FAR/FRR trước khi go-live.

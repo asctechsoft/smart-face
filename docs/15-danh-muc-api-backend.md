@@ -568,7 +568,7 @@ curl -X POST http://localhost:3000/v1/biometric/face/enroll/start \
       { "order": 1, "pose": "FRONT",       "hint": "Nhìn thẳng vào camera" },
       { "order": 2, "pose": "TURN_LEFT",   "hint": "Quay mặt sang trái" },
       { "order": 3, "pose": "TURN_RIGHT",  "hint": "Quay mặt sang phải" },
-      { "order": 4, "pose": "LIVENESS", "livenessAction": "BLINK", "hint": "Nháy mắt hai lần" }
+      { "order": 4, "pose": "LIVENESS", "livenessAction": "NOD", "hint": "Gật đầu một cái" }
     ]
   } }
 ```
@@ -702,7 +702,7 @@ curl http://localhost:3000/v1/attendance/challenge \
 ```json
 { "success": true,
   "data": { "nonce": "n_7f3a92c1e8b4d6...", "serverTime": "2026-08-09T01:22:03.000Z",
-            "expiresIn": 60, "livenessAction": "BLINK",
+            "expiresIn": 60, "livenessAction": "TURN_LEFT",
             "expectedType": "CHECK_IN", "requiresPhoto": true,
             "workDate": "2026-08-09" } }
 ```

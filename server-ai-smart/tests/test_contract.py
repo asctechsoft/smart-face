@@ -315,7 +315,7 @@ def test_moi_ma_loi_deu_co_trong_bang_anh_xa_cua_backend():
     """Mã lỗi không có trong AI_ERROR_MAP sẽ bị Backend hiểu nhầm thành FACE_NOT_FOUND."""
     from app.errors import KNOWN_ERROR_CODES
 
-    # Sao chép từ BackEnd/src/modules/ai-gateway/ai-gateway.types.ts
+    # Sao chép từ server-backend-smart/src/modules/ai-gateway/ai-gateway.types.ts
     backend_map = {
         "FACE_NOT_FOUND",
         "MULTIPLE_FACES",

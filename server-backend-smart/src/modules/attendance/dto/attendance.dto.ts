@@ -18,6 +18,7 @@ import {
 } from 'class-validator';
 import { AttendanceType, AuthMethod, DailyStatus } from '@prisma/client';
 import { DateRangeQueryDto, PaginationQueryDto } from 'src/common/dto';
+import { LIVENESS_ACTIONS } from 'src/modules/ai-gateway/ai-gateway.types';
 
 /**
  * Toạ độ GPS kèm siêu dữ liệu để đánh giá độ tin cậy.
@@ -408,7 +409,8 @@ export class AttendanceChallengeDto {
   expiresIn!: number;
 
   @ApiProperty({
-    example: 'BLINK',
+    example: 'TURN_LEFT',
+    enum: LIVENESS_ACTIONS,
     description: 'AF-05: hành động liveness do SERVER chọn NGẪU NHIÊN, App không tự quyết',
   })
   livenessAction!: string;

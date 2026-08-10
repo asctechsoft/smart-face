@@ -36,6 +36,14 @@ export const PolicyKeys = {
   FACE_REQUIRE_LIVENESS: 'ai.face.requireLiveness',
   FACE_DUPLICATE_THRESHOLD: 'ai.face.duplicateIdentityThreshold',
   FACE_MAX_ATTEMPTS_PER_HOUR: 'ai.face.maxAttemptsPerHour',
+  /**
+   * Góc mặt tối đa chấp nhận khi CHẤM CÔNG, tính bằng độ.
+   *
+   * ⚠ Chỉ áp cho luồng chấm công, KHÔNG áp cho luồng đăng ký: đăng ký cố ý chụp
+   * hai bước lệch trục (`TURN_LEFT`, `TURN_RIGHT`) để lấy đủ góc mặt.
+   */
+  FACE_MAX_YAW_DEGREES: 'ai.face.maxYawDegrees',
+  FACE_MAX_PITCH_DEGREES: 'ai.face.maxPitchDegrees',
 
   // --- Lệch giờ (AF-18) -----------------------------------------------------
   CLOCK_SKEW_FLAG_SECONDS: 'attendance.clock.skewFlagSeconds',
@@ -189,6 +197,10 @@ export const POLICY_DEFAULTS: Record<string, unknown> = {
   [PolicyKeys.FACE_REQUIRE_LIVENESS]: true,
   [PolicyKeys.FACE_DUPLICATE_THRESHOLD]: 0.6,
   [PolicyKeys.FACE_MAX_ATTEMPTS_PER_HOUR]: 10,
+  // Nới hơn mức "nhìn thẳng" khá nhiều: người chấm công cầm điện thoại một tay,
+  // hiếm khi mặt vuông góc với camera. Siết quá thì chặn đúng người dùng thật.
+  [PolicyKeys.FACE_MAX_YAW_DEGREES]: 30,
+  [PolicyKeys.FACE_MAX_PITCH_DEGREES]: 25,
 
   // Lệch giờ
   [PolicyKeys.CLOCK_SKEW_FLAG_SECONDS]: 120,

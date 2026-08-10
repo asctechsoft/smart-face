@@ -51,7 +51,7 @@ sai, và hàm đó chỉ có trong hệ sinh thái Python.
 **Cái giá phải trả:** thêm một service để vận hành, phải định nghĩa hợp đồng API
 rõ ràng, phải xử lý timeout và circuit breaker phía Backend. Ba việc đó đã làm
 xong: hợp đồng ở `docs/08` mục 8, circuit breaker ở
-`BackEnd/src/modules/ai-gateway/ai-gateway.service.ts`.
+`server-backend-smart/src/modules/ai-gateway/ai-gateway.service.ts`.
 
 ---
 
@@ -97,8 +97,8 @@ Chỗ này hay bị lẫn:
 
 | | Ai giữ | Ví dụ | Đổi được không |
 |---|---|---|---|
-| **Sàn kỹ thuật** | AI Server (`config.py`) | Ảnh tối dưới 35, nhoè dưới 25, mặt nhỏ hơn 48px | Hiếm khi cần đổi |
-| **Ngưỡng nghiệp vụ** | Backend, theo từng công ty | `face_match_threshold`, `liveness_threshold`, `min_face_pixels` | Đổi bất cứ lúc nào |
+| **Sàn kỹ thuật** | AI Server (`config.py`) | Ảnh tối dưới 35, nhoè dưới 25, mặt nhỏ hơn 48px, nghiêng quá 50° | Hiếm khi cần đổi |
+| **Ngưỡng nghiệp vụ** | Backend, theo từng công ty | `face_match_threshold`, `liveness_threshold`, `min_face_pixels`, `maxYawDegrees` | Đổi bất cứ lúc nào |
 
 Sàn kỹ thuật trả lời "ảnh này có dùng được không". Ngưỡng nghiệp vụ trả lời
 "có cho chấm công không". Mặt 60px vượt sàn kỹ thuật nên AI Server trả số liệu
@@ -113,7 +113,7 @@ bình thường, rồi Backend từ chối vì chính sách công ty đòi tối
 Dùng để phát triển App và Backend khi chưa có GPU:
 
 ```bash
-cd AiServer
+cd server-ai-smart
 python -m venv .venv && .venv/Scripts/activate     # Linux/macOS: source .venv/bin/activate
 pip install -r requirements-dev.txt
 
@@ -139,11 +139,49 @@ gần 0** — đừng dùng engine giả để đánh giá độ chính xác.
 
 ```bash
 python scripts/download_models.py
-# Tự tải buffalo_l. Model chống giả mạo phải lấy thủ công — script hướng dẫn.
+# Tự tải buffalo_l. Model chống giả mạo KHÔNG tải tự động được — xem dưới.
 
-# Sửa .env:  ENGINE=insightface
+# Sửa .env:  ENGINE=insightface   ALLOW_MISSING_LIVENESS_MODEL=false
 uvicorn app.main:app --port 8000
+
+curl http://localhost:8000/health
+# → { "status": "healthy", "engine": "insightface",
+#     "liveness_model": "MiniFASNetV2", ... }
 ```
+
+### Lấy model chống giả mạo
+
+Không có bước này thì `/health` trả `degraded` và ảnh in ra cũng chấm công được.
+
+```bash
+git clone --depth 1 \
+    https://github.com/minivision-ai/Silent-Face-Anti-Spoofing /tmp/sfas
+
+python -m venv /tmp/conv
+/tmp/conv/Scripts/pip install torch --index-url https://download.pytorch.org/whl/cpu
+/tmp/conv/Scripts/pip install onnx onnxruntime numpy
+
+/tmp/conv/Scripts/python scripts/convert_anti_spoof.py --repo /tmp/sfas
+```
+
+Ba điều đáng chú ý:
+
+**Vì sao venv riêng.** `torch` cố ý không nằm trong `requirements.txt` — lúc chạy
+AI Server chỉ cần `onnxruntime`, thêm torch là kéo theo ~1 GB cho một việc làm
+đúng một lần.
+
+**Vì sao tự chuyển đổi thay vì tải ONNX dựng sẵn.** Trên mạng có vài bản ONNX của
+model này nhưng không bản nào truy được về checkpoint gốc. Đây là bộ phận quyết
+định ảnh in có chấm công được hay không; tin vào một file lạ ở đúng chỗ này là bỏ
+trống tuyến phòng thủ mà vẫn tưởng đã dựng xong. Script ghi rõ `sha256` của
+checkpoint đã kiểm chứng và cảnh báo nếu nguồn đổi.
+
+**Script tự đối chiếu.** Xuất ONNX thành công KHÔNG có nghĩa là đúng: một toán tử
+bị ánh xạ sai vẫn cho ra file hợp lệ, chỉ khác số. Script chạy 20 mẫu qua cả hai
+đường PyTorch và ONNX, lệch quá `1e-5` thì xoá file và báo lỗi.
+
+`models/` nằm trong `.gitignore` nên file `.onnx` không vào repo — mỗi môi trường
+tự sinh lại bằng lệnh trên.
 
 ### Docker
 
@@ -154,11 +192,11 @@ docker compose --profile gpu up        # GPU, cần nvidia-container-toolkit
 
 ### Nối với Backend
 
-Trong `BackEnd/.env`:
+Trong `server-backend-smart/.env`:
 
 ```
 AI_SERVER_URL=http://localhost:8000
-AI_SERVER_INTERNAL_KEY=<phải trùng với AI_SERVER_INTERNAL_KEY trong AiServer/.env>
+AI_SERVER_INTERNAL_KEY=<phải trùng với AI_SERVER_INTERNAL_KEY trong server-ai-smart/.env>
 AI_SERVER_TIMEOUT_MS=2000
 ```
 
@@ -167,7 +205,7 @@ Backend gọi sang bằng `AiGatewayService`, đã có sẵn circuit breaker.
 ### Chạy test
 
 ```bash
-pytest -q          # 69 test, chạy bằng engine giả, không cần model
+pytest -q          # 82 test, chạy bằng engine giả, không cần model
 ruff check .
 ```
 
@@ -176,7 +214,7 @@ ruff check .
 ## 4. Cấu trúc thư mục
 
 ```
-AiServer/
+server-ai-smart/
 ├── app/
 │   ├── main.py            Khởi tạo FastAPI, nạp model lúc khởi động
 │   ├── config.py          Cấu hình + chốt chặn không cho cấu hình sai lên production
@@ -196,8 +234,10 @@ AiServer/
 │   │   ├── matcher.py     Cosine 1:1 và 1:N kèm margin
 │   │   └── index.py       Chỉ mục 1:N trong RAM, chia theo company_id
 │   └── routers/           Một file một nhóm endpoint
-├── scripts/download_models.py
-├── tests/                 69 test, chạy được không cần model
+├── scripts/
+│   ├── download_models.py      Tải buffalo_l, kiểm tra model chống giả mạo
+│   └── convert_anti_spoof.py   MiniFASNet .pth → ONNX (cần venv riêng có torch)
+├── tests/                 82 test, chạy được không cần model
 ├── Dockerfile             Build arg RUNTIME=cpu|gpu
 └── docker-compose.yml
 ```
@@ -210,20 +250,20 @@ Tất cả endpoint nghiệp vụ đều cần header `X-Internal-Key`. `/health
 `/metrics` thì không — probe của Kubernetes và scraper của Prometheus không mang
 được khoá đó, và hai endpoint này không lộ dữ liệu cá nhân nào.
 
-| Endpoint | Mục đích | Ai gọi |
+| Endpoint | Mục đích | Backend đã nối chưa |
 |---|---|---|
-| `POST /v1/enroll` | Trích embedding từ ảnh đăng ký | `biometric.service.ts` |
-| `POST /v1/enroll/multipart` | Như trên, dạng multipart | (dự phòng, xem ghi chú dưới) |
-| `POST /v1/verify` | So khớp 1:1 — chấm công qua App | `attendance.service.ts` |
-| `POST /v1/identify` | So khớp 1:N — kiosk, kiểm tra trùng danh tính | `biometric.service.ts` |
-| `POST /v1/liveness` | Chỉ kiểm tra người thật | App sàng lọc trước |
-| `POST /v1/batch/audit` | Đối chiếu hàng loạt hằng đêm (AF-08) | `ai-batch.processor.ts` |
-| `POST /v1/index/upsert` · `remove` · `GET stats` | Nạp chỉ mục 1:N | (giai đoạn kiosk) |
-| `GET /health` · `GET /metrics` | Giám sát | K8s, Prometheus |
+| `POST /v1/enroll` | Trích embedding từ ảnh đăng ký | ✅ `biometric.service.ts` → `AiGatewayService.enroll()` |
+| `POST /v1/enroll/multipart` | Như trên, dạng multipart | ➖ dự phòng, xem ghi chú dưới |
+| `POST /v1/verify` | So khớp 1:1 — chấm công qua App | ✅ `attendance.service.ts` → `AiGatewayService.verify()` |
+| `POST /v1/identify` | So khớp 1:N — kiosk, kiểm tra trùng danh tính | ⚠ `AiGatewayService.identify()` đã có, **chưa ai gọi** |
+| `POST /v1/liveness` | Chỉ kiểm tra người thật | ❌ chưa có method ở `AiGatewayService` |
+| `POST /v1/batch/audit` | Đối chiếu hàng loạt hằng đêm (AF-08) | ❌ chưa nối — xem ghi chú 3 |
+| `POST /v1/index/upsert` · `remove` · `GET stats` | Nạp chỉ mục 1:N | ❌ chưa nối, giai đoạn kiosk |
+| `GET /health` · `GET /metrics` | Giám sát | ✅ `admin.service.ts`, K8s, Prometheus |
 
 Tài liệu tương tác: `http://localhost:8000/docs`.
 
-### Ghi chú: hai chỗ lệch so với tài liệu
+### Ghi chú: ba chỗ lệch so với tài liệu
 
 **1. Định dạng của `/v1/enroll`.** `docs/08` mô tả `multipart/form-data`, nhưng
 `AiGatewayService.enroll()` phía Backend lại gửi JSON `image_base64`. Đây là
@@ -240,8 +280,32 @@ sở dữ liệu, nó không biết `emp_1` có embedding nào. Hai đường đ
 - **`scope_ids` + `namespace`** — dùng chỉ mục nạp sẵn qua `/v1/index/*`. Đúng
   như tài liệu mô tả, dành cho kiosk khi tập lớn.
 
-Backend hiện dùng đường thứ nhất. `namespace` **bắt buộc** khi dùng `scope_ids`,
-và phải là `company_id` — xem mục 6 dưới đây.
+`AiGatewayService.identify()` nhận cả hai đường qua tham số `scope`. `namespace`
+**bắt buộc** khi dùng `scope_ids`, và phải là `company_id` — xem mục 6 dưới đây.
+
+Chưa có nơi nào gọi method này. Kiểm tra trùng danh tính (BR-10) hiện làm hoàn
+toàn ở Backend: `biometric.service.ts::assertNoDuplicateIdentity()` tự tính
+cosine trong TypeScript trên các embedding đã lưu, không đi qua AI Server. Cách
+đó chạy đúng khi công ty còn ít nhân viên; khi tập lớn thì chuyển sang gọi
+`/v1/identify` với `candidates` sẽ nhanh hơn nhiều vì ở đây so khớp bằng một
+phép nhân ma trận thay vì vòng lặp Node.
+
+**3. `/v1/batch/audit` chưa được nối.** `ai-batch.processor.ts` phía Backend
+hiện KHÔNG gọi AI Server: nó so `matchScore` đã lưu sẵn của mỗi lượt chấm công
+với trung bình lịch sử 30 ngày của chính nhân viên đó, thấp hơn 20% thì gắn cờ.
+
+Hai cách phát hiện khác nhau, không thay thế nhau:
+
+| | Cách đang chạy | `/v1/batch/audit` |
+|---|---|---|
+| Dữ liệu vào | Điểm đã lưu lúc chấm công | Chấm lại từ ẢNH GỐC |
+| Bắt lượt gian lận lọt ngưỡng | Chỉ khi điểm tụt so với chính người đó | Có, chấm lại độc lập |
+| Bắt model suy giảm | Không | Có |
+| Chi phí | Vài truy vấn SQL | Một lượt suy luận cho mỗi bản ghi lấy mẫu |
+
+Cách đang chạy không bắt được trường hợp model suy giảm đồng loạt (mọi điểm cùng
+tụt thì trung bình lịch sử cũng tụt theo, không có gì "bất thường" để so). Đó là
+đúng một trong hai mục đích mà AF-08 đặt ra cho endpoint này.
 
 ---
 
@@ -273,6 +337,13 @@ tìm được kết quả xuyên namespace.
 
 Trả `true` cho thứ không đo được chính là tự tay mở lỗ hổng chấm công hộ ở đúng
 chỗ đáng lẽ phải đóng nó lại.
+
+Phía Backend cưỡng chế điều này ở `attendance.service.ts` và `biometric.service.ts`:
+điều kiện là `action_verified !== true`, **không phải** `=== false`. Hai nhánh trả
+`details.reason` khác nhau — `null` trả `ACTION_NOT_MEASURABLE` kèm `logger.warn`,
+vì đó là dấu hiệu module `landmark_3d_68` hỏng chứ không phải người dùng làm sai.
+Không tách ra thì sự cố model hiện lên dưới dạng "cả công ty đột nhiên không chấm
+công được" mà không ai biết vì sao.
 
 ### Ảnh hỏng trả 200 kèm `error_code`, không trả 5xx
 
@@ -329,10 +400,17 @@ mỗi worker nạp một bản model riêng vào RAM.
 | `ai_match_score` | Phân bố lệch dần theo thời gian = model đang suy giảm |
 | `ai_concurrent_inferences` | Chạm trần `MAX_CONCURRENCY` liên tục = cần thêm replica |
 | `ai_model_info` | Xác nhận đúng version model đang chạy |
+| `ai_liveness_score` | Phân bố dồn về 0 = tiền xử lý sai, xem cảnh báo dưới |
 
 `GET /health` trả `degraded` khi đang chạy engine giả hoặc chưa có model chống
 giả mạo. **Nên đặt cảnh báo cho trạng thái này** — nó nghĩa là hệ thống đang
 chạy mà không có tuyến phòng thủ chống chấm công hộ.
+
+> ⚠ **`ai_liveness_score` dồn hết về ~0.005 là dấu hiệu tiền xử lý sai**, không
+> phải "ai cũng dùng ảnh giả". MiniFASNet chỉ đúng khi nhận đúng khung ảnh và
+> đúng thang giá trị nó được huấn luyện cùng; lệch đi thì nó không báo lỗi, chỉ
+> trả cùng một con số vô nghĩa cho mọi tấm ảnh. Xem chú thích trong
+> `core/liveness.py` và bộ test `tests/test_liveness_preprocessing.py`.
 
 ### Chốt chặn cấu hình production
 
@@ -352,13 +430,14 @@ rằng ai cũng chấm công được bằng ảnh in.
 
 | # | Việc | Vì sao quan trọng |
 |---|---|---|
-| 1 | **Lấy model chống giả mạo thật** | Chưa có thì `ALLOW_MISSING_LIVENESS_MODEL=true` chỉ chạy được ước lượng thô — ảnh in chất lượng cao qua được dễ dàng. `scripts/download_models.py` có hướng dẫn nguồn |
-| 2 | **Hiệu chỉnh ngưỡng bằng dữ liệu thật** | 0.45 và 0.70 chỉ là điểm khởi đầu. `docs/02` mục 6.4 nói rõ phải đo FAR/FRR trên dữ liệu khách hàng trước khi go-live. Ngưỡng đặt ở Backend nên việc này không cần đụng tới AI Server |
-| 3 | **Xác minh `BLINK`/`NOD` bằng chuỗi khung hình** | Một ảnh tĩnh chỉ trả lời "mắt có đang nhắm không", không trả lời được "có vừa chớp không". `verify_action_sequence` trong `landmarks.py` đã viết sẵn và có test, nhưng App phải gửi nhiều khung và hợp đồng API phải mở rộng. Trong lúc chờ, cân nhắc thu hẹp `LIVENESS_ACTIONS` phía Backend về `TURN_LEFT`/`TURN_RIGHT`/`NOD` — ba hành động này xác minh được từ tư thế đầu |
+| 1 | ~~**Lấy model chống giả mạo thật**~~ **XONG** | MiniFASNetV2 (Apache-2.0) đã chuyển sang ONNX bằng `scripts/convert_anti_spoof.py`. `/health` trả `healthy`. Mỗi môi trường phải tự chạy lệnh đó vì `models/` không vào git |
+| 2 | **Hiệu chỉnh ngưỡng bằng dữ liệu thật** | 0.45 và 0.70 chỉ là điểm khởi đầu. `docs/02` mục 6.4 nói rõ phải đo FAR/FRR trên dữ liệu khách hàng trước khi go-live. Ngưỡng đặt ở Backend nên việc này không cần đụng tới AI Server. **Riêng với chống giả mạo, việc này càng cần**: model huấn luyện trên dữ liệu công khai, chủ yếu không phải người Việt |
+| 3 | **Xác minh `BLINK` bằng chuỗi khung hình** | Một ảnh tĩnh chỉ trả lời "mắt có đang nhắm không", không trả lời được "có vừa chớp không". `verify_action_sequence` trong `landmarks.py` đã viết sẵn và có test, nhưng App phải gửi nhiều khung và hợp đồng API phải mở rộng. **Đã xử lý tạm:** `LIVENESS_ACTIONS` phía Backend đã bỏ `BLINK`, còn `TURN_LEFT`/`TURN_RIGHT`/`NOD`/`SMILE`. AI Server vẫn nhận `BLINK` như giá trị hợp lệ để không phải sửa hợp đồng khi bật lại |
 | 4 | **Kiểm chứng chỉ số điểm mốc với đúng phiên bản model** | `landmarks.py` dùng bố cục iBUG-68, là quy ước ổn định. Vẫn nên chạy thử trên vài chục ảnh thật để xác nhận `landmark_3d_68` của bản buffalo_l đang dùng trả đúng bố cục đó |
 | 5 | **Đo lại sau mỗi lần nâng cấp thư viện** | `requirements.txt` ghim phiên bản có chủ đích. Model nhận diện rất nhạy với thay đổi onnxruntime/numpy — nâng cấp phải đo lại FAR/FRR |
 | 6 | **Đồng bộ chỉ mục 1:N** | Chỉ cần khi làm kiosk. Backend phải đẩy embedding lên `/v1/index/upsert` khi có người đăng ký/huỷ khuôn mặt, và nạp lại toàn bộ khi AI Server khởi động lại |
 | 7 | **Cân nhắc TensorRT nếu chạy GPU** | Nhanh hơn ONNXRuntime-CUDA đáng kể, nhưng phải biên dịch engine riêng cho từng đời GPU |
+| 8 | **Phát hiện khẩu trang và che mặt** | `MASK_DETECTED` và `FACE_OCCLUDED` đã khai trong `errors.py` (nhóm `DECLARED_ONLY_ERROR_CODES`) và Backend ánh xạ được, nhưng chưa chỗ nào phát ra — cần một model phân loại riêng, không suy ra được từ pipeline hiện tại. Trong lúc chờ, khẩu trang biểu hiện gián tiếp qua điểm tương đồng thấp và bị `FACE_NOT_MATCHED` chặn, chỉ là người dùng không được hướng dẫn đúng |
 
-Ba mục đầu là điều kiện cần trước khi cho người thật dùng. Bốn mục sau tuỳ quy
-mô triển khai.
+Mục 1 đã xong. Mục 2 và 3 là điều kiện cần còn lại trước khi cho người thật
+dùng; năm mục sau tuỳ quy mô triển khai.

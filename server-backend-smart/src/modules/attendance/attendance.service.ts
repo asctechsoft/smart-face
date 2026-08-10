@@ -36,6 +36,7 @@ import { StorageService } from 'src/infra/storage/storage.service';
 import { JOBS, QUEUES } from 'src/infra/queue/queue.constants';
 import { AiGatewayService } from '../ai-gateway/ai-gateway.service';
 import type { LivenessAction } from '../ai-gateway/ai-gateway.types';
+import { checkFaceAngle } from '../ai-gateway/face-angle.util';
 import { FraudService } from '../fraud/fraud.service';
 import { RealtimeGateway } from '../notification/realtime.gateway';
 import {
@@ -418,10 +419,12 @@ export class AttendanceService {
     }
 
     // --- Backend TỰ so ngưỡng và TỰ quyết định --------------------------------
-    const [matchThreshold, livenessThreshold, minFacePixels] = await Promise.all([
+    const [matchThreshold, livenessThreshold, minFacePixels, maxYaw, maxPitch] = await Promise.all([
       this.policy.getNumber(companyId, PolicyKeys.FACE_MATCH_THRESHOLD),
       this.policy.getNumber(companyId, PolicyKeys.FACE_LIVENESS_THRESHOLD),
       this.policy.getNumber(companyId, PolicyKeys.FACE_MIN_PIXELS),
+      this.policy.getNumber(companyId, PolicyKeys.FACE_MAX_YAW_DEGREES),
+      this.policy.getNumber(companyId, PolicyKeys.FACE_MAX_PITCH_DEGREES),
     ]);
 
     if (result.quality && result.quality.face_px < minFacePixels) {
@@ -429,6 +432,14 @@ export class AttendanceService {
         facePx: result.quality.face_px,
         minFacePixels,
       });
+    }
+
+    // Mặt nghiêng làm điểm tương đồng tụt xuống, dẫn tới từ chối oan mà người dùng
+    // không hiểu vì sao. Báo `FACE_BAD_ANGLE` cho họ biết phải nhìn thẳng lại, thay
+    // vì để họ thử lại nhiều lần rồi nhận `FACE_NOT_MATCHED`.
+    const badAngle = checkFaceAngle(result.quality, maxYaw, maxPitch);
+    if (badAngle) {
+      throw new AppException('FACE_BAD_ANGLE', { ...badAngle });
     }
 
     if (requireLiveness) {
@@ -440,9 +451,28 @@ export class AttendanceService {
         });
       }
       // AF-05: phải thực hiện ĐÚNG hành động server yêu cầu.
-      if (result.liveness?.action_verified === false) {
+      //
+      // Chặn cả `null`, không chỉ `false`. `null` nghĩa là AI Server KHÔNG ĐO ĐƯỢC,
+      // và "không đo được" phải xử như "chưa xác minh" — coi nó là đạt chính là tự
+      // tay mở lỗ hổng chấm công hộ ở đúng chỗ AF-05 sinh ra để đóng lại.
+      const actionVerified = result.liveness?.action_verified;
+      if (actionVerified !== true) {
+        if (actionVerified === false) {
+          throw new AppException('FACE_LIVENESS_FAILED', {
+            reason: `Chưa thực hiện đúng hành động được yêu cầu (${livenessAction}).`,
+            requestedAction: livenessAction,
+          });
+        }
+
+        // Người dùng không làm gì sai — AI Server không đo được. Thường là module
+        // landmark hỏng hoặc chưa nạp. Không log thì sự cố này hiện ra dưới dạng
+        // "cả công ty đột nhiên không chấm công được" mà không ai biết vì sao.
+        this.logger.warn(
+          `AF-05: AI Server không đo được hành động ${livenessAction} — từ chối lượt chấm công. ` +
+            `Kiểm tra module landmark_3d_68 của AI Server.`,
+        );
         throw new AppException('FACE_LIVENESS_FAILED', {
-          reason: `Chưa thực hiện đúng hành động được yêu cầu (${livenessAction}).`,
+          reason: 'ACTION_NOT_MEASURABLE',
           requestedAction: livenessAction,
         });
       }

@@ -242,7 +242,7 @@ SAI (dễ bị phá):
   → Kẻ gian quay sẵn 1 video có chớp mắt, phát lại mỗi lần chấm công
 
 ĐÚNG:
-  1. Backend sinh challenge NGẪU NHIÊN: BLINK | TURN_LEFT | TURN_RIGHT | SMILE | NOD
+  1. Backend sinh challenge NGẪU NHIÊN: TURN_LEFT | TURN_RIGHT | SMILE | NOD
   2. Gửi kèm nonce, TTL ngắn (30 giây)
   3. App hiển thị yêu cầu, quay video ngắn
   4. AI Server xác minh ĐÚNG hành động được yêu cầu đã được thực hiện
@@ -251,6 +251,16 @@ SAI (dễ bị phá):
 Lưu ý: challenge do SERVER chọn, App không tự quyết (nếu App tự chọn thì
        kẻ tấn công patch app để luôn chọn hành động đã quay sẵn)
 ```
+
+> **`BLINK` tạm thời KHÔNG nằm trong danh sách.** Hợp đồng API hiện gửi lên một ảnh
+> tĩnh, mà chớp mắt về bản chất là chuyển động — từ một khung hình chỉ trả lời được
+> "hai mắt có đang nhắm không", không trả lời được "có vừa chớp không". Giữ nó lại
+> thì người dùng bình thường (mắt mở lúc chụp) bị từ chối oan, còn kẻ giơ ảnh in
+> người đang nhắm mắt lại qua được. Bốn hành động còn lại xác minh được từ tư thế
+> đầu và tỷ lệ miệng.
+>
+> `BLINK` quay lại khi App gửi chuỗi khung hình — `verify_action_sequence` phía AI
+> Server đã viết sẵn và có test, chỉ chờ hợp đồng API mở rộng.
 
 #### `AF-06` — Anti-spoofing phân tích ảnh
 

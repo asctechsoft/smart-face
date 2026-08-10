@@ -80,6 +80,18 @@ class Settings(BaseSettings):
 
     floor_detection_score: float = 0.5
 
+    floor_yaw: float = 50.0
+    """Sàn cứng cho góc quay trái/phải. Vượt mức này thì phép căn chỉnh 112×112
+    không còn đưa được mặt về tư thế chuẩn, embedding trích ra là rác.
+
+    Cố tình đặt RỘNG. Luồng đăng ký khuôn mặt có hai bước cố ý chụp lệch trục
+    (`TURN_LEFT`, `TURN_RIGHT`) — đặt sàn hẹp là tự chặn đúng hai bước bắt buộc của
+    chính mình. Ngưỡng nghiệp vụ chặt hơn (`ai.face.maxYawDegrees`, mặc định 30°) do
+    Backend áp, và chỉ áp cho luồng chấm công."""
+
+    floor_pitch: float = 40.0
+    """Sàn cứng cho góc ngẩng/cúi. Cùng lý do như `floor_yaw`."""
+
     # --- Xác minh hành động liveness từ tư thế đầu --------------------------
     pose_yaw_threshold: float = 18.0
     pose_pitch_threshold: float = 14.0

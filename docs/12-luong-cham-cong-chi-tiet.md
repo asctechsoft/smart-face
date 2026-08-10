@@ -6,7 +6,7 @@
 > Liên quan: [03 — Nghiệp vụ App](./03-nghiep-vu-app-nhan-vien.md) ·
 > [08 — Hợp đồng API](./08-hop-dong-api.md) ·
 > [11 — Cơ chế mặt và vân tay](./11-cach-hoat-dong-cham-cong-mat-va-van-tay.md) ·
-> [AiServer/README.md](../AiServer/README.md)
+> [server-ai-smart/README.md](../server-ai-smart/README.md)
 >
 > 👉 Tài liệu này giả định nhân viên **đã có hồ sơ khuôn mặt** trong DB. Luồng
 > chạy trước đó một lần duy nhất — từ lúc được cấp tài khoản tới lúc đăng ký
@@ -78,14 +78,14 @@ Authorization: Bearer <accessToken>
 ```
 
 App **không gửi gì** ngoài token. Backend trả về
-([attendance.service.ts:85-111](../BackEnd/src/modules/attendance/attendance.service.ts#L85-L111)):
+([attendance.service.ts:85-111](../server-backend-smart/src/modules/attendance/attendance.service.ts#L85-L111)):
 
 ```jsonc
 {
   "nonce": "cm3x9k2-lz8f4a-9f2ad1b3c7",
   "serverTime": "2026-08-05T01:02:11.431Z",
   "expiresIn": 60,
-  "livenessAction": "BLINK",
+  "livenessAction": "TURN_LEFT",
   "expectedType": "CHECK_IN",
   "requiresPhoto": true,
   "workDate": "2026-08-05"
@@ -137,7 +137,7 @@ máy người dùng đều có thể bị sửa. Kết luận do thiết bị c�
 đưa ra thì không có giá trị kiểm tra.
 
 Giới hạn kích thước ảnh: **5 MB**, cưỡng chế ở tầng interceptor
-([attendance.controller.ts:29](../BackEnd/src/modules/attendance/attendance.controller.ts#L29)).
+([attendance.controller.ts:29](../server-backend-smart/src/modules/attendance/attendance.controller.ts#L29)).
 
 ---
 
@@ -165,7 +165,7 @@ X-Body-Sha256: <băm nội dung ảnh + các trường form>
 | `branchId` | string | *(tuỳ chọn, bỏ trống = tự chọn chi nhánh gần nhất)* |
 
 Định nghĩa đầy đủ:
-[dto/attendance.dto.ts:110-158](../BackEnd/src/modules/attendance/dto/attendance.dto.ts#L110-L158).
+[dto/attendance.dto.ts:110-158](../server-backend-smart/src/modules/attendance/dto/attendance.dto.ts#L110-L158).
 
 ### Ba header không phải tuỳ chọn
 
@@ -201,14 +201,14 @@ Có **hai lớp** bảo vệ điều này:
 
 > Thấy trường như vậy xuất hiện trong DTO ⇒ lỗi nghiêm trọng, sửa ngay.
 > Cảnh báo này được ghi thẳng vào code tại
-> [dto/attendance.dto.ts:110-116](../BackEnd/src/modules/attendance/dto/attendance.dto.ts#L110-L116).
+> [dto/attendance.dto.ts:110-116](../server-backend-smart/src/modules/attendance/dto/attendance.dto.ts#L110-L116).
 
 ---
 
 ## 5. Chặng ④ — Mười chốt kiểm trước khi động tới AI
 
 Theo đúng thứ tự trong
-[attendance.service.ts:117-274](../BackEnd/src/modules/attendance/attendance.service.ts#L117-L274):
+[attendance.service.ts:117-274](../server-backend-smart/src/modules/attendance/attendance.service.ts#L117-L274):
 
 | # | Chốt | Kiểm gì | Trượt → mã lỗi |
 |:--:|---|---|---|
@@ -373,7 +373,7 @@ BSSID bắt được. Ngược lại, app bị sửa khai BSSID giả thì chỉ
 
 Chú ý sự tách rời này. Chốt 10 chỉ **tính** khoảng cách; việc **chặn** xảy ra
 sau khi đã gọi AI Server
-([attendance.service.ts:195-200](../BackEnd/src/modules/attendance/attendance.service.ts#L195-L200)).
+([attendance.service.ts:195-200](../server-backend-smart/src/modules/attendance/attendance.service.ts#L195-L200)).
 
 | Chính sách công ty | Ngoài vùng thì |
 |---|---|
@@ -396,7 +396,7 @@ vẫn tốn một lượt suy luận GPU**.
 ## 6. Chặng ⑤ — Backend gọi AI Server
 
 Trước khi gọi, Backend lấy embedding đã đăng ký của **chính nhân viên này**
-([attendance.service.ts:369-387](../BackEnd/src/modules/attendance/attendance.service.ts#L369-L387)):
+([attendance.service.ts:369-387](../server-backend-smart/src/modules/attendance/attendance.service.ts#L369-L387)):
 
 ```sql
 SELECT embedding_raw FROM face_profile
@@ -413,7 +413,7 @@ X-Internal-Key: <khoá nội bộ>
   "image_base64": "/9j/4AAQSkZJRgABA...",
   "embeddings": [[0.0123, -0.0456, ...], [...], [...], [...]],
   "require_liveness": true,
-  "liveness_action": "BLINK"
+  "liveness_action": "TURN_LEFT"
 }
 ```
 
@@ -437,7 +437,7 @@ AI Server **không biết** con số `0.45` tồn tại trên đời. Xem
 
 ## 7. Chặng ⑥ — Pipeline của AI Server
 
-[AiServer/app/core/engine.py](../AiServer/app/core/engine.py), theo đúng pipeline
+[server-ai-smart/app/core/engine.py](../server-ai-smart/app/core/engine.py), theo đúng pipeline
 `docs/02` mục 6.3:
 
 ```
@@ -461,8 +461,8 @@ AI Server **không biết** con số `0.45` tồn tại trên đời. Xem
   ├─5─ CHỐNG GIẢ MẠO (MiniFASNet)                    [liveness.py]
   │      cắt rộng gấp 2.7 lần khung mặt
   │      → score = 0.88
-  │      + xác minh hành động BLINK từ điểm mốc mắt
-  │      → action_verified = true
+  │      + xác minh hành động TURN_LEFT từ góc yaw của tư thế đầu
+  │      → action_verified = true   (null = KHÔNG đo được → Backend TỪ CHỐI)
   │
   ├─6─ TRÍCH EMBEDDING (ArcFace) → 512 số, đã L2-normalize
   │
@@ -511,7 +511,7 @@ bình thường, rồi Backend từ chối vì chính sách công ty đòi tối
 **Không có trường nào mang nghĩa "đạt" hay "không đạt".** Chỉ có số liệu. Nếu
 thấy `accepted: true` trong phản hồi thì ranh giới kiến trúc đã bị phá — có một
 test canh giữ điều này
-(`AiServer/tests/test_contract.py::test_khong_endpoint_nao_tra_ve_quyet_dinh_nghiep_vu`).
+(`server-ai-smart/tests/test_contract.py::test_khong_endpoint_nao_tra_ve_quyet_dinh_nghiep_vu`).
 
 ### `action_verified` có ba giá trị, không phải hai
 
@@ -529,7 +529,7 @@ chỗ đáng lẽ phải đóng nó lại.
 ## 8. Chặng ⑦ — Backend tự so ngưỡng
 
 Đây là chỗ **ra quyết định thật sự**
-([attendance.service.ts:393-428](../BackEnd/src/modules/attendance/attendance.service.ts#L393-L428)):
+([attendance.service.ts:393-428](../server-backend-smart/src/modules/attendance/attendance.service.ts#L393-L428)):
 
 ```ts
 // Lấy ngưỡng CỦA CÔNG TY NÀY từ DB
@@ -555,7 +555,7 @@ giống    0.7213 ≥ 0.45  ✓   →  QUA
 ```
 
 Giá trị mặc định ở
-[policy.constants.ts:131-133](../BackEnd/src/modules/policy/policy.constants.ts#L131-L133).
+[policy.constants.ts:131-133](../server-backend-smart/src/modules/policy/policy.constants.ts#L131-L133).
 Công ty B có thể đặt `0.55` thay vì `0.45`:
 
 ```
@@ -591,7 +591,7 @@ thi, và cả `matchScore` vừa nhận:
 | 80+ | `REJECTED` | Chặn, trả `FRAUD_RISK_TOO_HIGH` |
 
 Ngưỡng ở
-[policy.constants.ts:160-162](../BackEnd/src/modules/policy/policy.constants.ts#L160-L162),
+[policy.constants.ts:160-162](../server-backend-smart/src/modules/policy/policy.constants.ts#L160-L162),
 đổi được theo từng công ty. Cả bốn mức đều **ghi cờ lại** — kể cả trường hợp
 `REJECTED` không tạo bản ghi chấm công, cờ vẫn được lưu để lại dấu vết.
 
@@ -606,7 +606,7 @@ Dòng đó lưu đầy đủ dấu vết AI:
 ```
 matchScore        0.7213
 livenessScore     0.88
-livenessChallenge BLINK
+livenessChallenge TURN_LEFT
 imageQuality      {"blur":142.3,"brightness":128,"yaw":-4.2,"face_px":218}
 aiModelVersion    buffalo_l@2.1
 aiProcessingMs    176
@@ -661,7 +661,7 @@ Nonce cũng vậy: phải phát trước mới chống được replay.
 ### AI Server chết thì sao?
 
 `AiGatewayService` có **circuit breaker**
-([ai-gateway.service.ts](../BackEnd/src/modules/ai-gateway/ai-gateway.service.ts)):
+([ai-gateway.service.ts](../server-backend-smart/src/modules/ai-gateway/ai-gateway.service.ts)):
 
 ```
 5 lỗi liên tiếp  →  mở mạch 30 giây
@@ -727,7 +727,7 @@ mà kể cả hệ điều hành cũng không đọc được.
 | Hoạt động khi AI Server chết | Không | **Có** |
 
 Backend verify bằng `crypto.createVerify('SHA256')` với public key đã đăng ký
-([attendance.service.ts:446-480](../BackEnd/src/modules/attendance/attendance.service.ts#L446-L480)).
+([attendance.service.ts:446-480](../server-backend-smart/src/modules/attendance/attendance.service.ts#L446-L480)).
 
 Nguyên tắc `BR-02` vẫn giữ nguyên: server **không nhận** `{fingerprintVerified:
 true}`. Nó nhận chữ ký và tự kiểm chứng. Ký được nghĩa là vân tay **đã** được

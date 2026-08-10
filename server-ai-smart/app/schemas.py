@@ -1,6 +1,7 @@
 """Hợp đồng dữ liệu với Backend — docs/08 mục 8.
 
-⚠ Mọi thay đổi ở đây phải khớp với `BackEnd/src/modules/ai-gateway/ai-gateway.types.ts`.
+⚠ Mọi thay đổi ở đây phải khớp với
+`server-backend-smart/src/modules/ai-gateway/ai-gateway.types.ts`.
 
 ⚠ NGUYÊN TẮC P3: không có trường nào tên `accepted`, `passed`, `verified` ở cấp
 kết quả nghiệp vụ. AI Server trả SỐ, Backend so ngưỡng và quyết định. Nếu ai đó

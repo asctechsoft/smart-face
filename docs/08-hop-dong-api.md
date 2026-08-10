@@ -478,7 +478,7 @@ Bắt đầu phiên đăng ký khuôn mặt, nhận danh sách bước cần th�
       { "order": 1, "angle": "FRONT",      "action": null },
       { "order": 2, "angle": "LEFT",       "action": "TURN_LEFT" },
       { "order": 3, "angle": "RIGHT",      "action": "TURN_RIGHT" },
-      { "order": 4, "angle": "FRONT",      "action": "BLINK" }     // ← ngẫu nhiên (AF-05)
+      { "order": 4, "angle": "FRONT",      "action": "NOD" }       // ← ngẫu nhiên (AF-05)
     ],
     "guidance": { "minFacePixels": 112, "maxFileSizeKb": 800 }
   }
@@ -564,7 +564,8 @@ Lấy nonce + thao tác liveness ngẫu nhiên + giờ server. **Bắt buộc g�
     "nonce": "9f2a...",
     "serverTime": "2026-08-03T01:05:12.431Z",   // ← App đối chiếu giờ máy (AF-18)
     "expiresIn": 60,
-    "livenessAction": "BLINK",                   // ← NGẪU NHIÊN, do SERVER chọn (AF-05)
+    "livenessAction": "TURN_LEFT",               // ← NGẪU NHIÊN, do SERVER chọn (AF-05)
+                                                 //   TURN_LEFT | TURN_RIGHT | SMILE | NOD
     "expectedType": "CHECK_IN",                  // gợi ý dựa trên trạng thái hiện tại
     "requiresPhoto": true
   }
@@ -952,7 +953,7 @@ Lỗi: `REQ_INSUFFICIENT_LEAVE` (422) · `REQ_OVERLAP` (409) · `REQ_ATTACHMENT_
   "image_base64": "...",
   "embeddings": [[...], [...], [...]],       // các embedding đã đăng ký của ĐÚNG nhân viên đó
   "require_liveness": true,
-  "liveness_action": "BLINK"
+  "liveness_action": "TURN_LEFT"
 }
 // 200
 {
