@@ -9,8 +9,8 @@ Bộ tài liệu này được sinh từ **Tài liệu mô tả nghiệp vụ (P
 
 **Người mới vào dự án:** `00` → `01` → `02` → `13` → `12` → phân hệ mình phụ trách
 **Thi công Backend:** `02` → `07` → `08` → `13` → `12` → `06` → `04`
-**Thi công App:** `03` → `11` → `13` → `12` → `08` → `06`
-**Thi công Web:** `04` → `05` → `08`
+**Thi công App:** `03` → `11` → `13` → `12` → `08` → `06` → `16`
+**Thi công Web:** `04` → `05` → `08` → `16`
 **Thi công AI Server:** `00` (Phần 1–3) → `02` (mục 6) → `08` (mục 8) → `12`
 **Quản lý dự án:** `01` → `10` → `09`
 
@@ -36,6 +36,7 @@ Bộ tài liệu này được sinh từ **Tài liệu mô tả nghiệp vụ (P
 | [13-luong-onboarding-va-dang-ky-khuon-mat.md](./13-luong-onboarding-va-dang-ky-khuon-mat.md) | Từ lúc được cấp tài khoản tới lúc chấm công được: OTP → mã mời → đăng ký khuôn mặt 4 góc → ghi DB. Kèm ranh giới đăng ký lần đầu vs đăng ký đè | (suy dẫn) |
 | [14-so-do-quan-he-bang-du-lieu.md](./14-so-do-quan-he-bang-du-lieu.md) | Sơ đồ quan hệ giữa các bảng dữ liệu | (suy dẫn) |
 | [15-danh-muc-api-backend.md](./15-danh-muc-api-backend.md) | **Danh mục API đã thi công**: ~100 endpoint đọc trực tiếp từ controller, mỗi endpoint có mô tả "làm gì / vì sao vậy" + ví dụ `curl` + mã lỗi. Kèm kịch bản đầu-cuối và bảng sai lầm thường gặp | (từ mã nguồn) |
+| [16-quy-chuan-style-guide.md](./16-quy-chuan-style-guide.md) | **Quy chuẩn giao diện (đã chốt)**: thang màu 60 bậc (OKLCH, giữ nguyên 16 màu gốc Figma), token ngữ nghĩa, thang chữ, spacing, bo góc, đổ bóng, chuyển động, z-index, breakpoint, 20 component đủ 5 trạng thái, chế độ tối. Kèm cấu hình Ant Design + Tailwind + Flutter. **52/52 cặp màu đạt WCAG AA, 0 lỗi** | (từ Figma) |
 
 ---
 
