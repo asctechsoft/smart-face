@@ -29,6 +29,25 @@ export type EmployeeDetail = Prisma.EmployeeGetPayload<{
   };
 }>;
 
+/**
+ * Thiết bị hiển thị cho HR — đã lược bỏ `deviceSecretHash` và `pushToken`.
+ * Hai trường đó không phục vụ việc quản lý, mà lộ ra thì đủ để giả mạo request.
+ */
+export interface DeviceBindingView {
+  id: string;
+  deviceId: string;
+  deviceModel: string | null;
+  osName: string | null;
+  osVersion: string | null;
+  appVersion: string | null;
+  isRooted: boolean;
+  isActive: boolean;
+  lastSeenAt: Date | null;
+  revokedAt: Date | null;
+  revokedReason: string | null;
+  createdAt: Date;
+}
+
 export interface EmployeeSearchFilter {
   status?: EmployeeStatus;
   departmentId?: string;
@@ -324,6 +343,59 @@ export class EmployeeRepository extends BaseRepository {
   }
 
   // ===========================================================================
+  //  Thiết bị liên kết (FR-WEB-INV-06, BR-11)
+  // ===========================================================================
+
+  /**
+   * Thiết bị đã liên kết với một tài khoản.
+   *
+   * KHÔNG lọc `isActive`: màn hình quản lý thiết bị cần thấy cả liên kết đã thu
+   * hồi. "Máy cũ bị thu hồi lúc 14:03 ngày 12/08" là dữ kiện quan trọng khi điều
+   * tra nghi vấn chấm công hộ — ẩn đi thì lịch sử chỉ còn một dòng và không giải
+   * thích được vì sao hôm đó có hai thiết bị.
+   *
+   * `deviceSecretHash` và `pushToken` KHÔNG nằm trong `select`: một cái là bí mật
+   * ký HMAC (AF-12), một cái gửi được thông báo tới máy nhân viên.
+   */
+  async listDeviceBindings(companyId: string, userId: string): Promise<DeviceBindingView[]> {
+    return this.db().deviceBinding.findMany({
+      where: { userId, companyId },
+      select: {
+        id: true,
+        deviceId: true,
+        deviceModel: true,
+        osName: true,
+        osVersion: true,
+        appVersion: true,
+        isRooted: true,
+        isActive: true,
+        lastSeenAt: true,
+        revokedAt: true,
+        revokedReason: true,
+        createdAt: true,
+      },
+      orderBy: [{ isActive: 'desc' }, { lastSeenAt: 'desc' }],
+    });
+  }
+
+  async revokeDeviceBinding(
+    companyId: string,
+    userId: string,
+    bindingId: string,
+    revokedBy: string,
+    reason: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    // `userId` trong `where` chứ không chỉ `bindingId`: id đoán đúng mà thiếu chốt
+    // này sẽ thu hồi được thiết bị của người khác trong cùng công ty.
+    const result = await this.db(tx).deviceBinding.updateMany({
+      where: { id: bindingId, userId, companyId, isActive: true },
+      data: { isActive: false, revokedAt: new Date(), revokedBy, revokedReason: reason },
+    });
+    return result.count;
+  }
+
+  // ===========================================================================
   //  Chấm dứt hợp đồng — vô hiệu mọi phương thức truy cập
   // ===========================================================================
 
@@ -332,6 +404,7 @@ export class EmployeeRepository extends BaseRepository {
     employeeId: string,
     revokedBy: string,
     tx?: Prisma.TransactionClient,
+    revokedReason = 'EMPLOYEE_TERMINATED',
   ): Promise<number> {
     const result = await this.db(tx).faceProfile.updateMany({
       where: { companyId, employeeId, status: 'ACTIVE' },
@@ -339,7 +412,7 @@ export class EmployeeRepository extends BaseRepository {
         status: 'REVOKED',
         revokedAt: new Date(),
         revokedBy,
-        revokedReason: 'EMPLOYEE_TERMINATED',
+        revokedReason,
       },
     });
     return result.count;
@@ -349,10 +422,11 @@ export class EmployeeRepository extends BaseRepository {
     companyId: string,
     employeeId: string,
     tx?: Prisma.TransactionClient,
+    revokedReason = 'EMPLOYEE_TERMINATED',
   ): Promise<number> {
     const result = await this.db(tx).biometricKey.updateMany({
       where: { companyId, employeeId, revokedAt: null },
-      data: { revokedAt: new Date(), revokedReason: 'EMPLOYEE_TERMINATED' },
+      data: { revokedAt: new Date(), revokedReason },
     });
     return result.count;
   }

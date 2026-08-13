@@ -63,14 +63,17 @@ const FIREBASE_ID_TOKEN_MAX_LENGTH = 4096;
  * token nhận được lên đây. Backend KHÔNG bao giờ nhìn thấy mật khẩu.
  */
 export class CreateSessionDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 'amobi.vn',
-    description: 'Tên miền công ty cấp cho nhân viên. Chấp nhận cả dạng có https:// và dấu / cuối.',
+    description:
+      'TUỲ CHỌN. Bỏ trống thì Backend tự suy công ty từ tài khoản — quan hệ tài khoản–công ty là 1–1 nên tên miền không mang thêm thông tin nào.\n\n' +
+      'Vẫn nhận khi client gửi lên (App Flutter, các bản cũ), và khi đó tên miền phải khớp công ty của tài khoản, sai trả `AUTH_DOMAIN_MISMATCH`.\n\n' +
+      'Chấp nhận cả dạng có https:// và dấu / cuối.',
   })
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @MaxLength(255)
-  domain!: string;
+  domain?: string;
 
   @ApiProperty({
     description: 'ID token lấy từ Firebase SDK sau khi đăng nhập thành công (`user.getIdToken()`).',

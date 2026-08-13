@@ -23,8 +23,11 @@ export class SchedulerService implements OnModuleInit {
   ) {}
 
   async onModuleInit(): Promise<void> {
-    // Pod API thuần (`WORKER_ENABLED=false`) không đăng ký lịch. Chỉ pod worker
-    // mới làm việc này — tách vai trò để scale hai loại pod độc lập với nhau.
+    // Chốt thứ hai. `WorkerModule` đã không đăng ký service này khi
+    // `WORKER_ENABLED=false` hoặc `REDIS_ENABLED=false`, nên bình thường nhánh
+    // dưới không bao giờ chạy. Giữ lại để service vẫn tự bảo vệ nếu sau này có
+    // chỗ khác đăng ký nó — đăng ký lịch nhầm trên pod API là lỗi im lặng, chỉ
+    // lộ ra khi job đêm chạy nhiều lần.
     if (!this.config.get<boolean>('worker.enabled', true)) {
       this.logger.log('WORKER_ENABLED=false — bỏ qua đăng ký job định kỳ');
       return;

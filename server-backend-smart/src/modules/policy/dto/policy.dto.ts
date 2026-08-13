@@ -53,7 +53,9 @@ export class UpdatePoliciesDto {
    * ngược lại cũng vậy. Vì thế mỗi thay đổi tạo một bản ghi mới có mốc hiệu lực,
    * bản cũ giữ nguyên để tính lại kỳ cũ vẫn ra đúng con số ngày trước.
    */
-  @ApiPropertyOptional({ description: 'Thời điểm bắt đầu hiệu lực (D6). Mặc định là ngay bây giờ.' })
+  @ApiPropertyOptional({
+    description: 'Thời điểm bắt đầu hiệu lực (D6). Mặc định là ngay bây giờ.',
+  })
   @IsOptional()
   @IsDateString()
   effectiveFrom?: string;
@@ -250,6 +252,153 @@ export class BulkShiftAssignmentDto {
 }
 
 /**
+ * Bảng phân ca của một khoảng ngày — dữ liệu dựng màn hình lịch ca (FR-WEB-HR-03).
+ *
+ * Khoảng ngày do client quyết định nhưng service chặn trần 62 ngày: bảng phân ca
+ * là ma trận `nhân viên × ngày`, xin 1 năm cho 500 người là 182.500 ô — trình
+ * duyệt dựng không nổi mà database cũng không nên phải trả lời câu hỏi đó.
+ */
+export class ShiftAssignmentQueryDto {
+  @ApiProperty({ example: '2026-08-01' })
+  @IsDateString()
+  from!: string;
+
+  @ApiProperty({ example: '2026-08-31' })
+  @IsDateString()
+  to!: string;
+
+  @ApiPropertyOptional({ description: 'Lọc theo phòng ban. MANAGER bị ScopeGuard thu hẹp thêm.' })
+  @IsOptional()
+  @IsString()
+  departmentId?: string;
+
+  @ApiPropertyOptional({ description: 'Tìm theo tên hoặc mã nhân viên' })
+  @IsOptional()
+  @IsString()
+  q?: string;
+
+  // Phân trang theo NHÂN VIÊN (mỗi người một dòng lịch), không theo bản ghi phân
+  // ca — người dùng đọc bảng này theo dòng, cắt trang giữa chừng một người sẽ ra
+  // hai dòng rời rạc của cùng một cái tên.
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @ApiPropertyOptional({ default: 25, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize = 25;
+}
+
+/**
+ * Xoá phân ca trong một khoảng ngày — thao tác "dọn lịch để xếp lại".
+ *
+ * Có endpoint riêng thay vì gọi bulk-assign với `shiftId` rỗng: xoá và gán là
+ * hai ý định khác nhau, và gộp chúng thì một request thiếu trường sẽ âm thầm
+ * xoá sạch lịch cả tháng.
+ */
+export class ClearShiftAssignmentDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @IsString({ each: true })
+  employeeIds!: string[];
+
+  @ApiProperty({ example: '2026-08-01' })
+  @IsDateString()
+  from!: string;
+
+  @ApiProperty({ example: '2026-08-31' })
+  @IsDateString()
+  to!: string;
+}
+
+/**
+ * Chính sách phép năm — `FR-WEB-POL-07`, `FR-WEB-POL-08`.
+ *
+ * Một công ty có nhiều bản: mỗi loại hợp đồng một chính sách, cộng một bản
+ * `contractType = null` làm mặc định cho loại hợp đồng chưa khai riêng.
+ *
+ * Giống ca làm việc và chính sách key-value, bản ghi ở đây có hiệu lực theo thời
+ * gian (D6): sửa mức phép giữa năm KHÔNG ghi đè bản cũ, vì số phép đã cấp cho
+ * nhân viên hồi đầu năm phải giải thích được bằng chính sách lúc đó.
+ */
+export class UpsertLeavePolicyDto {
+  @ApiPropertyOptional({
+    example: 'Chính thức',
+    description: 'Bỏ trống = chính sách mặc định, áp cho mọi loại hợp đồng chưa khai riêng.',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(1, 100)
+  contractType?: string;
+
+  // NFR-LEGAL-07: sàn 12 ngày do service kiểm tra, không đặt ở `@Min` — mức sàn
+  // thay đổi theo quy định pháp luật, còn DTO thì không nên phải sửa mỗi lần luật đổi.
+  @ApiProperty({ example: 12, description: 'NFR-LEGAL-07: tối thiểu 12 ngày/năm' })
+  @IsNumber()
+  @Min(0)
+  baseDaysPerYear!: number;
+
+  @ApiPropertyOptional({ example: 1, description: 'Số ngày cộng thêm mỗi mốc thâm niên' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  seniorityBonusDays?: number;
+
+  @ApiPropertyOptional({ example: 5, description: 'Cứ mỗi N năm làm việc thì cộng thêm phép' })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  seniorityEveryYears?: number;
+
+  @ApiPropertyOptional({ description: 'Cho phép chuyển phép chưa dùng sang năm sau' })
+  @IsOptional()
+  @IsBoolean()
+  allowCarryOver?: boolean;
+
+  @ApiPropertyOptional({
+    example: 5,
+    description: 'Trần số ngày được cộng dồn. Bỏ trống = không giới hạn.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxCarryOverDays?: number;
+
+  // Phép cộng dồn không có hạn dùng thì nó tích luỹ vô hạn và biến thành một
+  // khoản nợ tiền mặt khi nhân viên nghỉ việc.
+  @ApiPropertyOptional({
+    example: 3,
+    description: 'Phép cộng dồn hết hạn cuối tháng mấy của năm sau (3 = hết Q1).',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  carryOverExpireMonth?: number;
+
+  @ApiPropertyOptional({
+    example: 'YEARLY',
+    description:
+      'YEARLY = cấp trọn gói đầu năm. MONTHLY = cộng dần theo tháng làm việc (đúng hơn với người vào giữa năm).',
+  })
+  @IsOptional()
+  @IsString()
+  accrualMode?: string;
+
+  @ApiPropertyOptional({ description: 'Hiệu lực từ (D6). Mặc định hôm nay.' })
+  @IsOptional()
+  @IsDateString()
+  effectiveFrom?: string;
+}
+
+/**
  * Ngày lễ — ảnh hưởng trực tiếp tới tiền lương nên có ràng buộc pháp lý.
  */
 export class UpsertHolidayDto {
@@ -263,7 +412,10 @@ export class UpsertHolidayDto {
   date!: string;
 
   // Lễ rơi vào thứ Bảy/Chủ nhật thì luật lao động cho nghỉ bù ngày kế tiếp.
-  @ApiPropertyOptional({ example: '2026-09-03', description: 'Ngày nghỉ bù khi lễ trùng cuối tuần' })
+  @ApiPropertyOptional({
+    example: '2026-09-03',
+    description: 'Ngày nghỉ bù khi lễ trùng cuối tuần',
+  })
   @IsOptional()
   @IsDateString()
   substituteDate?: string;

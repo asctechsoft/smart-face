@@ -225,6 +225,21 @@ export class LifecycleActionDto {
   effectiveDate?: string;
 }
 
+/**
+ * Thao tác nhạy cảm trên tài sản của một nhân viên: thu hồi thiết bị, đặt lại
+ * sinh trắc học.
+ *
+ * Cả hai đều làm nhân viên MẤT khả năng chấm công cho tới khi thiết lập lại, nên
+ * lý do là bắt buộc và đi thẳng vào cả audit log lẫn thông báo gửi cho họ — người
+ * bị ảnh hưởng phải biết vì sao sáng mai mình không chấm công được.
+ */
+export class SensitiveActionDto {
+  @ApiProperty({ description: 'BR-08: bắt buộc, tối thiểu 10 ký tự', minLength: 10 })
+  @IsString()
+  @Length(10, 1000)
+  reason!: string;
+}
+
 /** Một dòng trong file Excel import (FR-WEB-HR-10). */
 export class ImportRowDto {
   @ApiProperty()

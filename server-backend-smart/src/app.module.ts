@@ -27,6 +27,7 @@ import { BiometricModule } from './modules/biometric/biometric.module';
 import { EmployeeModule } from './modules/employee/employee.module';
 import { FraudModule } from './modules/fraud/fraud.module';
 import { HealthModule } from './modules/health/health.module';
+import { MakeupModule } from './modules/makeup/makeup.module';
 import { NotificationModule } from './modules/notification/notification.module';
 import { PayrollModule } from './modules/payroll/payroll.module';
 import { PolicyModule } from './modules/policy/policy.module';
@@ -69,6 +70,7 @@ import { TenantModule } from './modules/tenant/tenant.module';
     AttendanceModule,
     FraudModule,
     RequestModule,
+    MakeupModule,
     PayrollModule,
     ReportModule,
     AdminModule,

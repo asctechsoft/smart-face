@@ -97,7 +97,7 @@ export class AuthService {
   // ===========================================================================
 
   async createSession(input: {
-    domain: string;
+    domain?: string;
     firebaseIdToken: string;
     deviceId?: string;
     deviceInfo?: DeviceInfoDto;
@@ -114,25 +114,7 @@ export class AuthService {
       throw new AppException('AUTH_ACCOUNT_NOT_PROVISIONED');
     }
 
-    const company = await this.resolveCompanyForDomain(input.domain);
-
-    // Tên miền phải khớp công ty của tài khoản.
-    //
-    // Không phải chuyện thẩm mỹ: bỏ chốt này thì nhân viên công ty A gõ tên miền
-    // của công ty B vẫn vào được — Firebase chỉ xác nhận danh tính, nó không biết
-    // gì về ranh giới công ty. Đây là nơi duy nhất kiểm điều đó.
-    if ((account.companyId ?? null) !== (company?.id ?? null)) {
-      throw new AppException('AUTH_DOMAIN_MISMATCH');
-    }
-
-    // Tên miền quy ước dành RIÊNG cho quản trị viên nền tảng.
-    //
-    // Chỉ so `companyId` là chưa đủ: một tài khoản `companyId = null` mà không
-    // phải quản trị viên vẫn lọt qua chốt trên. Trường hợp đó không nên tồn tại,
-    // nhưng "không nên tồn tại" không phải là một chốt an ninh.
-    if (company === null && !account.isSystemAdmin) {
-      throw new AppException('AUTH_DOMAIN_MISMATCH');
-    }
+    const company = await this.resolveCompanyForLogin(account, input.domain);
 
     await this.assertAccountUsable(account, company);
 
@@ -465,6 +447,69 @@ export class AuthService {
     if (!company) {
       throw new AppException('AUTH_DOMAIN_MISMATCH');
     }
+    return company;
+  }
+
+  /**
+   * Xác định công ty của phiên đăng nhập.
+   *
+   * `domain` là TUỲ CHỌN, và đây là chỗ quyết định vì sao bỏ được nó mà không
+   * mất an ninh:
+   *
+   *   Quan hệ tài khoản–công ty là 1–1 (`UserAccount.companyId`). Sau khi
+   *   Firebase xác nhận danh tính, Backend đã biết chắc tài khoản này thuộc công
+   *   ty nào — `domain` do người dùng gõ không mang thêm thông tin nào cả, nó
+   *   chỉ là một phép đối chiếu với chính dữ liệu ta đang có.
+   *
+   *   Bỏ nó đi thì đường vào CHẶT HƠN chứ không lỏng hơn: không còn đầu vào nào
+   *   từ client tham gia vào việc chọn công ty, nên cũng không còn gì để gõ sai
+   *   hay để thử mò. Trước đây chốt `AUTH_DOMAIN_MISMATCH` cần thiết chính vì
+   *   `domain` là đầu vào; bỏ đầu vào thì bỏ luôn cả loại lỗi đó.
+   *
+   * Vẫn chấp nhận `domain` khi client gửi lên (App Flutter và các bản cũ), và
+   * khi đó giữ nguyên phép đối chiếu — sai vẫn trả `AUTH_DOMAIN_MISMATCH`.
+   */
+  private async resolveCompanyForLogin(account: UserAccount, rawDomain?: string) {
+    if (rawDomain?.trim()) {
+      const company = await this.resolveCompanyForDomain(rawDomain);
+
+      // Tên miền phải khớp công ty của tài khoản. Firebase chỉ xác nhận danh
+      // tính, nó không biết gì về ranh giới công ty — đây là nơi duy nhất kiểm.
+      if ((account.companyId ?? null) !== (company?.id ?? null)) {
+        throw new AppException('AUTH_DOMAIN_MISMATCH');
+      }
+
+      // Tên miền quy ước dành RIÊNG cho quản trị viên nền tảng. Chỉ so
+      // `companyId` là chưa đủ: một tài khoản `companyId = null` mà không phải
+      // quản trị viên vẫn lọt qua chốt trên.
+      if (company === null && !account.isSystemAdmin) {
+        throw new AppException('AUTH_DOMAIN_MISMATCH');
+      }
+
+      return company;
+    }
+
+    // Không gửi `domain` — suy ra từ chính tài khoản.
+    if (account.companyId === null) {
+      // `companyId = null` chỉ hợp lệ với quản trị viên nền tảng. Trạng thái này
+      // ở tài khoản thường không nên tồn tại, nhưng "không nên tồn tại" không
+      // phải là một chốt an ninh.
+      if (!account.isSystemAdmin) {
+        throw new AppException('AUTH_ACCOUNT_NOT_PROVISIONED');
+      }
+      return null;
+    }
+
+    const company = await this.accounts.findCompanyById(account.companyId);
+    if (!company) {
+      // Tài khoản trỏ tới một công ty đã bị xoá — dữ liệu hỏng, không phải lỗi
+      // của người đang đăng nhập.
+      this.logger.error(
+        `Tài khoản ${account.id} trỏ tới công ty ${account.companyId} không tồn tại`,
+      );
+      throw new AppException('AUTH_ACCOUNT_NOT_PROVISIONED');
+    }
+
     return company;
   }
 

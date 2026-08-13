@@ -39,6 +39,7 @@ describe('AuthService — Firebase + OTP 2 lớp', () => {
 
   const accounts = {
     findCompanyByDomain: jest.fn(),
+    findCompanyById: jest.fn(),
     findAccountByFirebaseUid: jest.fn(),
     findAccountById: jest.fn(),
     findAccountByIdOrThrow: jest.fn(),
@@ -110,6 +111,7 @@ describe('AuthService — Firebase + OTP 2 lớp', () => {
     firebase.verifyIdToken.mockResolvedValue({ uid: FIREBASE_UID, email: 'duc@amobi.vn' });
     firebase.verifyFreshIdToken.mockResolvedValue({ uid: FIREBASE_UID });
     accounts.findCompanyByDomain.mockResolvedValue(COMPANY);
+    accounts.findCompanyById.mockResolvedValue(COMPANY);
     accounts.findAccountByFirebaseUid.mockResolvedValue(accountFixture());
     accounts.findAccountById.mockResolvedValue(accountFixture());
     accounts.findAccountByIdOrThrow.mockResolvedValue(accountFixture());
@@ -146,7 +148,84 @@ describe('AuthService — Firebase + OTP 2 lớp', () => {
   });
 
   // ===========================================================================
+  //  Đăng nhập KHÔNG gửi tên miền
+  //
+  //  Web Quản lý chỉ hỏi email + mật khẩu. Quan hệ tài khoản–công ty là 1–1 nên
+  //  tên miền không mang thêm thông tin nào — Backend tự suy từ tài khoản.
+  // ===========================================================================
+
+  describe('bỏ trống tên miền', () => {
+    it('suy công ty từ chính tài khoản', async () => {
+      const result = await service.createSession({ firebaseIdToken: ID_TOKEN });
+
+      expect(result).toMatchObject({ accessToken: 'at', nextStep: 'HOME' });
+      expect(accounts.findCompanyById).toHaveBeenCalledWith('cmp_1');
+      // Không có đầu vào tên miền thì cũng không có gì để tra theo tên miền.
+      expect(accounts.findCompanyByDomain).not.toHaveBeenCalled();
+    });
+
+    it('chuỗi rỗng cũng được coi là bỏ trống', async () => {
+      // Client gửi `domain: ''` khi người dùng để trống ô — không được biến nó
+      // thành một lần tra tên miền rỗng rồi trả AUTH_DOMAIN_MISMATCH.
+      await service.createSession({ domain: '   ', firebaseIdToken: ID_TOKEN });
+
+      expect(accounts.findCompanyById).toHaveBeenCalledWith('cmp_1');
+      expect(accounts.findCompanyByDomain).not.toHaveBeenCalled();
+    });
+
+    it('công ty bị tạm ngưng vẫn bị chặn', async () => {
+      // Bỏ tên miền không được phép bỏ qua các chốt còn lại.
+      accounts.findCompanyById.mockResolvedValue({ ...COMPANY, status: 'SUSPENDED' });
+
+      await expect(service.createSession({ firebaseIdToken: ID_TOKEN })).rejects.toMatchObject({
+        code: 'AUTH_COMPANY_INACTIVE',
+      });
+    });
+
+    it('quản trị viên nền tảng vào được mà không cần tên miền', async () => {
+      accounts.findAccountByFirebaseUid.mockResolvedValue(
+        accountFixture({ companyId: null, isSystemAdmin: true }),
+      );
+
+      const result = await service.createSession({ firebaseIdToken: ID_TOKEN });
+
+      expect(result).toMatchObject({ accessToken: 'at' });
+      expect(accounts.findCompanyById).not.toHaveBeenCalled();
+    });
+
+    it('tài khoản không thuộc công ty nào và KHÔNG phải quản trị viên thì bị chặn', async () => {
+      accounts.findAccountByFirebaseUid.mockResolvedValue(
+        accountFixture({ companyId: null, isSystemAdmin: false }),
+      );
+
+      await expect(service.createSession({ firebaseIdToken: ID_TOKEN })).rejects.toMatchObject({
+        code: 'AUTH_ACCOUNT_NOT_PROVISIONED',
+      });
+    });
+
+    it('tài khoản trỏ tới công ty đã bị xoá thì bị chặn', async () => {
+      accounts.findCompanyById.mockResolvedValue(null);
+
+      await expect(service.createSession({ firebaseIdToken: ID_TOKEN })).rejects.toMatchObject({
+        code: 'AUTH_ACCOUNT_NOT_PROVISIONED',
+      });
+    });
+
+    it('vẫn chuyển sang bước OTP khi tài khoản bật xác thực 2 lớp', async () => {
+      accounts.findAccountByFirebaseUid.mockResolvedValue(
+        accountFixture({ twoFactorEnabled: true, twoFactorPhone: '0901234567' }),
+      );
+
+      const result = await service.createSession({ firebaseIdToken: ID_TOKEN });
+
+      expect(result).toMatchObject({ nextStep: 'TWO_FACTOR' });
+    });
+  });
+
+  // ===========================================================================
   //  Ranh giới công ty — thứ Firebase không biết
+  //
+  //  Vẫn giữ nguyên khi client CÓ gửi tên miền (App Flutter, các bản cũ).
   // ===========================================================================
 
   describe('ràng buộc tên miền', () => {

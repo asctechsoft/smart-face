@@ -93,6 +93,25 @@ export interface ApprovalStepSeed {
   approverId: string | null;
 }
 
+export interface RequestTypeWriteInput {
+  code: string;
+  name: string;
+  deductFrom: string;
+  unit: string;
+  requiresAttachment: boolean;
+  requiresPreApproval: boolean;
+  maxDaysPerRequest: number | null;
+  isActive: boolean;
+}
+
+/** Một cấp trong khuôn duyệt — `condition` dạng `{ minDays, maxDays }`. */
+export interface FlowStepWriteInput {
+  order: number;
+  approverRole: string;
+  isRequired: boolean;
+  condition: Prisma.InputJsonValue | undefined;
+}
+
 /**
  * Truy cập dữ liệu đơn từ: `leave_request`, `approval_step`, `approval_flow`,
  * `request_type`, `request_attachment`, `leave_balance`, `makeup_work_record`.
@@ -535,6 +554,99 @@ export class RequestRepository extends BaseRepository {
       where: { id: { in: employeeIds }, companyId },
       select: { id: true, fullName: true },
     });
+  }
+
+  // ===========================================================================
+  //  Cấu hình loại đơn & luồng duyệt (FR-WEB-REQ-05)
+  // ===========================================================================
+
+  /**
+   * Toàn bộ loại đơn KỂ CẢ loại đã vô hiệu hoá.
+   *
+   * Khác `listActiveRequestTypes` (dùng cho App khi nhân viên tạo đơn) một cách
+   * có chủ đích: màn hình cấu hình phải thấy loại đã tắt để bật lại được, còn
+   * App thì không được cho tạo đơn thuộc loại đã tắt.
+   */
+  async listAllRequestTypes(companyId: string): Promise<RequestTypeWithFlow[]> {
+    return this.db().requestType.findMany({
+      where: { companyId },
+      include: { approvalFlow: { include: { steps: { orderBy: { order: 'asc' } } } } },
+      orderBy: [{ isActive: 'desc' }, { code: 'asc' }],
+    });
+  }
+
+  async findRequestTypeByCodeAnyStatus(
+    companyId: string,
+    code: string,
+    excludeId?: string,
+  ): Promise<RequestType | null> {
+    return this.db().requestType.findFirst({
+      where: { companyId, code, ...(excludeId ? { id: { not: excludeId } } : {}) },
+    });
+  }
+
+  async createRequestType(
+    companyId: string,
+    data: RequestTypeWriteInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<RequestType> {
+    return this.db(tx).requestType.create({ data: { companyId, ...data } });
+  }
+
+  async updateRequestType(
+    companyId: string,
+    id: string,
+    data: Partial<RequestTypeWriteInput>,
+    tx?: Prisma.TransactionClient,
+  ): Promise<RequestType | null> {
+    const updated = await this.db(tx).requestType.updateMany({ where: { id, companyId }, data });
+    if (updated.count === 0) return null;
+    return this.db(tx).requestType.findFirst({ where: { id, companyId } });
+  }
+
+  /**
+   * Thay toàn bộ các cấp duyệt của một loại đơn.
+   *
+   * Xoá rồi tạo lại thay vì so sánh từng bước: `ApprovalFlowStep` chỉ là KHUÔN
+   * MẪU, các đơn đã gửi đã được sinh `ApprovalStep` riêng và không tham chiếu tới
+   * khuôn này nữa. Vì vậy đổi khuôn không đụng tới đơn đang chờ duyệt — đúng ý
+   * đồ: đơn đã gửi phải chạy hết luồng của lúc nó được gửi.
+   */
+  async replaceApprovalFlow(
+    companyId: string,
+    requestTypeId: string,
+    steps: FlowStepWriteInput[],
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const client = this.db(tx);
+
+    const flow = await client.approvalFlow.upsert({
+      where: { requestTypeId },
+      create: { companyId, requestTypeId },
+      update: {},
+    });
+
+    await client.approvalFlowStep.deleteMany({ where: { flowId: flow.id } });
+    if (steps.length > 0) {
+      await client.approvalFlowStep.createMany({
+        data: steps.map((step) => ({ flowId: flow.id, ...step })),
+      });
+    }
+  }
+
+  async findRequestTypeWithFlow(
+    companyId: string,
+    requestTypeId: string,
+  ): Promise<RequestTypeWithFlow | null> {
+    return this.db().requestType.findFirst({
+      where: { id: requestTypeId, companyId },
+      include: { approvalFlow: { include: { steps: { orderBy: { order: 'asc' } } } } },
+    });
+  }
+
+  /** Số đơn đã phát sinh theo loại — dùng để cảnh báo trước khi tắt một loại đơn. */
+  async countRequestsOfType(companyId: string, requestTypeId: string): Promise<number> {
+    return this.db().leaveRequest.count({ where: { companyId, requestTypeId } });
   }
 
   async findDepartmentManagerId(companyId: string, departmentId: string): Promise<string | null> {

@@ -5,6 +5,14 @@ import { HealthRepository } from './health.repository';
 export interface HealthReport {
   status: 'healthy' | 'degraded';
   dependencies: { database: boolean; redis: boolean };
+  /**
+   * `in-memory` nghĩa là đang chạy với `REDIS_ENABLED=false`.
+   *
+   * Bắt buộc phải lộ ra: nếu chỉ trả `redis: true` thì người trực đọc health
+   * tưởng có Redis thật, trong khi rate limit và nonce chống replay chỉ còn
+   * hiệu lực trong một tiến trình.
+   */
+  redisMode: 'redis' | 'in-memory';
   timestamp: string;
 }
 
@@ -34,6 +42,7 @@ export class HealthService {
     return {
       status: database && redis ? 'healthy' : 'degraded',
       dependencies: { database, redis },
+      redisMode: this.redis.mode,
       timestamp: new Date().toISOString(),
     };
   }

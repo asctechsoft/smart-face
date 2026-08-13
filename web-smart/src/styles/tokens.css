@@ -1,0 +1,150 @@
+/**
+ * docs/16-quy-chuan-style-guide.md mục 1 + 2.
+ *
+ * Chép nguyên văn. Sửa một giá trị ở đây là sửa hệ màu của cả sản phẩm — phải
+ * chạy lại kiểm chứng WCAG (52 cặp) trước khi commit, xem mục 14.1.
+ *
+ * Nguyên tắc số 1 của tài liệu: KHÔNG màu nào tồn tại ngoài thang màu này.
+ * Component chỉ dùng token ngữ nghĩa (khối "Bề mặt" trở xuống), không tham
+ * chiếu thẳng vào ramp.
+ */
+:root {
+  /* ── Thang màu ─────────────────────────────────────── */
+  --sf-teal-50: #e4fef4;
+  --sf-teal-100: #d1f7e8;
+  --sf-teal-200: #aee5d1;
+  --sf-teal-300: #84cab1;
+  --sf-teal-400: #5ead93;
+  --sf-teal-500: #398f75;
+  --sf-teal-600: #17725a;
+  --sf-teal-700: #005440;
+  --sf-teal-800: #004836;
+  --sf-teal-900: #003b2c;
+
+  --sf-amber-50: #fff7dc;
+  --sf-amber-100: #fff5cb;
+  --sf-amber-200: #ffeaad;
+  --sf-amber-300: #ffd284;
+  --sf-amber-400: #ffbd67;
+  --sf-amber-500: #fcaa33;
+  --sf-amber-600: #cf8922;
+  --sf-amber-700: #a56600;
+  --sf-amber-800: #774b00;
+  --sf-amber-900: #6b4200;
+
+  --sf-neutral-50: #f8faf9;
+  --sf-neutral-100: #f2f4f3;
+  --sf-neutral-200: #e1e3e2;
+  --sf-neutral-300: #bfc9c3;
+  --sf-neutral-400: #99a09d;
+  --sf-neutral-500: #6f7974;
+  --sf-neutral-600: #59605d;
+  --sf-neutral-700: #3f4944;
+  --sf-neutral-800: #2d3230;
+  --sf-neutral-900: #191c1c;
+
+  --sf-success-50: #e2fbe1;
+  --sf-success-100: #caefc9;
+  --sf-success-600: #18691f;
+  --sf-success-700: #00530d;
+  --sf-success-800: #003f05;
+  --sf-warning-50: #fff3dd;
+  --sf-warning-100: #ffe7c5;
+  --sf-warning-700: #855400;
+  --sf-warning-800: #643d00;
+  --sf-error-50: #ffe8e0;
+  --sf-error-100: #ffd4c9;
+  --sf-error-600: #ba1a1a;
+  --sf-error-700: #980001;
+  --sf-error-800: #740000;
+
+  /* ── Bề mặt ────────────────────────────────────────── */
+  --sf-surface: #ffffff;
+  --sf-surface-bright: var(--sf-neutral-50);
+  --sf-surface-container-low: var(--sf-neutral-100);
+  --sf-surface-container: var(--sf-neutral-200);
+  --sf-surface-inverse: var(--sf-neutral-800);
+
+  /* ── Chữ ───────────────────────────────────────────── */
+  --sf-on-surface: var(--sf-neutral-900);
+  --sf-on-surface-variant: var(--sf-neutral-700);
+  --sf-on-surface-muted: var(--sf-neutral-500);
+  --sf-on-surface-inverse: var(--sf-neutral-50);
+
+  /* ── Viền ──────────────────────────────────────────── */
+  --sf-outline: var(--sf-neutral-500); /* viền input */
+  --sf-outline-variant: var(--sf-neutral-300); /* viền card, bảng */
+
+  /* ── Thương hiệu ───────────────────────────────────── */
+  --sf-primary: var(--sf-teal-900); /* chữ, viền */
+  --sf-primary-surface: var(--sf-teal-700); /* nền khối */
+  --sf-primary-surface-hover: var(--sf-teal-800);
+  --sf-primary-tint: var(--sf-teal-100);
+  --sf-on-primary-surface: #ffffff;
+
+  /* ── Hành động ─────────────────────────────────────── */
+  --sf-action: var(--sf-amber-500);
+  --sf-action-hover: var(--sf-amber-400);
+  --sf-on-action: var(--sf-amber-900);
+
+  /* ── Trạng thái tương tác dùng chung ───────────────── */
+  --sf-state-hover: var(--sf-neutral-100);
+  --sf-state-active: var(--sf-neutral-200);
+  --sf-state-disabled-bg: var(--sf-neutral-200);
+  --sf-state-disabled-text: var(--sf-neutral-500);
+  --sf-focus-ring: var(--sf-teal-700);
+
+  /* ── Đổ bóng (mục 5) ───────────────────────────────── */
+  --sf-shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --sf-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+  --sf-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+  --sf-shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+
+  /* ── Chuyển động (mục 6) ───────────────────────────── */
+  --sf-motion-instant: 100ms ease-out;
+  --sf-motion-fast: 150ms ease-out;
+  --sf-motion-base: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --sf-motion-slow: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── Kích thước bố cục ─────────────────────────────── */
+  --sf-sidenav-width: 256px;
+  --sf-topbar-height: 64px;
+  --sf-content-max-width: 1440px;
+}
+
+/**
+ * docs/16 mục 12 — chế độ tối.
+ *
+ * Chưa bắt buộc ở giai đoạn 1, nhưng vì mọi component đã code bằng token ngữ
+ * nghĩa nên bật nó chỉ tốn đúng khối này.
+ */
+@media (prefers-color-scheme: dark) {
+  :root[data-sf-theme='auto'] {
+    --sf-surface: #121615;
+    --sf-surface-bright: var(--sf-neutral-900);
+    --sf-surface-container-low: var(--sf-neutral-800);
+    --sf-surface-container: #363c39;
+    --sf-surface-inverse: var(--sf-neutral-100);
+
+    --sf-on-surface: var(--sf-neutral-50);
+    --sf-on-surface-variant: var(--sf-neutral-300);
+    --sf-on-surface-muted: var(--sf-neutral-400);
+    --sf-on-surface-inverse: var(--sf-neutral-900);
+
+    --sf-outline: var(--sf-neutral-500);
+    --sf-outline-variant: var(--sf-neutral-600);
+
+    --sf-primary: var(--sf-teal-300);
+    --sf-primary-surface: var(--sf-teal-800);
+    --sf-primary-surface-hover: var(--sf-teal-700);
+    --sf-primary-tint: #1a2e28;
+
+    --sf-action: var(--sf-amber-400);
+    --sf-action-hover: var(--sf-amber-300);
+    --sf-on-action: var(--sf-amber-900);
+
+    --sf-state-hover: var(--sf-neutral-800);
+    --sf-state-active: #363c39;
+    --sf-focus-ring: var(--sf-teal-300);
+  }
+}

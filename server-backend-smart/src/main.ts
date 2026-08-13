@@ -153,7 +153,17 @@ async function bootstrap(): Promise<void> {
 
   await app.listen(port, '0.0.0.0');
   logger.log(`SmartFace Backend chạy tại http://localhost:${port}/${apiPrefix}`);
-  logger.log(`Worker ${config.get<boolean>('worker.enabled') ? 'BẬT' : 'TẮT'} trong process này`);
+  // Phải xét CẢ hai cờ. Chỉ đọc `worker.enabled` thì với `REDIS_ENABLED=false`
+  // dòng log này báo "Worker BẬT" trong khi `WorkerModule` đã không đăng ký một
+  // processor nào — người đọc log sẽ đi tìm nguyên nhân job không chạy ở chỗ khác.
+  const redisEnabled = config.get<boolean>('redis.enabled', true);
+  const workerActive = redisEnabled && config.get<boolean>('worker.enabled', true);
+  logger.log(`Worker ${workerActive ? 'BẬT' : 'TẮT'} trong process này`);
+  if (!redisEnabled) {
+    logger.warn(
+      'REDIS_ENABLED=false — job nền bị BỎ QUA, không xếp hàng. Chỉ dùng khi phát triển.',
+    );
+  }
 }
 
 void bootstrap();

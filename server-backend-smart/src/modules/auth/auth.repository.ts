@@ -144,6 +144,17 @@ export class AuthRepository extends BaseRepository {
     return this.db().company.findUnique({ where: { domain } });
   }
 
+  /**
+   * Công ty của một tài khoản, tra thẳng theo id.
+   *
+   * Dùng khi client KHÔNG gửi `domain` lúc đăng nhập: quan hệ tài khoản–công ty
+   * là 1–1 (`UserAccount.companyId`), nên bản thân tài khoản đã đủ để xác định
+   * công ty, không cần người dùng gõ lại.
+   */
+  async findCompanyById(companyId: string): Promise<Company | null> {
+    return this.db().company.findUnique({ where: { id: companyId } });
+  }
+
   /** Quan hệ 1–1: tài khoản gắn với đúng một công ty nên đúng một hồ sơ. */
   async findEmployeeByUserId(userId: string): Promise<Employee | null> {
     return this.db().employee.findFirst({ where: { userId, deletedAt: null } });

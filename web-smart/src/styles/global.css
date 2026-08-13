@@ -1,0 +1,412 @@
+@import './tokens.css';
+@import './components.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===========================================================================
+ *  Nền tảng
+ * ======================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--sf-surface-bright);
+  color: var(--sf-on-surface);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* ===========================================================================
+ *  docs/16 mục 10.1 — Focus ring
+ *
+ *  `:focus-visible` chứ không phải `:focus`: bấm chuột không nên hiện vòng.
+ *  CẤM `outline: none` trần ở bất kỳ đâu trong codebase (mục 14.2 điều 3).
+ * ======================================================================== */
+
+/*
+ * ⚠ KHÔNG thêm `border-radius: inherit` vào đây. Ý định ban đầu là "cho vòng
+ * focus bo theo hình dạng phần tử", nhưng `border-radius` KHÔNG phải thuộc tính
+ * kế thừa: viết `inherit` là ép phần tử lấy radius của thẻ cha, mà cha (ví dụ
+ * `.sf-input-wrap`) không bo góc nên ra `0`. Hệ quả: ô nhập bo 12px lúc nghỉ,
+ * vừa focus vào là VUÔNG GÓC — nhảy hình ngay trước mắt người dùng.
+ *
+ * Đặc thù cụ thể của luật này là (0,1,0) — bằng đúng `.sf-input`. Hoà đặc thù
+ * thì thứ tự nguồn quyết định, và `@import './components.css'` nằm ở đầu tệp
+ * nên luật ở đây luôn đứng SAU và luôn thắng.
+ *
+ * Không cần khai gì cả: `outline` tự bo theo `border-radius` của chính phần tử
+ * (CSS UI Level 3) trên mọi trình duyệt trong phạm vi hỗ trợ.
+ */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--sf-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Trên nền teal hoặc nền tối, vòng teal biến mất — đổi sang trắng. */
+.sf-on-dark :where(a, button, input, [tabindex]):focus-visible {
+  outline-color: #ffffff;
+}
+
+/* ===========================================================================
+ *  docs/16 mục 6 — tôn trọng thiết lập giảm chuyển động của hệ điều hành
+ * ======================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ===========================================================================
+ *  Chữ — docs/16 mục 3.2
+ * ======================================================================== */
+
+.sf-display-lg {
+  font-family: 'Plus Jakarta Sans', Inter, sans-serif;
+  font-weight: 700;
+  font-size: 32px;
+  line-height: 40px;
+  letter-spacing: -0.64px;
+  color: var(--sf-teal-700);
+  margin: 0;
+}
+
+.sf-title-lg {
+  font-family: 'Plus Jakarta Sans', Inter, sans-serif;
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 28px;
+  margin: 0;
+}
+
+.sf-headline-md {
+  font-weight: 600;
+  font-size: 24px;
+  line-height: 32px;
+  margin: 0;
+}
+
+.sf-title-md {
+  font-weight: 600;
+  font-size: 20px;
+  line-height: 28px;
+  margin: 0;
+}
+
+.sf-title-sm {
+  font-weight: 700;
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.sf-body-md {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.sf-body-sm {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.sf-label-md {
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--sf-on-surface-variant);
+}
+
+.sf-caption {
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--sf-on-surface-variant);
+}
+
+.sf-text-variant {
+  color: var(--sf-on-surface-variant);
+}
+
+/* `neutral-500` CHỈ cho placeholder và chữ disabled — mục 3.3 điều 5. */
+.sf-text-muted {
+  color: var(--sf-on-surface-muted);
+}
+
+/* ===========================================================================
+ *  docs/16 mục 11.11 — Skeleton
+ * ======================================================================== */
+
+.sf-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--sf-neutral-200) 25%,
+    var(--sf-neutral-100) 50%,
+    var(--sf-neutral-200) 75%
+  );
+  background-size: 200% 100%;
+  animation: sf-shimmer 1500ms ease-in-out infinite;
+  border-radius: 4px;
+}
+
+@keyframes sf-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ===========================================================================
+ *  docs/16 mục 10.2 — vùng chạm ≥ 44 × 44px
+ *
+ *  Dùng cho phần tử nhìn nhỏ hơn 44px (nút đóng toast, checkbox trong bảng).
+ * ======================================================================== */
+
+.sf-touch-target {
+  position: relative;
+}
+
+.sf-touch-target::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+}
+
+/* ===========================================================================
+ *  docs/16 mục 11.15 — Sidenav
+ * ======================================================================== */
+
+.sf-sidenav {
+  width: var(--sf-sidenav-width);
+  background: var(--sf-neutral-100);
+  padding: 24px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.sf-nav-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sf-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  color: var(--sf-on-surface-variant);
+  font-size: 16px;
+  line-height: 24px;
+  text-decoration: none;
+  transition: background-color var(--sf-motion-instant), color var(--sf-motion-instant);
+}
+
+.sf-nav-item:hover {
+  background: var(--sf-neutral-200);
+  color: var(--sf-on-surface);
+}
+
+.sf-nav-item[aria-current='page'] {
+  background: var(--sf-amber-500);
+  color: var(--sf-amber-900);
+  font-weight: 700;
+}
+
+.sf-nav-item[aria-current='page']:hover {
+  background: var(--sf-amber-400);
+}
+
+.sf-nav-group-label {
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--sf-on-surface-variant);
+  padding: 0 16px;
+  margin-bottom: 4px;
+}
+
+/* ===========================================================================
+ *  docs/16 mục 11.9 — Card & thẻ chỉ số
+ * ======================================================================== */
+
+.sf-card {
+  background: var(--sf-surface);
+  border: 1px solid var(--sf-outline-variant);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--sf-shadow-xs);
+}
+
+.sf-stat-card {
+  background: var(--sf-neutral-100);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* ===========================================================================
+ *  docs/16 mục 11.17 — Bulk Action Bar
+ * ======================================================================== */
+
+.sf-bulk-bar {
+  position: sticky;
+  bottom: 16px;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: 56px;
+  padding: 12px 24px;
+  border-radius: 8px;
+  background: var(--sf-teal-700);
+  color: #ffffff;
+  box-shadow: var(--sf-shadow-lg);
+  transition: opacity var(--sf-motion-base), transform var(--sf-motion-base);
+}
+
+.sf-bulk-divider {
+  width: 1px;
+  height: 16px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* ===========================================================================
+ *  docs/16 mục 11.18 — Empty state
+ * ======================================================================== */
+
+.sf-empty {
+  background: var(--sf-neutral-100);
+  border: 2px solid var(--sf-outline-variant);
+  border-radius: 12px;
+  padding: 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.sf-empty-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 9999px;
+  background: var(--sf-neutral-200);
+  display: grid;
+  place-items: center;
+  color: var(--sf-neutral-400);
+  font-size: 32px;
+}
+
+/* ===========================================================================
+ *  Icon — Material Symbols (mục 9)
+ * ======================================================================== */
+
+.sf-icon {
+  font-family: 'Material Symbols Rounded';
+  font-weight: normal;
+  font-style: normal;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  -webkit-font-feature-settings: 'liga';
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* ===========================================================================
+ *  Ghi đè Ant Design cho những chỗ `ConfigProvider` không với tới
+ * ======================================================================== */
+
+/* Nút amber SÁNG LÊN khi hover (mục 0.1). Antd mặc định tối đi → 3.02:1, trượt AA. */
+.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover {
+  background: var(--sf-amber-400) !important;
+  color: var(--sf-amber-900) !important;
+}
+
+/* Active dùng bóng lõm + dịch 1px, KHÔNG đổi màu (mục 0.1). */
+.ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active {
+  background: var(--sf-amber-500) !important;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15) !important;
+  transform: translateY(1px);
+}
+
+/* Nút teal đặc — biến thể "Primary teal" ở mục 11.1. */
+.ant-btn.sf-btn-teal:not(:disabled) {
+  background: var(--sf-teal-700);
+  color: #ffffff;
+  border-color: var(--sf-teal-700);
+}
+
+.ant-btn.sf-btn-teal:not(:disabled):hover {
+  background: var(--sf-teal-800) !important;
+  color: #ffffff !important;
+  border-color: var(--sf-teal-800) !important;
+}
+
+.ant-btn.sf-btn-teal:not(:disabled):active {
+  background: var(--sf-teal-900) !important;
+  border-color: var(--sf-teal-900) !important;
+}
+
+/* Header bảng dính khi cuộn dọc — docs/16 mục 11.10. */
+.ant-table-thead > tr > th {
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+/* Dòng đã chọn: nền teal-50 + viền trái teal-700 (mục 11.10). */
+.ant-table-tbody > tr.ant-table-row-selected > td:first-child {
+  box-shadow: inset 2px 0 0 0 var(--sf-teal-700);
+}
+
+/* Bảng dày đặc trong drawer/modal không cần chiều cao dòng 74px. */
+.sf-table-compact .ant-table-tbody > tr > td {
+  padding-block: 8px;
+}

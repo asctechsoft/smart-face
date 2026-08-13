@@ -2561,6 +2561,10 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | POST | `/:id/terminate` | HR/ADMIN 📝 | Chấm dứt hợp đồng |
 | POST | `/import/validate` | HR/ADMIN | Kiểm tra file import |
 | POST | `/import/execute` | HR/ADMIN 📝 | Thực hiện import |
+| GET | `/:id/history` | MGR/HR/ADMIN | Lịch sử thay đổi hồ sơ (`FR-WEB-HR-02`) |
+| GET | `/:id/devices` | MGR/HR/ADMIN | Thiết bị đã liên kết (`FR-WEB-INV-06`) |
+| POST | `/:id/devices/:bindingId/revoke` | HR/ADMIN 📝 | Thu hồi liên kết thiết bị |
+| POST | `/:id/reset-biometric` | HR/ADMIN 📝 | Đặt lại sinh trắc học để đăng ký lại |
 
 ### Web Quản lý — Chính sách `/v1/admin`
 | Method | Đường dẫn | Quyền | Mô tả |
@@ -2571,7 +2575,11 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | POST | `/shifts` | HR/ADMIN 📝 | Tạo ca |
 | PUT | `/shifts/:id` | HR/ADMIN 📝 | Cập nhật ca |
 | DELETE | `/shifts/:id` | HR/ADMIN 📝 | Xoá ca (soft) |
+| GET | `/shift-assignments` | MGR/HR/ADMIN | Bảng phân ca theo khoảng ngày (`FR-WEB-HR-03`) |
 | POST | `/shift-assignments/bulk` | MGR/HR/ADMIN 📝 | Phân ca hàng loạt |
+| POST | `/shift-assignments/clear` | MGR/HR/ADMIN 📝 | Xoá phân ca trong một khoảng ngày |
+| GET | `/leave-policies` | MGR/HR/ADMIN | Chính sách phép năm (`FR-WEB-POL-07/08`) |
+| PUT | `/leave-policies` | HR/ADMIN 📝 | Tạo phiên bản mới (versioned, không ghi đè) |
 | GET | `/holidays` | MGR/HR/ADMIN | Danh mục ngày lễ |
 | POST | `/holidays` | HR/ADMIN 📝 | Thêm/sửa ngày lễ |
 | DELETE | `/holidays/:id` | HR/ADMIN 📝 | Xoá ngày lễ |
@@ -2594,6 +2602,34 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | POST | `/periods/:id/reopen` 📝 | Mở lại kỳ đã chốt |
 | POST | `/recalculate` 📝 | Tính lại theo khoảng → `202` |
 | POST | `/export` | Xuất Excel → `202` |
+
+### Web Quản lý — Công làm bù `/v1/admin/makeup` (`FR-WEB-MKUP`)
+
+Mỗi bản ghi là MỘT khoản nợ công gắn với TỐI ĐA MỘT lần làm bù — engine tính công
+cộng giờ bù vào đúng ngày `makeupWorkDate`, nên một dòng không biểu diễn được hai
+ngày bù. Bù dở dang thì phần còn nợ tự tách sang dòng mới giữ nguyên ngày phát
+sinh và hạn.
+
+| Method | Đường dẫn | Quyền | Mô tả |
+|---|---|---|---|
+| GET | `/` | MGR/HR/ADMIN | Danh sách khoản nợ + tiến độ bù |
+| GET | `/summary` | MGR/HR/ADMIN | Tổng nợ / đã bù / quá hạn + quy tắc quy đổi |
+| POST | `/` | HR/ADMIN 📝 | Ghi nhận một khoản nợ công |
+| POST | `/:id/record` | HR/ADMIN 📝 | Ghi nhận một lần làm bù |
+| POST | `/:id/extend` | HR/ADMIN 📝 | Gia hạn làm bù |
+| POST | `/:id/cancel` | HR/ADMIN 📝 | Huỷ khoản ghi nhầm (chỉ khi chưa bù giờ nào) |
+
+### Web Quản lý — Loại đơn & luồng duyệt `/v1/admin/request-types` (`FR-WEB-REQ-05`)
+
+**Không có MANAGER**, kể cả quyền đọc: duyệt đơn là việc của quản lý, còn quyết
+định "đơn trên 3 ngày có cần HR duyệt không" là chính sách công ty.
+
+| Method | Đường dẫn | Quyền | Mô tả |
+|---|---|---|---|
+| GET | `/` | HR/ADMIN | Danh mục loại đơn kèm luồng duyệt và số đơn đã phát sinh |
+| POST | `/` | HR/ADMIN 📝 | Tạo loại đơn |
+| PATCH | `/:id` | HR/ADMIN 📝 | Sửa loại đơn (mã khoá sau khi có đơn phát sinh) |
+| PUT | `/:id/approval-flow` | HR/ADMIN 📝 | Thay toàn bộ luồng duyệt |
 
 ### Web Quản lý — Báo cáo & Gian lận & Audit
 | Method | Đường dẫn | Quyền | Mô tả |

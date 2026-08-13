@@ -1,16 +1,31 @@
 import { Injectable } from '@nestjs/common';
 import { AppException } from 'src/common/errors';
-import { eachWorkDate, parseWorkDate, weekdayOf } from 'src/common/utils';
+import {
+  buildMeta,
+  eachWorkDate,
+  formatWorkDate,
+  parseWorkDate,
+  weekdayOf,
+} from 'src/common/utils';
 import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import {
   BulkShiftAssignmentDto,
+  ClearShiftAssignmentDto,
+  ShiftAssignmentQueryDto,
   UpsertBranchDto,
   UpsertDepartmentDto,
   UpsertHolidayDto,
+  UpsertLeavePolicyDto,
   UpsertShiftDto,
 } from './dto/policy.dto';
 import { PolicyRepository, ShiftWithSegments } from './policy.repository';
 import { PolicyService } from './policy.service';
+
+/** Trần khoảng ngày của bảng phân ca — hai tháng là đủ cho mọi thao tác xếp lịch thật. */
+const MAX_BOARD_DAYS = 62;
+
+/** NFR-LEGAL-07 — Điều 113 Bộ luật Lao động 2019, điều kiện làm việc bình thường. */
+const STATUTORY_MIN_LEAVE_DAYS = 12;
 
 /**
  * CRUD chính sách cho Web Quản lý (FR-WEB-POL, FR-WEB-INV-04).
@@ -203,6 +218,157 @@ export class PolicyAdminService {
       dayCount: dates.length,
       skippedEmployeeIds: dto.employeeIds.filter((id) => !validIds.has(id)),
     };
+  }
+
+  /**
+   * Bảng phân ca của một khoảng ngày — FR-WEB-HR-03.
+   *
+   * Trả về đồng thời DÒNG (nhân viên trong phạm vi) và Ô (bản ghi phân ca) trong
+   * một lượt gọi. Tách thành hai endpoint thì giao diện phải tự ghép, và trong
+   * khoảnh khắc chỉ một trong hai về tới nơi thì lịch hiện ra trống trơn — người
+   * dùng đọc thành "cả phòng chưa được xếp ca" và bắt đầu xếp đè lên lịch cũ.
+   *
+   * Nhân viên được phân trang, ngày thì không: 25 người × 31 ngày là kích thước
+   * đọc được trên một màn hình, còn số ngày do người dùng chọn và bị chặn trần
+   * ở `MAX_BOARD_DAYS`.
+   */
+  async getShiftBoard(
+    companyId: string,
+    query: ShiftAssignmentQueryDto,
+    departmentScope: string[] | null,
+  ) {
+    const from = parseWorkDate(query.from);
+    const to = parseWorkDate(query.to);
+
+    if (to < from) {
+      throw new AppException('SYS_VALIDATION_ERROR', {
+        reason: 'Ngày kết thúc trước ngày bắt đầu.',
+      });
+    }
+    const dayCount = eachWorkDate(from, to).length;
+    if (dayCount > MAX_BOARD_DAYS) {
+      throw new AppException('SYS_VALIDATION_ERROR', {
+        reason: `Khoảng ngày tối đa ${MAX_BOARD_DAYS} ngày, đang xin ${dayCount} ngày.`,
+      });
+    }
+
+    const { items: employees, total } = await this.policies.searchAssignableEmployees(companyId, {
+      departmentId: query.departmentId,
+      departmentScope,
+      q: query.q,
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+    });
+
+    const assignments = await this.policies.findShiftAssignments(
+      companyId,
+      employees.map((employee) => employee.id),
+      from,
+      to,
+    );
+
+    const holidays = await this.policies.listHolidays(companyId);
+
+    return {
+      from: query.from,
+      to: query.to,
+      employees,
+      assignments: assignments.map((row) => ({
+        id: row.id,
+        employeeId: row.employeeId,
+        shiftId: row.shiftId,
+        // Trả chuỗi `YYYY-MM-DD` chứ không phải ISO datetime: `workDate` là ngày
+        // làm việc theo lịch công ty, không có giờ. Để nguyên `Date` thì client
+        // ở múi giờ âm sẽ hiển thị lệch một ngày.
+        workDate: formatWorkDate(row.workDate),
+      })),
+      // Ngày lễ hiển thị mờ trên lịch để người xếp ca không xếp nhầm vào ngày nghỉ.
+      holidays: holidays
+        .filter((holiday) => {
+          const date = holiday.substituteDate ?? holiday.date;
+          return date >= from && date <= to;
+        })
+        .map((holiday) => ({
+          name: holiday.name,
+          date: formatWorkDate(holiday.substituteDate ?? holiday.date),
+        })),
+      meta: buildMeta(query.page, query.pageSize, total),
+    };
+  }
+
+  /** Dọn lịch một khoảng ngày trước khi xếp lại (FR-WEB-HR-04). */
+  async clearShiftAssignments(companyId: string, dto: ClearShiftAssignmentDto) {
+    const validIds = await this.policies.findEmployeeIdsInCompany(companyId, dto.employeeIds);
+    if (validIds.length === 0) {
+      return { deleted: 0, employeeCount: 0 };
+    }
+
+    const deleted = await this.policies.deleteShiftAssignments(
+      companyId,
+      validIds,
+      parseWorkDate(dto.from),
+      parseWorkDate(dto.to),
+    );
+    return { deleted, employeeCount: validIds.length };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chính sách phép năm (FR-WEB-POL-07, FR-WEB-POL-08)
+  // ---------------------------------------------------------------------------
+
+  async listLeavePolicies(companyId: string) {
+    const policies = await this.policies.listLeavePolicies(companyId);
+    return policies.map((policy) => ({
+      ...policy,
+      baseDaysPerYear: policy.baseDaysPerYear.toNumber(),
+      seniorityBonusDays: policy.seniorityBonusDays.toNumber(),
+      maxCarryOverDays: policy.maxCarryOverDays?.toNumber() ?? null,
+      /** Bản đang áp dụng là bản chưa bị đóng — giao diện dùng để làm nổi bật. */
+      isCurrent: policy.effectiveTo === null,
+    }));
+  }
+
+  /**
+   * Tạo phiên bản mới của chính sách phép — D6, KHÔNG ghi đè.
+   *
+   * Sửa đè bản cũ nghĩa là "công ty đã luôn cho 15 ngày phép", và số phép đã cấp
+   * hồi tháng 1 theo mức 12 ngày trở thành không giải thích được. Vì vậy mỗi lần
+   * lưu là đóng bản đang mở rồi mở bản mới.
+   */
+  async upsertLeavePolicy(companyId: string, dto: UpsertLeavePolicyDto) {
+    // NFR-LEGAL-07 — Điều 113 Bộ luật Lao động 2019. Chặn ở Backend chứ không chỉ
+    // cảnh báo ở giao diện: đây là ngưỡng pháp lý, không phải gợi ý.
+    if (dto.baseDaysPerYear < STATUTORY_MIN_LEAVE_DAYS) {
+      throw new AppException('POL_LEAVE_BELOW_STATUTORY', {
+        provided: dto.baseDaysPerYear,
+        minimum: STATUTORY_MIN_LEAVE_DAYS,
+      });
+    }
+
+    const contractType = dto.contractType ?? null;
+    const effectiveFrom = dto.effectiveFrom ? new Date(dto.effectiveFrom) : new Date();
+
+    return this.transactions.run(async (tx) => {
+      await this.policies.closeOpenLeavePolicy(companyId, contractType, effectiveFrom, tx);
+
+      return this.policies.createLeavePolicy(
+        companyId,
+        {
+          contractType,
+          baseDaysPerYear: dto.baseDaysPerYear,
+          seniorityBonusDays: dto.seniorityBonusDays ?? 0,
+          seniorityEveryYears: dto.seniorityEveryYears ?? 5,
+          allowCarryOver: dto.allowCarryOver ?? false,
+          maxCarryOverDays: dto.maxCarryOverDays ?? null,
+          // Cho cộng dồn mà không đặt hạn dùng thì phép tích luỹ vô hạn và thành
+          // một khoản nợ tiền mặt khi nhân viên nghỉ việc — mặc định hết Q1.
+          carryOverExpireMonth: dto.allowCarryOver ? (dto.carryOverExpireMonth ?? 3) : null,
+          accrualMode: dto.accrualMode ?? 'YEARLY',
+          effectiveFrom,
+        },
+        tx,
+      );
+    });
   }
 
   // ---------------------------------------------------------------------------

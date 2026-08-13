@@ -682,6 +682,21 @@ export const ERROR_CATALOG = {
     messageEn: 'A rejection reason is required.',
     retryable: true,
   },
+  REQ_TYPE_CODE_TAKEN: {
+    status: HttpStatus.CONFLICT,
+    message: 'Mã loại đơn này đã tồn tại trong công ty.',
+    messageEn: 'This request type code already exists in the company.',
+    hint: 'Đổi mã khác, hoặc sửa loại đơn đang có thay vì tạo mới.',
+    retryable: true,
+  },
+  /** FR-WEB-REQ-05 — luồng duyệt sai cấu hình khiến đơn treo không ai duyệt được. */
+  REQ_FLOW_INVALID: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Luồng duyệt không hợp lệ.',
+    messageEn: 'The approval flow configuration is invalid.',
+    hint: 'Luồng phải có ít nhất một cấp bắt buộc, thứ tự các cấp liên tục từ 1 và không trùng nhau.',
+    retryable: true,
+  },
 
   // ==========================================================================
   //  PAY_ — Tính công / lương
@@ -797,6 +812,21 @@ export const ERROR_CATALOG = {
     hint: 'Tải file mẫu và giữ nguyên thứ tự cột.',
     retryable: true,
   },
+  /** FR-WEB-INV-06 — thu hồi liên kết thiết bị của nhân viên. */
+  EMP_DEVICE_NOT_FOUND: {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Không tìm thấy thiết bị đang liên kết với nhân viên này.',
+    messageEn: 'No active device binding found for this employee.',
+    hint: 'Liên kết có thể đã bị thu hồi trước đó. Tải lại danh sách thiết bị.',
+    retryable: false,
+  },
+  EMP_NO_ACCOUNT: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Nhân viên chưa có tài khoản đăng nhập.',
+    messageEn: 'This employee has no login account yet.',
+    hint: 'Hồ sơ chưa kích hoạt thì chưa phát sinh thiết bị hay dữ liệu sinh trắc học.',
+    retryable: false,
+  },
 
   // ==========================================================================
   //  POL_ — Chính sách, ca làm việc
@@ -832,6 +862,51 @@ export const ERROR_CATALOG = {
     status: HttpStatus.NOT_FOUND,
     message: 'Không tìm thấy phòng ban.',
     messageEn: 'Department not found.',
+    retryable: false,
+  },
+  /** NFR-LEGAL-07 — phép năm tối thiểu 12 ngày cho điều kiện làm việc bình thường. */
+  POL_LEAVE_BELOW_STATUTORY: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Số ngày phép năm thấp hơn mức tối thiểu của Bộ luật Lao động.',
+    messageEn: 'Annual leave entitlement is below the statutory minimum.',
+    hint: 'Điều 113 Bộ luật Lao động 2019: tối thiểu 12 ngày/năm với điều kiện làm việc bình thường.',
+    retryable: true,
+  },
+  POL_LEAVE_POLICY_NOT_FOUND: {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Không tìm thấy chính sách phép năm.',
+    messageEn: 'Leave policy not found.',
+    retryable: false,
+  },
+
+  // ==========================================================================
+  //  MKUP_ — Công làm bù (docs/04 mục 5)
+  // ==========================================================================
+  MKUP_NOT_FOUND: {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Không tìm thấy bản ghi làm bù.',
+    messageEn: 'Makeup work record not found.',
+    retryable: false,
+  },
+  MKUP_ALREADY_CLOSED: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Bản ghi làm bù đã hoàn tất hoặc đã hết hạn.',
+    messageEn: 'This makeup record is already completed or expired.',
+    hint: 'Chỉ ghi nhận thêm giờ bù được cho bản ghi đang mở hoặc đang bù dở.',
+    retryable: false,
+  },
+  MKUP_EXCEEDS_DEBT: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Số phút làm bù vượt quá số phút còn nợ.',
+    messageEn: 'Makeup minutes exceed the outstanding debt.',
+    hint: 'Ghi nhận tối đa bằng số phút còn nợ. Phần dư xử lý theo chính sách giờ dư.',
+    retryable: true,
+  },
+  MKUP_OVERDUE: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Đã quá hạn làm bù cho khoản nợ công này.',
+    messageEn: 'The makeup deadline for this debt has passed.',
+    hint: 'Hạn làm bù cấu hình ở Chính sách → makeup.dueDays. Muốn ghi nhận thì gia hạn trước.',
     retryable: false,
   },
 

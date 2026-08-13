@@ -37,6 +37,7 @@ Bộ tài liệu này được sinh từ **Tài liệu mô tả nghiệp vụ (P
 | [14-so-do-quan-he-bang-du-lieu.md](./14-so-do-quan-he-bang-du-lieu.md) | Sơ đồ quan hệ giữa các bảng dữ liệu | (suy dẫn) |
 | [15-danh-muc-api-backend.md](./15-danh-muc-api-backend.md) | **Danh mục API đã thi công**: ~100 endpoint đọc trực tiếp từ controller, mỗi endpoint có mô tả "làm gì / vì sao vậy" + ví dụ `curl` + mã lỗi. Kèm kịch bản đầu-cuối và bảng sai lầm thường gặp | (từ mã nguồn) |
 | [16-quy-chuan-style-guide.md](./16-quy-chuan-style-guide.md) | **Quy chuẩn giao diện (đã chốt)**: thang màu 60 bậc (OKLCH, giữ nguyên 16 màu gốc Figma), token ngữ nghĩa, thang chữ, spacing, bo góc, đổ bóng, chuyển động, z-index, breakpoint, 20 component đủ 5 trạng thái, chế độ tối. Kèm cấu hình Ant Design + Tailwind + Flutter. **52/52 cặp màu đạt WCAG AA, 0 lỗi** | (từ Figma) |
+| [17-tai-khoan-test.md](./17-tai-khoan-test.md) | **Tài khoản đăng nhập để test**: 5 tài khoản seed và mật khẩu chung, nên dùng tài khoản nào cho phân hệ nào, vai trò nào thấy được gì, điều kiện để đăng nhập chạy được, cách tạo lại, và bảng lỗi hay gặp kèm nguyên nhân thật | (từ mã nguồn) |
 
 ---
 

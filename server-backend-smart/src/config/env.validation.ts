@@ -2,6 +2,19 @@ import { Logger } from '@nestjs/common';
 
 const logger = new Logger('EnvValidation');
 
+/**
+ * Đọc cờ bật/tắt theo ĐÚNG quy ước của `bool()` trong configuration.ts —
+ * kể cả việc coi chuỗi rỗng là "không khai" nên rơi về mặc định.
+ *
+ * Lệch quy ước giữa hai file là kiểu lỗi tệ nhất: `REDIS_ENABLED=off` bị chỗ này
+ * cho qua nhưng chỗ kia hiểu là tắt, và không ai phát hiện cho tới khi
+ * production chạy bằng bộ nhớ trong.
+ */
+function isEnabled(value: unknown, fallback: boolean): boolean {
+  if (value === undefined || value === null || value === '') return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
 /** Biến bắt buộc phải có ở MỌI môi trường. */
 const REQUIRED = ['DATABASE_URL'];
 
@@ -50,6 +63,24 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
 
     if (config.OTP_DEBUG_RETURN && String(config.OTP_DEBUG_RETURN).toLowerCase() === 'true') {
       throw new Error('OTP_DEBUG_RETURN phải TẮT ở production — nếu bật sẽ lộ mã OTP qua API.');
+    }
+
+    // REDIS_ENABLED=false thay Redis bằng một Map trong tiến trình. Ở production
+    // điều đó phá ba thứ cùng lúc:
+    //   - Rate limit (AF-13) tính riêng từng pod → rải request qua pod khác là
+    //     bộ đếm về 0, chốt chống dò mật khẩu/OTP coi như không có.
+    //   - Nonce chống replay (AF-12) không dùng chung → cùng một chữ ký dùng lại
+    //     ở pod khác vẫn qua.
+    //   - Job nền bị VỨT BỎ chứ không xếp hàng → không tính lương, không gửi OTP.
+    //
+    // Đây là cờ dành cho máy lập trình viên. Cảnh báo thì sẽ có người bỏ qua rồi
+    // đẩy nhầm lên production, nên cho chết ngay lúc khởi động.
+    if (!isEnabled(config.REDIS_ENABLED, true)) {
+      throw new Error(
+        'REDIS_ENABLED=false chỉ dùng được ở môi trường phát triển. Ở production nó khiến ' +
+          'rate limit và nonce chống replay chỉ còn hiệu lực trong một tiến trình, đồng thời ' +
+          'mọi job nền (tính lương, gửi OTP, xuất file) bị bỏ qua thay vì xếp hàng.',
+      );
     }
 
     // Auth Emulator KHÔNG kiểm chữ ký ID token: nó chấp nhận token do bất kỳ ai

@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AttendanceModule } from '../attendance/attendance.module';
+import { RequestConfigController } from './request-config.controller';
+import { RequestConfigService } from './request-config.service';
 import { RequestController } from './request.controller';
 import { RequestRepository } from './request.repository';
 import { RequestService } from './request.service';
@@ -13,8 +15,8 @@ import { RequestService } from './request.service';
  */
 @Module({
   imports: [AttendanceModule],
-  controllers: [RequestController],
-  providers: [RequestRepository, RequestService],
+  controllers: [RequestController, RequestConfigController],
+  providers: [RequestRepository, RequestService, RequestConfigService],
   exports: [RequestRepository, RequestService],
 })
 export class RequestModule {}

@@ -20,6 +20,35 @@ function list(value: string | undefined): string[] {
     .filter(Boolean);
 }
 
+/**
+ * REDIS_ENABLED — ngoại lệ DUY NHẤT được đọc `process.env` ngoài `configuration()`.
+ *
+ * Lý do: cờ này quyết định QueueModule/WorkerModule có đăng ký BullMQ hay không,
+ * mà danh sách provider của một module được dựng lúc nạp file, tức là TRƯỚC khi
+ * Nest tạo DI container và `ConfigService` tồn tại. Không có cách nào hỏi
+ * `ConfigService` ở thời điểm đó.
+ *
+ * ⚠ Ràng buộc thứ tự import: hàm này chỉ đọc được giá trị trong `.env` sau khi
+ * `AppConfigModule` đã nạp (chính nó gọi `ConfigModule.forRoot` → dotenv). Vì vậy
+ * `app.module.ts` và `worker.ts` PHẢI import `AppConfigModule` trước
+ * `QueueModule`/`WorkerModule`. Đảo thứ tự thì cờ luôn nhận giá trị mặc định
+ * `true` và ứng dụng lại đi tìm Redis — hỏng âm thầm, không lỗi biên dịch.
+ *
+ * Mọi nơi khác trong code phải đọc qua `config.get('redis.enabled')`.
+ */
+export function isRedisEnabled(): boolean {
+  return bool(process.env.REDIS_ENABLED, true);
+}
+
+/**
+ * WORKER_ENABLED — cùng lý do và cùng ràng buộc thứ tự import như
+ * {@link isRedisEnabled}: nó quyết định `WorkerModule` có đăng ký processor hay
+ * không, mà việc đó xảy ra lúc nạp file.
+ */
+export function isWorkerEnabled(): boolean {
+  return bool(process.env.WORKER_ENABLED, true);
+}
+
 export const configuration = () => ({
   app: {
     name: process.env.APP_NAME ?? 'SmartFace',
@@ -67,6 +96,16 @@ export const configuration = () => ({
   },
 
   redis: {
+    /**
+     * `false` → chạy toàn bộ Backend KHÔNG cần Redis: cache/nonce/rate limit
+     * chuyển sang bộ nhớ trong tiến trình, BullMQ không được đăng ký, job nền
+     * bị bỏ qua thay vì xếp hàng.
+     *
+     * CHỈ dành cho máy lập trình viên chưa dựng được Redis. Xem `MemoryStore`
+     * để biết chính xác những gì mất đi, và `env.validation.ts` — production
+     * đặt `false` sẽ chết ngay lúc khởi động.
+     */
+    enabled: isRedisEnabled(),
     host: process.env.REDIS_HOST ?? 'localhost',
     port: int(process.env.REDIS_PORT, 6379),
     password: process.env.REDIS_PASSWORD || undefined,

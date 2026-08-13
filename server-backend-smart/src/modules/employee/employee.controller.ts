@@ -24,6 +24,7 @@ import {
   ImportValidateDto,
   LifecycleActionDto,
   PreviewCodeDto,
+  SensitiveActionDto,
   UpdateEmployeeDto,
 } from './dto/employee.dto';
 import { EmployeeService } from './employee.service';
@@ -76,7 +77,12 @@ export class EmployeeAdminController {
     description:
       'Nhân viên đăng nhập bằng SĐT này sẽ được nhận diện là đã có hồ sơ và BỎ QUA màn nhập mã mời (FR-APP-AUTH-07).',
   })
-  @ApiErrors('AUTH_PHONE_INVALID', 'EMP_PHONE_TAKEN', 'EMP_CODE_TAKEN', 'PLAN_EMPLOYEE_LIMIT_REACHED')
+  @ApiErrors(
+    'AUTH_PHONE_INVALID',
+    'EMP_PHONE_TAKEN',
+    'EMP_CODE_TAKEN',
+    'PLAN_EMPLOYEE_LIMIT_REACHED',
+  )
   create(@CurrentTenant() ctx: TenantContext, @Body() dto: CreateEmployeeDto) {
     return this.employees.create(ctx, dto);
   }
@@ -119,7 +125,8 @@ export class EmployeeAdminController {
   @Audit({ action: 'EMPLOYEE_DELETE', targetType: 'EMPLOYEE' })
   @ApiOperation({
     summary: 'Xoá hồ sơ',
-    description: 'CHỈ xoá được hồ sơ PENDING_ACTIVATION. Hồ sơ đã kích hoạt thì tạm ngưng/chấm dứt.',
+    description:
+      'CHỈ xoá được hồ sơ PENDING_ACTIVATION. Hồ sơ đã kích hoạt thì tạm ngưng/chấm dứt.',
   })
   @ApiErrors('EMP_NOT_FOUND', 'EMP_DELETE_NOT_ALLOWED')
   remove(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
@@ -183,6 +190,72 @@ export class EmployeeAdminController {
     @Body() dto: LifecycleActionDto,
   ) {
     return this.employees.terminate(ctx, id, dto.reason, dto.effectiveDate);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Hồ sơ mở rộng: lịch sử, thiết bị, sinh trắc học
+  // ---------------------------------------------------------------------------
+
+  @Get(':id/history')
+  @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Lịch sử thay đổi hồ sơ (FR-WEB-HR-02)',
+    description:
+      'Dựng từ audit log của chính nhân viên này: đổi phòng ban, đổi vai trò, tạm ngưng, chấm dứt — kèm giá trị trước/sau và lý do.',
+  })
+  @ApiErrors('EMP_NOT_FOUND')
+  history(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
+    return this.employees.listHistory(ctx.companyId, id);
+  }
+
+  @Get(':id/devices')
+  @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Thiết bị đã liên kết (FR-WEB-INV-06)',
+    description: 'BR-11: mỗi tài khoản chỉ một thiết bị hoạt động. Trả kèm cả liên kết đã thu hồi.',
+  })
+  @ApiErrors('EMP_NOT_FOUND', 'EMP_NO_ACCOUNT')
+  devices(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
+    return this.employees.listDevices(ctx.companyId, id);
+  }
+
+  @Post(':id/devices/:bindingId/revoke')
+  @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @Audit({ action: 'EMPLOYEE_DEVICE_REVOKE', targetType: 'EMPLOYEE', requireReason: true })
+  @ApiOperation({
+    summary: 'Thu hồi liên kết thiết bị',
+    description:
+      'Thu hồi kèm huỷ toàn bộ phiên đăng nhập của tài khoản — access token đã phát vẫn mang deviceId cũ nên chỉ xoá binding là chưa chặn được.',
+  })
+  @ApiErrors('EMP_NOT_FOUND', 'EMP_NO_ACCOUNT', 'EMP_DEVICE_NOT_FOUND')
+  revokeDevice(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Param('bindingId') bindingId: string,
+    @Body() dto: SensitiveActionDto,
+  ) {
+    return this.employees.revokeDevice(ctx, id, bindingId, dto.reason);
+  }
+
+  @Post(':id/reset-biometric')
+  @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @HttpCode(HttpStatus.OK)
+  @Audit({ action: 'EMPLOYEE_BIOMETRIC_RESET', targetType: 'EMPLOYEE', requireReason: true })
+  @ApiOperation({
+    summary: 'Đặt lại dữ liệu sinh trắc học để nhân viên đăng ký lại',
+    description:
+      'Vô hiệu hoá embedding và khoá vân tay hiện tại (không xoá — chúng là bằng chứng đối chiếu cho các lượt đã chấm). Nhân viên nhận thông báo phải đăng ký lại.',
+  })
+  @ApiErrors('EMP_NOT_FOUND')
+  resetBiometric(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: SensitiveActionDto,
+  ) {
+    return this.employees.resetBiometric(ctx, id, dto.reason);
   }
 
   // ---------------------------------------------------------------------------

@@ -129,6 +129,46 @@ describe('validateEnv — chốt chặn cấu hình production', () => {
   //  Các chốt còn lại
   // ===========================================================================
 
+  describe('REDIS_ENABLED', () => {
+    it('CHẶN tắt Redis ở production', () => {
+      // Tắt Redis đẩy rate limit (AF-13) và nonce chống replay (AF-12) vào bộ
+      // nhớ của từng tiến trình. Nhiều pod thì kẻ tấn công chỉ cần rải request
+      // trúng pod khác là bộ đếm về 0 — chốt chống lạm dụng coi như không có.
+      expect(() => validateEnv(productionEnv({ REDIS_ENABLED: 'false' }))).toThrow(/REDIS_ENABLED/);
+    });
+
+    it.each(['false', '0', 'no', 'off'])('CHẶN mọi cách viết "tắt": %s', (value) => {
+      // Phải khớp ĐÚNG quy ước của `bool()` trong configuration.ts. Lệch nhau thì
+      // chốt này cho qua trong khi ứng dụng lại chạy bằng bộ nhớ trong.
+      expect(() => validateEnv(productionEnv({ REDIS_ENABLED: value }))).toThrow(/REDIS_ENABLED/);
+    });
+
+    it.each(['true', '1', 'yes', 'on'])('CHO PHÉP khi bật tường minh: %s', (value) => {
+      expect(() => validateEnv(productionEnv({ REDIS_ENABLED: value }))).not.toThrow();
+    });
+
+    it('không khai thì mặc định là BẬT nên đi qua', () => {
+      const env = productionEnv();
+      delete (env as Record<string, unknown>).REDIS_ENABLED;
+
+      expect(() => validateEnv(env)).not.toThrow();
+    });
+
+    it('chuỗi rỗng coi như không khai, giống bool() trong configuration.ts', () => {
+      expect(() => validateEnv(productionEnv({ REDIS_ENABLED: '' }))).not.toThrow();
+    });
+
+    it('CHO PHÉP tắt ở môi trường phát triển', () => {
+      expect(() =>
+        validateEnv({
+          NODE_ENV: 'development',
+          DATABASE_URL: 'postgresql://localhost:5432/db',
+          REDIS_ENABLED: 'false',
+        }),
+      ).not.toThrow();
+    });
+  });
+
   it('CHẶN khi bật trả OTP ra API ở production', () => {
     expect(() => validateEnv(productionEnv({ OTP_DEBUG_RETURN: 'true' }))).toThrow(/OTP/);
   });

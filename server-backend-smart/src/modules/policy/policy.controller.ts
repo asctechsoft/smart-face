@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -11,15 +13,19 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
-import { Audit, CurrentTenant, Roles } from 'src/common/decorators';
+import { Audit, CurrentTenant, DepartmentScoped, Roles } from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
+import { resolveDepartmentScope } from 'src/common/guards/scope.guard';
 import type { TenantContext } from 'src/common/types/request-context';
 import {
   BulkShiftAssignmentDto,
+  ClearShiftAssignmentDto,
+  ShiftAssignmentQueryDto,
   UpdatePoliciesDto,
   UpsertBranchDto,
   UpsertDepartmentDto,
   UpsertHolidayDto,
+  UpsertLeavePolicyDto,
   UpsertShiftDto,
 } from './dto/policy.dto';
 import { PolicyAdminService } from './policy-admin.service';
@@ -135,6 +141,26 @@ export class PolicyController {
     return this.admin.deleteShift(ctx.companyId, id);
   }
 
+  /**
+   * Lịch phân ca của một khoảng ngày — FR-WEB-HR-03.
+   *
+   * `@DepartmentScoped()` chứ không chỉ `@Roles`: quản lý phòng A xếp ca được,
+   * nhưng chỉ cho người phòng A. Guard chặn việc lọc sang phòng khác, còn phạm
+   * vi thực sự do service chèn vào truy vấn (docs/04 mục 1).
+   */
+  @Get('shift-assignments')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Bảng phân ca theo khoảng ngày (FR-WEB-HR-03)',
+    description:
+      'Trả về nhân viên trong phạm vi (có phân trang), bản ghi phân ca và ngày lễ rơi vào khoảng — đủ để dựng lịch trong một lượt gọi.',
+  })
+  @ApiErrors('SYS_VALIDATION_ERROR')
+  listAssignments(@CurrentTenant() ctx: TenantContext, @Query() query: ShiftAssignmentQueryDto) {
+    return this.admin.getShiftBoard(ctx.companyId, query, resolveDepartmentScope(ctx));
+  }
+
   @Post('shift-assignments/bulk')
   @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
   @Audit({ action: 'SHIFT_ASSIGN_BULK', targetType: 'SHIFT' })
@@ -142,6 +168,49 @@ export class PolicyController {
   @ApiErrors('POL_SHIFT_NOT_FOUND')
   bulkAssign(@CurrentTenant() ctx: TenantContext, @Body() dto: BulkShiftAssignmentDto) {
     return this.admin.bulkAssignShifts(ctx.companyId, dto, ctx.userId);
+  }
+
+  /**
+   * Dùng POST chứ không phải DELETE: thao tác nhận một danh sách nhân viên và
+   * một khoảng ngày trong body. `DELETE` kèm body được nhiều proxy và thư viện
+   * HTTP cắt bỏ âm thầm — request tới nơi với body rỗng thì `employeeIds` trống,
+   * và tuỳ cách viết truy vấn, kết quả có thể là xoá lịch của cả công ty.
+   */
+  @Post('shift-assignments/clear')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @HttpCode(HttpStatus.OK)
+  @Audit({ action: 'SHIFT_ASSIGN_CLEAR', targetType: 'SHIFT' })
+  @ApiOperation({ summary: 'Xoá phân ca trong một khoảng ngày (FR-WEB-HR-04)' })
+  clearAssignments(@CurrentTenant() ctx: TenantContext, @Body() dto: ClearShiftAssignmentDto) {
+    return this.admin.clearShiftAssignments(ctx.companyId, dto);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Chính sách phép năm (FR-WEB-POL-07, FR-WEB-POL-08)
+  // ---------------------------------------------------------------------------
+
+  @Get('leave-policies')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @ApiOperation({
+    summary: 'Chính sách phép năm theo loại hợp đồng',
+    description:
+      'Gồm cả các bản đã bị đóng (`effectiveTo` khác null) để tra cứu số phép đã cấp ở kỳ trước được tính theo luật nào.',
+  })
+  listLeavePolicies(@CurrentTenant() ctx: TenantContext) {
+    return this.admin.listLeavePolicies(ctx.companyId);
+  }
+
+  @Put('leave-policies')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL)
+  @Audit({ action: 'LEAVE_POLICY_UPDATE', targetType: 'COMPANY' })
+  @ApiOperation({
+    summary: 'Tạo phiên bản mới của chính sách phép năm',
+    description:
+      'D6: đóng bản đang hiệu lực rồi mở bản mới, không ghi đè. NFR-LEGAL-07: chặn mức dưới 12 ngày/năm.',
+  })
+  @ApiErrors('POL_LEAVE_BELOW_STATUTORY')
+  upsertLeavePolicy(@CurrentTenant() ctx: TenantContext, @Body() dto: UpsertLeavePolicyDto) {
+    return this.admin.upsertLeavePolicy(ctx.companyId, dto);
   }
 
   // ---------------------------------------------------------------------------

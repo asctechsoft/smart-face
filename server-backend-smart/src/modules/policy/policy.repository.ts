@@ -1,9 +1,48 @@
 import { Injectable } from '@nestjs/common';
-import { Branch, Company, CompanyPolicy, Holiday, Prisma, ShiftType } from '@prisma/client';
+import {
+  Branch,
+  Company,
+  CompanyPolicy,
+  EmployeeStatus,
+  Holiday,
+  LeaveBalance,
+  LeavePolicy,
+  Prisma,
+  ShiftType,
+} from '@prisma/client';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
 export type ShiftWithSegments = Prisma.ShiftGetPayload<{ include: { segments: true } }>;
+
+/** Một dòng của bảng phân ca — nhân viên kèm phòng ban để nhóm trên giao diện. */
+export interface ShiftBoardEmployee {
+  id: string;
+  fullName: string;
+  employeeCode: string;
+  status: EmployeeStatus;
+  department: { id: string; name: string } | null;
+}
+
+export interface ShiftAssignmentRow {
+  id: string;
+  employeeId: string;
+  shiftId: string;
+  workDate: Date;
+  createdBy: string | null;
+}
+
+export interface LeavePolicyWriteInput {
+  contractType: string | null;
+  baseDaysPerYear: number;
+  seniorityBonusDays: number;
+  seniorityEveryYears: number;
+  allowCarryOver: boolean;
+  maxCarryOverDays: number | null;
+  carryOverExpireMonth: number | null;
+  accrualMode: string;
+  effectiveFrom: Date;
+}
 export type DepartmentWithCount = Prisma.DepartmentGetPayload<{
   include: { _count: { select: { employees: true } } };
 }>;
@@ -311,6 +350,130 @@ export class PolicyRepository extends BaseRepository {
       select: { id: true },
     });
     return rows.map((row) => row.id);
+  }
+
+  /**
+   * Danh sách nhân viên làm DÒNG của bảng phân ca (FR-WEB-HR-03).
+   *
+   * Chỉ lấy người còn đi làm được: hồ sơ `TERMINATED` không xếp ca được nữa, mà
+   * để lẫn vào bảng thì tháng nào cũng có vài dòng trống không ai hiểu vì sao.
+   */
+  async searchAssignableEmployees(
+    companyId: string,
+    filter: {
+      departmentId?: string;
+      departmentScope: string[] | null;
+      q?: string;
+      skip: number;
+      take: number;
+    },
+  ): Promise<{ items: ShiftBoardEmployee[]; total: number }> {
+    const where: Prisma.EmployeeWhereInput = {
+      companyId,
+      deletedAt: null,
+      status: { in: [EmployeeStatus.ACTIVE, EmployeeStatus.PENDING_ACTIVATION] },
+    };
+
+    if (filter.departmentId) where.departmentId = filter.departmentId;
+    // Phạm vi của MANAGER thu hẹp, không mở rộng — ghi đè bộ lọc client gửi lên.
+    if (filter.departmentScope) where.departmentId = { in: filter.departmentScope };
+    if (filter.q) {
+      where.OR = [
+        { fullName: { contains: filter.q, mode: 'insensitive' } },
+        { employeeCode: { contains: filter.q, mode: 'insensitive' } },
+      ];
+    }
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.employee.findMany({
+        where,
+        select: {
+          id: true,
+          fullName: true,
+          employeeCode: true,
+          status: true,
+          department: { select: { id: true, name: true } },
+        },
+        orderBy: [{ department: { name: 'asc' } }, { fullName: 'asc' }],
+        skip: filter.skip,
+        take: filter.take,
+      }),
+      this.prisma.employee.count({ where }),
+    ]);
+
+    return { items, total };
+  }
+
+  async findShiftAssignments(
+    companyId: string,
+    employeeIds: string[],
+    from: Date,
+    to: Date,
+  ): Promise<ShiftAssignmentRow[]> {
+    if (employeeIds.length === 0) return [];
+    return this.db().shiftAssignment.findMany({
+      where: { companyId, employeeId: { in: employeeIds }, workDate: { gte: from, lte: to } },
+      select: { id: true, employeeId: true, shiftId: true, workDate: true, createdBy: true },
+      orderBy: { workDate: 'asc' },
+    });
+  }
+
+  async deleteShiftAssignments(
+    companyId: string,
+    employeeIds: string[],
+    from: Date,
+    to: Date,
+  ): Promise<number> {
+    const result = await this.db().shiftAssignment.deleteMany({
+      where: { companyId, employeeId: { in: employeeIds }, workDate: { gte: from, lte: to } },
+    });
+    return result.count;
+  }
+
+  // ===========================================================================
+  //  Chính sách phép năm (FR-WEB-POL-07, FR-WEB-POL-08)
+  // ===========================================================================
+
+  async listLeavePolicies(companyId: string): Promise<LeavePolicy[]> {
+    return this.db().leavePolicy.findMany({
+      where: { companyId },
+      orderBy: [{ effectiveFrom: 'desc' }, { contractType: 'asc' }],
+    });
+  }
+
+  async findLeavePolicy(companyId: string, id: string): Promise<LeavePolicy | null> {
+    return this.db().leavePolicy.findFirst({ where: { id, companyId } });
+  }
+
+  /**
+   * Đóng bản đang mở của cùng loại hợp đồng (D6).
+   *
+   * `contractType: null` là một GIÁ TRỊ chứ không phải "mọi loại": đóng bản mặc
+   * định không được đụng tới chính sách riêng của loại hợp đồng khác.
+   */
+  async closeOpenLeavePolicy(
+    companyId: string,
+    contractType: string | null,
+    effectiveTo: Date,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    await this.db(tx).leavePolicy.updateMany({
+      where: { companyId, contractType, effectiveTo: null },
+      data: { effectiveTo },
+    });
+  }
+
+  async createLeavePolicy(
+    companyId: string,
+    data: LeavePolicyWriteInput,
+    tx?: Prisma.TransactionClient,
+  ): Promise<LeavePolicy> {
+    return this.db(tx).leavePolicy.create({ data: { companyId, ...data } });
+  }
+
+  /** Số dư phép của cả công ty trong một năm — nguồn của báo cáo sử dụng phép. */
+  async listLeaveBalances(companyId: string, year: number): Promise<LeaveBalance[]> {
+    return this.db().leaveBalance.findMany({ where: { companyId, year } });
   }
 
   // ===========================================================================

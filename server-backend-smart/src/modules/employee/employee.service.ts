@@ -12,6 +12,7 @@ import {
 } from 'src/common/utils';
 import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { JOBS } from 'src/infra/queue/queue.constants';
+import { AuditRepository } from '../audit/audit.repository';
 import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../notification/notification.service';
 import { FirebaseService } from 'src/infra/firebase/firebase.service';
@@ -53,6 +54,9 @@ export class EmployeeService {
     private readonly policy: PolicyService,
     private readonly notifications: NotificationService,
     private readonly audit: AuditService,
+    // Đọc thẳng repository chứ không qua `AuditService`: dịch vụ đó phục vụ việc
+    // GHI nhật ký, còn ở đây chỉ cần tra lịch sử của một đối tượng.
+    private readonly audits: AuditRepository,
     private readonly tokens: TokenService,
     private readonly passwords: PasswordService,
     private readonly firebase: FirebaseService,
@@ -513,6 +517,141 @@ export class EmployeeService {
     });
 
     return { status: EmployeeStatus.TERMINATED, biometricDeleted: deleteBiometricNow };
+  }
+
+  // ===========================================================================
+  //  Thiết bị & sinh trắc học (FR-WEB-INV-06, BR-11)
+  // ===========================================================================
+
+  /**
+   * Thiết bị đã liên kết với nhân viên — docs/04 mục 11.2.
+   *
+   * BR-11: mỗi tài khoản chỉ MỘT thiết bị hoạt động tại một thời điểm. Danh sách
+   * trả về kèm cả liên kết đã thu hồi, và `activeCount` để giao diện cảnh báo
+   * ngay khi con số này lớn hơn 1 — trạng thái đó không được phép tồn tại, gặp
+   * là dấu hiệu dữ liệu hỏng hoặc chốt thiết bị đang bị vô hiệu.
+   */
+  async listDevices(companyId: string, employeeId: string) {
+    const employee = await this.requireEmployee(companyId, employeeId);
+    if (!employee.userId) {
+      throw new AppException('EMP_NO_ACCOUNT');
+    }
+
+    const devices = await this.employees.listDeviceBindings(companyId, employee.userId);
+    return {
+      devices,
+      activeCount: devices.filter((device) => device.isActive).length,
+    };
+  }
+
+  /**
+   * Thu hồi liên kết một thiết bị — FR-WEB-INV-06.
+   *
+   * Thu hồi binding KHÔNG đủ để chặn truy cập: access token đã phát vẫn còn hạn
+   * và vẫn mang `deviceId` cũ. Vì vậy thu hồi luôn refresh token của tài khoản,
+   * buộc thiết bị phải đăng nhập lại — và lần đăng nhập lại sẽ không có binding
+   * nào để dùng.
+   */
+  async revokeDevice(ctx: TenantContext, employeeId: string, bindingId: string, reason: string) {
+    const employee = await this.requireEmployee(ctx.companyId, employeeId);
+    if (!employee.userId) {
+      throw new AppException('EMP_NO_ACCOUNT');
+    }
+
+    const revoked = await this.employees.revokeDeviceBinding(
+      ctx.companyId,
+      employee.userId,
+      bindingId,
+      ctx.userId,
+      reason,
+    );
+    if (revoked === 0) {
+      throw new AppException('EMP_DEVICE_NOT_FOUND');
+    }
+
+    await this.tokens.revokeAllForUser(employee.userId, 'DEVICE_REVOKED_BY_HR');
+
+    await this.audit.record(ctx, {
+      action: 'EMPLOYEE_DEVICE_REVOKE',
+      targetType: 'EMPLOYEE',
+      targetId: employeeId,
+      reason,
+      after: { bindingId },
+    });
+
+    await this.notifications.notify({
+      companyId: ctx.companyId,
+      employeeId,
+      type: 'DEVICE_REVOKED',
+      title: 'Liên kết thiết bị đã bị thu hồi',
+      body: `Lý do: ${reason}. Đăng nhập lại trên thiết bị bạn đang dùng để tiếp tục chấm công.`,
+    });
+
+    return { revoked: true };
+  }
+
+  /**
+   * Đặt lại dữ liệu sinh trắc học để nhân viên đăng ký lại — docs/04 mục 1
+   * ("Reset sinh trắc học": Admin công ty và Kế toán/HR).
+   *
+   * Tình huống thật: nhân viên đổi kiểu tóc/đeo kính khiến điểm tương đồng tụt
+   * liên tục, hoặc ảnh gốc chụp trong điều kiện ánh sáng tệ. Đây là thao tác
+   * NHẠY CẢM — reset xong thì lần đăng ký kế tiếp sẽ ghi đè danh tính sinh trắc
+   * học, nên bắt buộc có lý do và luôn báo cho nhân viên biết.
+   *
+   * Vô hiệu hoá (`REVOKED`) chứ không xoá: embedding cũ là bằng chứng đối chiếu
+   * cho các lượt chấm công đã ghi trước đó.
+   */
+  async resetBiometric(ctx: TenantContext, employeeId: string, reason: string) {
+    // Chỉ để chốt hồ sơ có thật và thuộc đúng công ty (BR-09) — không dùng giá trị.
+    await this.requireEmployee(ctx.companyId, employeeId);
+
+    const [faceProfiles, biometricKeys] = await this.transactions.run(async (tx) => [
+      await this.employees.revokeFaceProfiles(
+        ctx.companyId,
+        employeeId,
+        ctx.userId,
+        tx,
+        'BIOMETRIC_RESET_BY_HR',
+      ),
+      await this.employees.revokeBiometricKeys(
+        ctx.companyId,
+        employeeId,
+        tx,
+        'BIOMETRIC_RESET_BY_HR',
+      ),
+    ]);
+
+    await this.audit.record(ctx, {
+      action: 'EMPLOYEE_BIOMETRIC_RESET',
+      targetType: 'EMPLOYEE',
+      targetId: employeeId,
+      reason,
+      after: { faceProfilesRevoked: faceProfiles, biometricKeysRevoked: biometricKeys },
+    });
+
+    await this.notifications.notify({
+      companyId: ctx.companyId,
+      employeeId,
+      type: 'BIOMETRIC_RESET',
+      title: 'Bạn cần đăng ký lại khuôn mặt',
+      body: `Bộ phận nhân sự đã đặt lại dữ liệu sinh trắc học. Lý do: ${reason}. Mở ứng dụng để đăng ký lại trước ca làm tiếp theo.`,
+    });
+
+    return { faceProfilesRevoked: faceProfiles, biometricKeysRevoked: biometricKeys };
+  }
+
+  /**
+   * Lịch sử thay đổi hồ sơ — FR-WEB-HR-02.
+   *
+   * Dựng từ `audit_log` thay vì một bảng lịch sử riêng: mọi thao tác ghi trên hồ
+   * sơ nhân viên đều đã đi qua `@Audit({ targetType: 'EMPLOYEE' })` với cặp giá
+   * trị trước/sau. Thêm bảng thứ hai chép lại cùng thông tin chỉ tạo ra hai nguồn
+   * sự thật, và bảng nào cũng có ngày lệch với bảng kia.
+   */
+  async listHistory(companyId: string, employeeId: string, take = 50) {
+    await this.requireEmployee(companyId, employeeId);
+    return this.audits.findForTarget(companyId, 'EMPLOYEE', employeeId, take);
   }
 
   // ===========================================================================

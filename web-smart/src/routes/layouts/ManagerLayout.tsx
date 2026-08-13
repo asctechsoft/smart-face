@@ -1,0 +1,253 @@
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { Badge, Button, Drawer, Dropdown, Tooltip } from 'antd';
+import { useQuery } from '@tanstack/react-query';
+import { Icon } from '@/components/Icon';
+import { useAuth } from '@/lib/auth/auth-context';
+import { hasPermission } from '@/lib/rbac/permissions';
+import { NAV_GROUPS } from '@/routes/nav-items';
+import { ROLE_LABEL } from '@/config/constants';
+import { initials } from '@/lib/utils/format';
+import { formatDayLong } from '@/lib/utils/date';
+import { api } from '@/lib/api/client';
+import { qk } from '@/lib/api/query-client';
+
+/**
+ * Bố cục Web Quản lý.
+ *
+ * Quy tắc chuyển đổi bố cục — docs/16 mục 8:
+ *   < md (768px): sidenav ẩn hẳn, mở bằng hamburger dưới dạng drawer trượt
+ *   ≥ md:         sidenav cố định 256px
+ *   ≥ 2xl:        nội dung giới hạn bề rộng 1440px
+ */
+export function ManagerLayout() {
+  const { company, roles, logout } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768);
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px)');
+    const onChange = (event: MediaQueryListEvent) => setIsDesktop(event.matches);
+    media.addEventListener('change', onChange);
+    return () => media.removeEventListener('change', onChange);
+  }, []);
+
+  // Điều hướng xong thì đóng drawer — không đóng thì người dùng mobile bấm xong
+  // vẫn nhìn thấy menu che kín trang vừa mở.
+  useEffect(() => setMobileNavOpen(false), [location.pathname]);
+
+  const { data: unreadCount } = useQuery({
+    queryKey: [...qk.notifications, 'unread'],
+    queryFn: () => api.get<{ count: number }>('/notifications/unread-count'),
+    refetchInterval: 60_000,
+    retry: false,
+  });
+
+  // Hồ sơ nhân viên gắn với tài khoản — `GET /auth/me` chỉ trả id và vai trò,
+  // không có tên để hiện ở góc phải.
+  const { data: profile } = useQuery({
+    queryKey: ['me', 'profile'],
+    queryFn: () => api.get<{ fullName: string; employeeCode: string }>('/me/profile'),
+    staleTime: 10 * 60_000,
+    retry: false,
+  });
+
+  const nav = (
+    <nav className="sf-sidenav" aria-label="Điều hướng chính">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '0 16px' }}>
+        <span className="sf-title-lg" style={{ color: 'var(--sf-teal-700)' }}>
+          SmartFace
+        </span>
+        <span className="sf-label-md">{company?.name ?? 'Quản lý chấm công'}</span>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {NAV_GROUPS.map((group) => {
+          const visible = group.items.filter((item) => hasPermission(roles, item.permission));
+          if (visible.length === 0) return null;
+
+          return (
+            <div key={group.key}>
+              {group.label ? <div className="sf-nav-group-label">{group.label}</div> : null}
+              <ul className="sf-nav-list">
+                {visible.map((item) => (
+                  <li key={item.key}>
+                    {/* NavLink tự đặt `aria-current="page"` khi khớp route. CSS ở
+                        global.css bám vào chính thuộc tính đó để tô nền amber
+                        (docs/16 mục 11.15) — trạng thái hiển thị và trạng thái
+                        trình đọc màn hình đọc lên là MỘT, không thể lệch nhau. */}
+                    <NavLink to={item.to} className="sf-nav-item" end={item.to === '/dashboard'}>
+                      {({ isActive }) => (
+                        <>
+                          <Icon name={item.icon} size={18} fill={isActive} />
+                          <span style={{ flex: 1 }}>{item.label}</span>
+                          {item.key === 'notifications' && unreadCount?.count ? (
+                            <Badge count={unreadCount.count} size="small" />
+                          ) : null}
+                        </>
+                      )}
+                    </NavLink>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })}
+      </div>
+    </nav>
+  );
+
+  return (
+    <div style={{ display: 'flex', minHeight: '100vh', background: 'var(--sf-surface-bright)' }}>
+      {isDesktop ? (
+        <aside
+          style={{
+            position: 'sticky',
+            top: 0,
+            height: '100vh',
+            flexShrink: 0,
+            borderRight: '1px solid var(--sf-outline-variant)',
+          }}
+        >
+          {nav}
+        </aside>
+      ) : (
+        <Drawer
+          open={mobileNavOpen}
+          onClose={() => setMobileNavOpen(false)}
+          placement="left"
+          width={256}
+          closable={false}
+          styles={{ body: { padding: 0 } }}
+        >
+          {nav}
+        </Drawer>
+      )}
+
+      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <header
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 100,
+            height: 'var(--sf-topbar-height)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 16,
+            padding: '0 24px',
+            background: 'var(--sf-surface)',
+            borderBottom: '1px solid var(--sf-outline-variant)',
+            boxShadow: 'var(--sf-shadow-xs)',
+          }}
+        >
+          {!isDesktop ? (
+            <Button
+              type="text"
+              aria-label="Mở menu điều hướng"
+              icon={<Icon name="menu" size={24} />}
+              onClick={() => setMobileNavOpen(true)}
+            />
+          ) : null}
+
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="sf-body-sm sf-text-variant">{formatDayLong(new Date())}</div>
+          </div>
+
+          <Tooltip title="Thông báo">
+            <NavLink to="/notifications" aria-label="Thông báo">
+              <Badge count={unreadCount?.count ?? 0} size="small">
+                <Icon name="notifications" size={24} color="var(--sf-on-surface-variant)" />
+              </Badge>
+            </NavLink>
+          </Tooltip>
+
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: [
+                {
+                  key: 'identity',
+                  label: (
+                    <div style={{ padding: '4px 0' }}>
+                      <div className="sf-body-sm" style={{ fontWeight: 600 }}>
+                        {profile?.fullName ?? 'Tài khoản của tôi'}
+                      </div>
+                      <div className="sf-caption">
+                        {roles.map((role) => ROLE_LABEL[role]).join(' · ')}
+                        {company?.name ? ` · ${company.name}` : ''}
+                      </div>
+                    </div>
+                  ),
+                  disabled: true,
+                },
+                { type: 'divider' },
+                {
+                  key: 'password',
+                  label: 'Đổi mật khẩu',
+                  icon: <Icon name="lock_reset" size={18} />,
+                },
+                {
+                  key: 'logout',
+                  label: 'Đăng xuất',
+                  icon: <Icon name="logout" size={18} />,
+                  danger: true,
+                },
+              ],
+              onClick: ({ key }) => {
+                if (key === 'logout') void logout();
+                if (key === 'password') navigate('/doi-mat-khau');
+              },
+            }}
+          >
+            <button
+              type="button"
+              aria-label="Menu tài khoản"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                padding: 4,
+                borderRadius: 9999,
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  width: 32,
+                  height: 32,
+                  borderRadius: 9999,
+                  background: 'var(--sf-teal-700)',
+                  color: '#FFFFFF',
+                  display: 'grid',
+                  placeItems: 'center',
+                  fontSize: 14,
+                  fontWeight: 600,
+                }}
+              >
+                {initials(profile?.fullName)}
+              </span>
+              <Icon name="expand_more" size={16} color="var(--sf-on-surface-variant)" />
+            </button>
+          </Dropdown>
+        </header>
+
+        <main
+          style={{
+            flex: 1,
+            padding: 24,
+            width: '100%',
+            maxWidth: 'var(--sf-content-max-width)',
+            marginInline: 'auto',
+          }}
+        >
+          <Outlet />
+        </main>
+      </div>
+    </div>
+  );
+}

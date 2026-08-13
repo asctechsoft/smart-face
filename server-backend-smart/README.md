@@ -43,6 +43,7 @@ npm run start:dev
 
 ```bash
 cp .env.example .env       # sửa DATABASE_URL, REDIS_HOST, S3_*, FIREBASE_*
+                           # chưa dựng được Redis? đặt REDIS_ENABLED=false (xem mục 7)
 npm install
 npx prisma migrate deploy
 npm run db:guards
@@ -514,6 +515,34 @@ WORKER_ENABLED=true  node dist/worker
 
 Nhờ vậy scale API (theo CPU/RPS) và worker (theo độ dài queue) độc lập được
 (`docs/02` mục 12.2).
+
+Cờ này được đọc lúc **dựng module**, không phải lúc chạy: `@Processor()` của
+`@nestjs/bullmq` tạo `Worker` ngay khi class được đăng ký làm provider, và
+`Worker` tiêu thụ job lập tức — không có công tắc runtime nào tắt được nó. Vì vậy
+`WorkerModule` quyết định danh sách provider dựa trên cờ (xem `worker.module.ts`).
+
+### Chạy khi chưa có Redis — `REDIS_ENABLED`
+
+Dành cho máy lập trình viên chưa dựng được Redis. Đặt `REDIS_ENABLED=false` thì
+Backend khởi động và phục vụ API bình thường, nhưng:
+
+| | `REDIS_ENABLED=true` | `REDIS_ENABLED=false` |
+|---|---|---|
+| Cache / OTP / nonce / rate limit | Redis, dùng chung mọi pod | `Map` trong tiến trình |
+| Rate limit (`AF-13`) | chung toàn hệ thống | riêng từng tiến trình, restart là mất |
+| Nonce chống replay (`AF-12`) | dùng lại là chặn được | chỉ chặn trong cùng tiến trình |
+| BullMQ | đăng ký đầy đủ | không đăng ký, thay bằng queue giả |
+| Job nền | xếp hàng, có retry | **bị vứt bỏ**, không chạy bù |
+
+Hệ quả cụ thể khi tắt: không tính lương, không gửi OTP qua SMS, không xuất Excel,
+không quét gian lận. Mỗi job bị vứt đều ghi một dòng `warn` kèm tên job — cố ý ồn,
+vì im lặng sẽ thành "ngồi chờ file Excel không bao giờ tới".
+
+Đặt `false` ở `NODE_ENV=production` khiến ứng dụng **chết lúc khởi động**
+(`env.validation.ts`). Chạy nhiều pod với chế độ này thì chốt chống lạm dụng gần
+như không còn: kẻ tấn công chỉ cần rải request trúng pod khác là bộ đếm về 0.
+
+Kiểm tra đang chạy chế độ nào bằng `GET /health` → trường `redisMode`.
 
 ### Job định kỳ
 
