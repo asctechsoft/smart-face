@@ -469,8 +469,13 @@ Bắt buộc áp dụng cho: checkbox `24px`, radio `24px`, **nút đóng toast 
 | `md` | `32px` | `44px` | `16px` | `8px` | Inter 700/14 |
 | `lg` | `40px` | `44px` | `20px` | `8px` | Inter 700/14 |
 
-> `md` là mặc định. `sm` chỉ dùng trong bảng và thanh công cụ. `lg` dùng cho nút
-> chính của modal và drawer — **không dùng ở cấp trang**.
+> `md` là mặc định — **kể cả nút trong modal và drawer**. `sm` chỉ dùng trong
+> bảng và thanh công cụ. `lg` chỉ dùng cho nút CTA chiếm trọn chiều ngang ở màn
+> xác thực; **không dùng ở cấp trang, không dùng trong hộp thoại**.
+>
+> Hộp thoại không cần nút to hơn để được chú ý — nó đã chiếm trọn màn hình rồi.
+> Nút `40px` giữa một trang toàn control `32px` chỉ làm hộp thoại trông như thuộc
+> về một sản phẩm khác, và đây lại đúng là chỗ người dùng đang nhìn.
 
 **Hai cột chiều cao là có chủ đích.** Đây là công cụ quản trị dùng trên desktop,
 màn hình đặc dữ liệu: một thanh lọc bốn ô cộng một bảng hai mươi dòng. Ở mật độ
@@ -645,6 +650,19 @@ Card bấm được: hover → `shadow-md` + viền `neutral-500`; phải là `<
 
 Bắt buộc dùng `<table>` thật với `<th scope="col">`, không dùng `<div>` giả bảng.
 
+#### Bậc mật độ
+
+| Bậc | Padding ô | Dùng khi |
+|---|---|---|
+| Mặc định | `16px 24px` | Bảng dữ liệu cấp trang — chấm công, nhân viên, đơn từ |
+| `size="small"` | `8px 16px` | Bảng **tra cứu** (ma trận phân quyền) và bảng **xem trước** trong modal |
+
+Bậc dày đặc siết theo **chiều dọc** là chính (`16px → 8px`). Đệm ngang chỉ hạ `24px → 16px` chứ không hạ sâu hơn: cột hẹp lại thì bảng buộc phải cuộn ngang, mà cuộn ngang mới là thứ giết khả năng đọc của một bảng tra cứu.
+
+> ⚠ **Cả ba bậc phải khai đủ trong theme** (`cellPaddingInline`, `cellPaddingInlineMD`, `cellPaddingInlineSM` và ba token `Block` tương ứng). Ant Design **không** suy các bậc từ nhau: bỏ trống bậc nào thì bậc đó rơi về mặc định `8px` của thư viện, tức đệm ngang chỉ bằng **một phần ba** bảng bên cạnh. Lỗi này không hiện ở đâu cả cho tới khi có người đặt hai bảng khác `size` lên cùng một trang và nhìn thấy chúng lệch nhịp.
+>
+> Kèm theo: luật `padding-block` của header trong `global.css` dùng `!important` (để header 40px thay vì 48px) nên nó **đè cả bậc dày đặc**. Vì vậy có luật riêng cho `.ant-table-small`. Sửa một trong hai chỗ thì phải xem lại chỗ kia — nếu không, header sẽ dày hơn chính dòng dữ liệu bên dưới.
+
 ### 11.11. Skeleton
 
 Dùng gradient chạy ngang, chu kỳ `motion-skeleton` (1500ms).
@@ -689,16 +707,42 @@ Container toast phải có `role="status"` (success/warning) hoặc `role="alert
 |---|---|
 | Lớp phủ | `rgba(25,28,28,.45)`, `z-overlay` |
 | Khung | Nền `rgba(255,255,255,.70)` + `backdrop-filter: blur(12px)`, viền `1px outline-variant`, `radius-lg`, `shadow-xl`, `z-modal` |
-| Header | Nền `surface-bright`, viền dưới `1px outline-variant`, padding `24px` |
+| Header | Nền `surface-bright`, viền dưới `1px outline-variant`, padding `16px 24px` |
 | Tiêu đề | `title-md` |
 | Mô tả | `body-sm` `on-surface-variant` |
 | Nút đóng | `44 × 44`, `radius-full`, icon `20px`, hover nền `neutral-100` |
 | Thân | Padding `24px` |
-| Footer | Nền `neutral-100`, padding `24px`, gap `12px`, nút căn phải |
+| Footer | Nền `neutral-100`, viền trên `1px outline-variant`, padding `16px 24px`, gap `12px`, nút căn phải, nút cỡ `md` |
+
+> ⚠ **Khung phải có `padding: 0`; đệm thuộc về từng phần.** Mặc định của Ant
+> Design là đặt padding trên `.ant-modal-content`, còn header và footer là con
+> nằm bên trong lớp padding đó — nên nền của chúng không chạm được mép hộp
+> thoại. Kết quả là dải nền xám của footer nổi lơ lửng giữa một viền trắng, bốn
+> góc vuông chọi với bo góc `16px` của khung. Đây là lỗi thuần thị giác, không
+> có cách nào phát hiện ngoài việc mở hộp thoại lên nhìn.
 
 **Dialog xác nhận (nhỏ):** nền `surface` đặc (không blur), viền `1px outline-variant`, `radius-md`, padding `16px`, `shadow-lg`, tiêu đề `headline-md` `teal-900`.
 
 Bắt buộc: `role="dialog"` + `aria-modal="true"` + `aria-labelledby`, **bẫy focus** trong modal, `Esc` để đóng, trả focus về phần tử đã mở modal khi đóng.
+
+#### Chiều cao: luôn vừa khung hình
+
+| Phần | Cách co giãn |
+|---|---|
+| Khung | `max-height: calc(100vh - 48px)`, `max-width: calc(100vw - 32px)`, cách mép trên `24px` |
+| Header | **đứng yên** (`flex: 0 0 auto`) |
+| Thân | **cuộn** (`flex: 1 1 auto` + `min-height: 0` + `overflow-y: auto`) |
+| Footer | **đứng yên** (`flex: 0 0 auto`) |
+
+Hộp thoại **không bao giờ được làm trang phía sau cuộn**. Nội dung dài thì cuộn bên trong phần thân, còn tiêu đề và hàng nút phải luôn nhìn thấy được. Ba lý do, theo thứ tự nặng dần:
+
+1. Tiêu đề trôi khỏi màn hình → mất ngữ cảnh đang làm gì
+2. Nút chính nằm dưới nếp gấp → hộp thoại trông như **không có nút bấm**
+3. Cuộn trong hộp thoại và cuộn trang lẫn vào nhau
+
+> ⚠ **`min-height: 0` trên phần thân là mảnh không được bỏ.** Mục flex mặc định là `min-height: auto`, nghĩa là nó **từ chối** co nhỏ hơn nội dung bên trong. Thiếu dòng đó thì `overflow-y: auto` không bao giờ kích hoạt: thân cứ nở ra, phá `max-height` của khung, và mọi thứ quay lại y như chưa sửa gì. Đây là lỗi CSS im lặng điển hình — không cảnh báo, không lỗi, chỉ là luật của bạn dường như bị bỏ qua.
+>
+> Luật áp ở `global.css` cho **mọi** `Modal` của Ant Design, dùng đặc thù cao hơn (`.ant-modal-root ...`) chứ không dùng `!important`, để màn hình nào cần vẫn ghi đè được bằng `styles={{ body: ... }}`. `Modal` viết riêng ở `components/ui/Modal.tsx` đã theo đúng khuôn này sẵn.
 
 ### 11.14. Drawer
 

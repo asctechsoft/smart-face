@@ -51,7 +51,10 @@ export function RequestListPage() {
   const [detailId, setDetailId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [rejectTarget, setRejectTarget] = useState<LeaveRequest | null>(null);
-  const [bulkResult, setBulkResult] = useState<{ approved: number; failed: { requestId: string; message: string }[] } | null>(null);
+  const [bulkResult, setBulkResult] = useState<{
+    approved: number;
+    failed: { requestId: string; message: string }[];
+  } | null>(null);
 
   const approve = useApproveRequest();
   const reject = useRejectRequest();
@@ -312,7 +315,9 @@ export function RequestListPage() {
         }
         columns={columns}
         emptyIcon={tab === 'pending' ? 'task_alt' : 'assignment'}
-        emptyTitle={tab === 'pending' ? 'Không còn đơn nào chờ bạn duyệt' : 'Không có đơn nào khớp bộ lọc'}
+        emptyTitle={
+          tab === 'pending' ? 'Không còn đơn nào chờ bạn duyệt' : 'Không có đơn nào khớp bộ lọc'
+        }
         emptyDescription={
           tab === 'pending'
             ? 'Mọi đơn thuộc phạm vi duyệt của bạn đã được xử lý. Đơn mới sẽ xuất hiện ở đây kèm thông báo.'

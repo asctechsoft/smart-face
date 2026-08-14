@@ -276,7 +276,14 @@ export function MakeupPage() {
       />
 
       {summary.isLoading ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 24 }}>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: 16,
+            marginBottom: 24,
+          }}
+        >
           <StatCardSkeleton />
           <StatCardSkeleton />
           <StatCardSkeleton />
@@ -493,8 +500,7 @@ function ExtendDialog({
       title="Gia hạn làm bù"
       okText="Gia hạn"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ size: 'large', loading, disabled: !dueDate || tooShort }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ loading, disabled: !dueDate || tooShort }}
       onCancel={close}
       onOk={() => dueDate && onConfirm(dueDate, reason.trim())}
       destroyOnClose

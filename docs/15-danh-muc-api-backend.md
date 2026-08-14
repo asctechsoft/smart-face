@@ -1221,9 +1221,11 @@ curl -X POST http://localhost:3000/v1/notifications/read-all \
 |---|---|
 | `title` | ≤ 200 ký tự |
 | `body` | ≤ 2000 ký tự |
-| `departmentId` | bỏ trống = toàn công ty |
+| `departmentId` | **một** phòng ban, bỏ trống = toàn công ty |
 | `channel` | `PUSH` (mặc định) \| `IN_APP` \| `SMS` \| `EMAIL` |
 | `scheduledAt` | lên lịch gửi (FR-WEB-NOT-02) |
+
+> ⚠ Trường là `departmentId` số ít, **không phải** `departmentIds`. Một lần gửi tạo đúng **một** bản ghi `notification`, mà bản ghi đó chỉ có một cột `departmentId` — đúng như `FR-WEB-NOT-01` viết "toàn công ty **hoặc** theo phòng ban". Gửi lên một mảng thì `ValidationPipe` lặng lẽ bỏ qua và thông báo phát ra **toàn công ty**, không có lỗi nào báo. Muốn gửi cho nhiều phòng ban thì gọi nhiều lần.
 
 ```bash
 curl -X POST http://localhost:3000/v1/admin/notifications/broadcast \
@@ -1236,6 +1238,11 @@ curl -X POST http://localhost:3000/v1/admin/notifications/broadcast \
     "scheduledAt": "2026-08-28T09:00:00+07:00"
   }'
 ```
+```json
+{ "success": true, "data": { "notificationId": "ntf_01J...", "recipients": 128 } }
+```
+
+> `recipients` là số **NGƯỜI** trong phạm vi gửi (nhân viên `ACTIVE`), không phải số **THIẾT BỊ** nhận push. Nhân viên chưa cài ứng dụng vẫn thấy thông báo ở lần mở app kế tiếp, vì danh sách trong app đọc thẳng từ bảng `notification`. Đếm theo thiết bị sẽ ra con số nhỏ hơn thực tế và người gửi tưởng thông báo không tới được ai.
 
 ---
 
@@ -1360,19 +1367,30 @@ curl -X POST http://localhost:3000/v1/admin/attendance/export \
 
 ---
 
-### `GET /v1/jobs/:id` — Trạng thái job export 🔒
+### `GET /v1/jobs/:id` — Trạng thái job chạy nền 🔒
 
-**Làm gì:** hỏi tiến độ job và lấy link tải khi xong.
+**Làm gì:** hỏi tiến độ job và lấy link tải khi xong. Dùng chung cho **mọi** loại job dài, phân biệt bằng `kind`: `ATTENDANCE`, `PAYROLL`, `PAYROLL_RECALCULATE`.
 
 ```bash
 curl http://localhost:3000/v1/jobs/job_01J... -H "Authorization: Bearer $HR_TOKEN"
 ```
 ```json
 { "success": true,
-  "data": { "id": "job_01J...", "status": "COMPLETED", "progress": 100,
+  "data": { "id": "job_01J...", "kind": "PAYROLL", "status": "COMPLETED", "progress": 100,
             "downloadUrl": "https://s3.../bang-cong-08-2026.xlsx?X-Amz-Expires=900&...",
-            "expiresAt": "2026-08-09T05:00:00.000Z" } }
+            "error": null } }
 ```
+
+| `status` | Nghĩa |
+|---|---|
+| `QUEUED` | đã nhận, chưa tới lượt chạy |
+| `PROCESSING` | đang chạy — đọc `progress` (0–100) |
+| `COMPLETED` | xong. Job xuất file có `downloadUrl`; job tính lại thì `null` |
+| `FAILED` | hỏng — câu giải thích nằm ở `error` |
+
+> ⚠ **Trạng thái cuối của API là `COMPLETED`, còn cột `status` trong database ghi `DONE`.** Endpoint quy đổi tại biên, nên client chỉ cần biết một từ vựng. Đừng đọc thẳng giá trị DB: đã từng có lần client dừng hỏi ở `status === 'COMPLETED'` trong khi API trả `DONE`, khiến giao diện hỏi lại mỗi 2 giây vô hạn và file dựng xong không bao giờ được tải về.
+>
+> Chỉ hai trạng thái `COMPLETED` và `FAILED` là **kết thúc**. Vòng lặp hỏi tiến độ phải dừng ở cả hai — dừng ở mỗi `COMPLETED` thì job hỏng sẽ quay mãi.
 
 ---
 
@@ -1910,6 +1928,22 @@ curl -X POST http://localhost:3000/v1/admin/payroll/periods \
 curl http://localhost:3000/v1/admin/payroll/periods/pay_01J.../summary \
   -H "Authorization: Bearer $HR_TOKEN"
 ```
+```json
+{ "success": true,
+  "data": { "period": { "id": "pay_01J...", "name": "Tháng 08/2026", "status": "OPEN" },
+            "fromSnapshot": false,
+            "items": [
+              { "employeeId": "emp_01J...", "employee": { "employeeCode": "NV001", "fullName": "Trần Văn A" },
+                "standardDays": 21.5, "workedMinutes": 10320,
+                "otMinutes": 480, "otMinutesNormal": 300, "otMinutesWeekend": 180, "otMinutesHoliday": 0,
+                "lateCount": 3, "lateMinutesTotal": 47, "earlyLeaveCount": 1,
+                "leaveDays": 2, "unpaidLeaveDays": 0, "absentDays": 1, "missingRecordDays": 0,
+                "makeupMinutes": 120, "penaltyAmount": 150000, "violationCount": 4 } ] } }
+```
+
+> **Danh sách nằm ở `items`, không phải `rows`.** Hai nhánh (kỳ mở / kỳ chốt) đọc từ hai nguồn khác nhau nhưng được chuẩn hoá về **cùng một hình dạng**: mọi trường số là `number`, kể cả những cột lưu `Decimal` trong database (`standardDays`, `leaveDays`, `penaltyAmount`) — client không phải đoán kiểu theo trạng thái kỳ.
+>
+> `otMinutes` là **tổng** ba loại OT; `absentDays` và `missingRecordDays` suy từ `breakdown.statusCounts` nên đúng cho cả kỳ đã chốt.
 
 ### `POST /v1/admin/payroll/periods/:id/recalculate` — Chạy lại tính công 🔒 📝audit → `202`
 
@@ -1919,6 +1953,16 @@ curl http://localhost:3000/v1/admin/payroll/periods/pay_01J.../summary \
 curl -X POST http://localhost:3000/v1/admin/payroll/periods/pay_01J.../recalculate \
   -H "Authorization: Bearer $HR_TOKEN"
 ```
+```json
+{ "success": true,
+  "data": { "jobId": "job_01J...", "statusUrl": "/v1/jobs/job_01J...", "queued": true,
+            "periodId": "pay_01J..." } }
+```
+
+> **Theo dõi tiến độ qua `GET /v1/jobs/:id`** cho tới khi `status` là `COMPLETED` hoặc `FAILED`. Đây là điểm khác so với bản cũ: trước đây endpoint chỉ trả `{ queued: true }`, giao diện không có gì để hỏi nên chỉ báo được "đã đưa vào hàng đợi" rồi im lặng vĩnh viễn.
+>
+> Khi chạy với `REDIS_ENABLED=false`, job **chạy nội tuyến** trong tiến trình API thay vì bị queue giả vứt bỏ — chậm hơn và không thử lại được, nhưng kết quả có thật và tiến độ vẫn hỏi qua đúng đường trên.
+
 **Lỗi:** `PAY_PERIOD_CLOSED`
 
 ### `GET /v1/admin/payroll/periods/:id/pre-close-report` — Báo cáo tiền chốt 🔒

@@ -70,7 +70,9 @@ export function useUpsertShift() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...payload }: Partial<Shift> & { id?: string }) =>
-      id ? api.put<Shift>(`/admin/shifts/${id}`, payload) : api.post<Shift>('/admin/shifts', payload),
+      id
+        ? api.put<Shift>(`/admin/shifts/${id}`, payload)
+        : api.post<Shift>('/admin/shifts', payload),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: qk.policy }),
   });
 }

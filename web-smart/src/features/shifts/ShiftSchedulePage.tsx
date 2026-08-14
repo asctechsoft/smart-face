@@ -359,7 +359,9 @@ export function ShiftSchedulePage() {
                             date={day.date}
                             shifts={shifts.data ?? []}
                             editable={canAssign}
-                            onAssign={(nextShiftId) => void assignOne(employee, day.date, nextShiftId)}
+                            onAssign={(nextShiftId) =>
+                              void assignOne(employee, day.date, nextShiftId)
+                            }
                             onClear={() => void clearOne(employee, day.date)}
                             busy={assignShifts.isPending || clearShifts.isPending}
                           />
@@ -505,7 +507,9 @@ function ShiftCell({
 
           {shift ? (
             <>
-              <div style={{ height: 1, background: 'var(--sf-outline-variant)', margin: '4px 0' }} />
+              <div
+                style={{ height: 1, background: 'var(--sf-outline-variant)', margin: '4px 0' }}
+              />
               <Button
                 size="small"
                 type="text"

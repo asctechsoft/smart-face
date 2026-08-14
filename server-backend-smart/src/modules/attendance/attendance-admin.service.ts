@@ -5,6 +5,7 @@ import { Queue } from 'bullmq';
 import { PaginatedResult } from 'src/common/dto';
 import { AppException } from 'src/common/errors';
 import { buildMeta, formatWorkDate, parseWorkDate } from 'src/common/utils';
+import { isRedisEnabled } from 'src/config/configuration';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { JOBS, QUEUES } from 'src/infra/queue/queue.constants';
 import { AuditService } from '../audit/audit.service';
@@ -281,6 +282,18 @@ export class AttendanceAdminService {
       params: params as unknown as Prisma.InputJsonValue,
     });
 
+    // Queue giả (`REDIS_ENABLED=false`) nuốt job và vẫn resolve, nên `.catch`
+    // bên dưới không bắt được gì. Không đánh hỏng ngay ở đây thì job nằm im ở
+    // `QUEUED` và client hỏi tiến độ đến hết phiên làm việc.
+    if (!isRedisEnabled()) {
+      await this.attendances.markExportJobFailed(
+        ctx.companyId,
+        job.id,
+        'Máy chủ đang chạy không có dịch vụ nền (REDIS_ENABLED=false) nên không dựng được file Excel.',
+      );
+      return { jobId: job.id, statusUrl: `/v1/jobs/${job.id}`, queued: false };
+    }
+
     await this.exportQueue
       .add(JOBS.EXPORT_ATTENDANCE, { exportJobId: job.id })
       .catch(async (error: Error) => {
@@ -288,9 +301,23 @@ export class AttendanceAdminService {
         await this.attendances.markExportJobFailed(ctx.companyId, job.id, error.message);
       });
 
-    return { jobId: job.id, statusUrl: `/v1/jobs/${job.id}` };
+    return { jobId: job.id, statusUrl: `/v1/jobs/${job.id}`, queued: true };
   }
 
+  /**
+   * Trạng thái job — dùng chung cho mọi `kind` (xuất bảng công, xuất lương,
+   * tính lại kỳ...).
+   *
+   * ⚠ Cột `status` trong DB dùng từ vựng `QUEUED | PROCESSING | DONE | FAILED`,
+   * còn hợp đồng API (docs/15 mục `GET /v1/jobs/:id`) dùng `COMPLETED` cho trạng
+   * thái cuối. Trước đây endpoint trả thẳng giá trị DB, nên client — vốn viết
+   * đúng theo tài liệu — hỏi tiến độ mỗi 2 giây MÃI MÃI: job đã `DONE` từ lâu mà
+   * điều kiện dừng `status === 'COMPLETED'` không bao giờ đúng, và file đã dựng
+   * xong thì không bao giờ được tải về.
+   *
+   * Quy đổi đặt ở đây, ngay biên API, để chỉ có MỘT chỗ biết hai từ vựng này
+   * tồn tại.
+   */
   async getJob(companyId: string, jobId: string) {
     const job = await this.attendances.findExportJob(companyId, jobId);
     if (!job) {
@@ -298,6 +325,8 @@ export class AttendanceAdminService {
     }
     return {
       ...job,
+      status: job.status === 'DONE' ? 'COMPLETED' : job.status,
+      error: job.errorMessage,
       downloadUrl: job.fileKey ? await this.storage.getPresignedUrl(job.fileKey) : null,
     };
   }

@@ -50,13 +50,15 @@ export function EmployeeListPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [formTarget, setFormTarget] = useState<{ mode: 'create' | 'edit'; employee?: Employee } | null>(
-    null,
-  );
+  const [formTarget, setFormTarget] = useState<{
+    mode: 'create' | 'edit';
+    employee?: Employee;
+  } | null>(null);
   const [importOpen, setImportOpen] = useState(false);
-  const [lifecycle, setLifecycle] = useState<{ action: LifecycleAction; employee: Employee } | null>(
-    null,
-  );
+  const [lifecycle, setLifecycle] = useState<{
+    action: LifecycleAction;
+    employee: Employee;
+  } | null>(null);
 
   const suspend = useSuspendEmployee();
   const reactivate = useReactivateEmployee();
@@ -167,7 +169,13 @@ export function EmployeeListPage() {
             : [
                 { key: 'edit', label: 'Sửa hồ sơ', icon: <Icon name="edit" size={18} /> },
                 ...(row.status === 'PENDING_ACTIVATION'
-                  ? [{ key: 'resend', label: 'Gửi lại lời mời', icon: <Icon name="sms" size={18} /> }]
+                  ? [
+                      {
+                        key: 'resend',
+                        label: 'Gửi lại lời mời',
+                        icon: <Icon name="sms" size={18} />,
+                      },
+                    ]
                   : []),
                 ...(row.status === 'ACTIVE'
                   ? [
@@ -367,7 +375,9 @@ export function EmployeeListPage() {
         open={Boolean(lifecycle)}
         title={lifecycleCopy.title}
         description={
-          lifecycle ? `${lifecycle.employee.fullName} · ${lifecycle.employee.employeeCode}` : undefined
+          lifecycle
+            ? `${lifecycle.employee.fullName} · ${lifecycle.employee.employeeCode}`
+            : undefined
         }
         warning={lifecycleCopy.warning}
         confirmText={lifecycleCopy.confirm}

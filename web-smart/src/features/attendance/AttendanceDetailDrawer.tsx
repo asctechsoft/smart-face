@@ -96,7 +96,10 @@ function AttendanceLogCard({ log, timezone }: { log: AttendanceLog; timezone: st
         <span className="sf-title-sm">{formatTimeWithSeconds(log.recordedAt, timezone)}</span>
         <span className="sf-body-sm sf-text-variant">giờ máy chủ</span>
 
-        <Tag color={log.decision === 'ACCEPTED' ? 'success' : 'error'} style={{ marginLeft: 'auto' }}>
+        <Tag
+          color={log.decision === 'ACCEPTED' ? 'success' : 'error'}
+          style={{ marginLeft: 'auto' }}
+        >
           {log.decision === 'ACCEPTED' ? 'Đã ghi nhận' : log.decision}
         </Tag>
       </header>
@@ -183,10 +186,7 @@ function AttendanceLogCard({ log, timezone }: { log: AttendanceLog; timezone: st
               <DetailField label="Giờ thiết bị gửi lên">
                 {formatTimeWithSeconds(log.clientReportedAt, timezone)}
               </DetailField>
-              <DetailField
-                label="Độ lệch"
-                hint="Lệch lớn là dấu hiệu chỉnh giờ thiết bị (AF-18)"
-              >
+              <DetailField label="Độ lệch" hint="Lệch lớn là dấu hiệu chỉnh giờ thiết bị (AF-18)">
                 <span
                   style={{
                     color:
@@ -216,9 +216,7 @@ function AttendanceLogCard({ log, timezone }: { log: AttendanceLog; timezone: st
               </DetailField>
               <DetailField label="Điểm tương đồng">{formatScore(log.matchScore)}</DetailField>
               <DetailField label="Điểm liveness">{formatScore(log.livenessScore)}</DetailField>
-              <DetailField label="Hành động liveness">
-                {log.livenessChallenge ?? '—'}
-              </DetailField>
+              <DetailField label="Hành động liveness">{log.livenessChallenge ?? '—'}</DetailField>
               <DetailField label="Phiên bản mô hình AI">{log.aiModelVersion ?? '—'}</DetailField>
               <DetailField label="Điểm rủi ro">
                 <span

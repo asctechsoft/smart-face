@@ -56,8 +56,7 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
       title="Ghi nhận nợ công"
       okText="Ghi nhận"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ size: 'large', loading: create.isPending, disabled: !canSubmit }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ loading: create.isPending, disabled: !canSubmit }}
       width={560}
       destroyOnClose
       afterOpenChange={(isOpen) => {
@@ -173,4 +172,3 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
     </Modal>
   );
 }
-

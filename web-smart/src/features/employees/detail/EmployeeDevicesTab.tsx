@@ -56,8 +56,7 @@ export function EmployeeDevicesTab({
       title: 'Hệ điều hành',
       key: 'os',
       width: 160,
-      render: (_, row) =>
-        row.osName ? `${row.osName} ${row.osVersion ?? ''}`.trim() : '—',
+      render: (_, row) => (row.osName ? `${row.osName} ${row.osVersion ?? ''}`.trim() : '—'),
     },
     {
       title: 'Phiên bản app',
@@ -151,7 +150,9 @@ export function EmployeeDevicesTab({
         open={Boolean(target)}
         title="Thu hồi liên kết thiết bị"
         description={
-          target ? `${employeeName} · ${target.deviceModel ?? target.deviceId.slice(0, 12)}` : undefined
+          target
+            ? `${employeeName} · ${target.deviceModel ?? target.deviceId.slice(0, 12)}`
+            : undefined
         }
         warning="Toàn bộ phiên đăng nhập của nhân viên bị huỷ ngay. Họ phải đăng nhập lại và liên kết thiết bị mới trước khi chấm công được."
         confirmText="Thu hồi"

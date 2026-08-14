@@ -143,7 +143,9 @@ export function RequestTypesPage() {
                     ({conditionLabel(step.minDays, step.maxDays)})
                   </span>
                 ) : null}
-                {!step.isRequired ? <span className="sf-text-variant"> · không bắt buộc</span> : null}
+                {!step.isRequired ? (
+                  <span className="sf-text-variant"> · không bắt buộc</span>
+                ) : null}
               </div>
             ))}
           </div>
@@ -243,10 +245,7 @@ export function RequestTypesPage() {
         }
       />
 
-      <RequestTypeFormModal
-        target={formTarget}
-        onClose={() => setFormTarget(null)}
-      />
+      <RequestTypeFormModal target={formTarget} onClose={() => setFormTarget(null)} />
 
       <ApprovalFlowDrawer requestType={flowTarget} onClose={() => setFlowTarget(null)} />
     </>

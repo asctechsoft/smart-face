@@ -36,14 +36,15 @@ export function formatTimeWithSeconds(
 /** `2026-08-03` → `03/08/2026`. */
 export function formatDay(iso: string | Date | null | undefined, timezone?: string): string {
   if (!iso) return '—';
-  return formatInTimeZone(typeof iso === 'string' ? parseISO(iso) : iso, tz(timezone), 'dd/MM/yyyy');
+  return formatInTimeZone(
+    typeof iso === 'string' ? parseISO(iso) : iso,
+    tz(timezone),
+    'dd/MM/yyyy',
+  );
 }
 
 /** `03/08/2026 08:05`. */
-export function formatDateTime(
-  iso: string | Date | null | undefined,
-  timezone?: string,
-): string {
+export function formatDateTime(iso: string | Date | null | undefined, timezone?: string): string {
   if (!iso) return '—';
   return formatInTimeZone(
     typeof iso === 'string' ? parseISO(iso) : iso,

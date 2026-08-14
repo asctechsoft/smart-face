@@ -56,12 +56,15 @@ export function PayrollPage() {
   const [reopenTarget, setReopenTarget] = useState<PayrollPeriod | null>(null);
   const [exportJobId, setExportJobId] = useState<string | null>(null);
 
+  const [recalcJobId, setRecalcJobId] = useState<string | null>(null);
+
   const summary = usePayrollSummary(selectedId);
   const recalculate = useRecalculatePeriod();
   const reopen = useReopenPeriod();
   const closePeriod = useClosePeriod();
   const exportPayroll = useExportPayroll();
   const exportJob = useExportJob(exportJobId);
+  const recalcJob = useExportJob(recalcJobId);
 
   // Chọn sẵn kỳ mới nhất khi vào trang — người dùng gần như luôn muốn xem kỳ
   // đang chạy, không phải một danh sách chờ họ bấm.
@@ -76,11 +79,52 @@ export function PayrollPage() {
       downloadFromUrl(exportJob.data.downloadUrl, 'bang-luong.xlsx');
       toast.success('Đã tải bảng lương');
       setExportJobId(null);
+      return;
+    }
+    if (exportJob.data?.status === 'FAILED') {
+      toast.error(
+        'Không tạo được file Excel',
+        exportJob.data.errorMessage ?? 'Máy chủ báo lỗi khi dựng file. Thử lại sau ít phút.',
+      );
+      setExportJobId(null);
     }
   }, [exportJob.data, toast]);
 
+  /**
+   * Theo dõi job tính lại kỳ.
+   *
+   * Đây là chỗ trước đây đứt gãy: màn hình bắn yêu cầu tính lại rồi báo "đã đưa
+   * vào hàng đợi" và quên luôn — bảng công không bao giờ tự nạp lại, nên kế toán
+   * không có cách nào biết đã tính xong hay chưa ngoài việc F5 thử vài lần.
+   */
+  useEffect(() => {
+    if (!recalcJob.data) return;
+
+    if (recalcJob.data.status === 'COMPLETED') {
+      setRecalcJobId(null);
+      void summary.refetch();
+      toast.success('Đã tính lại xong', 'Bảng công tổng hợp bên dưới vừa được nạp lại.');
+      return;
+    }
+
+    if (recalcJob.data.status === 'FAILED') {
+      setRecalcJobId(null);
+      toast.error(
+        'Tính lại kỳ thất bại',
+        recalcJob.data.errorMessage ??
+          'Máy chủ dừng giữa chừng. Số liệu cũ được giữ nguyên, chưa có gì bị ghi đè.',
+      );
+    }
+    // `summary` đổi tham chiếu mỗi lần render nên không đưa vào deps — chỉ cần
+    // chạy khi trạng thái job đổi.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recalcJob.data, toast]);
+
   const selected = periods.data?.find((period) => period.id === selectedId) ?? null;
   const isClosed = selected?.status === 'CLOSED';
+
+  const recalcRunning = Boolean(recalcJobId);
+  const recalcPercent = recalcJob.data?.progress ?? 0;
 
   /**
    * Xuất file bàn giao cho bộ phận lương — docs/04 mục 7.2 bước 6.
@@ -94,7 +138,15 @@ export function PayrollPage() {
     try {
       const result = await exportPayroll.mutateAsync({ periodId });
       setExportJobId(result.jobId);
-      toast.success('Đang tạo file', 'Hệ thống sẽ tự tải xuống khi xong, bạn không cần chờ ở đây.');
+      // `queued: false` = máy chủ nhận yêu cầu nhưng không có dịch vụ nền để
+      // dựng file. Báo "đang tạo file" ở đây rồi một giây sau báo lỗi thì tệ hơn
+      // là im lặng để hiệu ứng theo dõi job nói đúng một câu.
+      if (result.queued) {
+        toast.success(
+          'Đang tạo file',
+          'Hệ thống sẽ tự tải xuống khi xong, bạn không cần chờ ở đây.',
+        );
+      }
     } catch (caught) {
       showError(caught);
     }
@@ -114,7 +166,7 @@ export function PayrollPage() {
       key: 'standardDays',
       width: 110,
       align: 'right',
-      render: (value: string | number) => (
+      render: (value: number) => (
         <span style={{ fontWeight: 700 }}>{formatStandardDays(value)}</span>
       ),
     },
@@ -132,7 +184,20 @@ export function PayrollPage() {
       key: 'ot',
       width: 100,
       align: 'right',
-      render: (value: number) => formatMinutes(value),
+      // Ba loại OT có hệ số khác nhau (docs/04 mục 7.3). Cột hiển thị tổng, chi
+      // tiết đưa vào tooltip thay vì ba cột nữa — bảng đã 9 cột rồi.
+      render: (value: number, row) =>
+        value > 0 ? (
+          <span
+            title={`Ngày thường ${formatMinutes(row.otMinutesNormal)} · Cuối tuần ${formatMinutes(
+              row.otMinutesWeekend,
+            )} · Ngày lễ ${formatMinutes(row.otMinutesHoliday)}`}
+          >
+            {formatMinutes(value)}
+          </span>
+        ) : (
+          <span className="sf-text-muted">—</span>
+        ),
     },
     {
       title: 'Làm bù',
@@ -163,7 +228,8 @@ export function PayrollPage() {
       key: 'early',
       width: 100,
       align: 'right',
-      render: (value: number) => (value > 0 ? `${value} lần` : <span className="sf-text-muted">—</span>),
+      render: (value: number) =>
+        value > 0 ? `${value} lần` : <span className="sf-text-muted">—</span>,
     },
     {
       title: 'Nghỉ phép',
@@ -171,7 +237,8 @@ export function PayrollPage() {
       key: 'leave',
       width: 110,
       align: 'right',
-      render: (value: number) => (value > 0 ? `${formatNumber(value, 1)} ngày` : '—'),
+      render: (value: number) =>
+        value > 0 ? `${formatNumber(value, 1)} ngày` : <span className="sf-text-muted">—</span>,
     },
     {
       title: 'Vắng',
@@ -182,6 +249,21 @@ export function PayrollPage() {
       render: (value: number) =>
         value > 0 ? (
           <span style={{ color: 'var(--sf-error-700)', fontWeight: 600 }}>{value} ngày</span>
+        ) : (
+          <span className="sf-text-muted">—</span>
+        ),
+    },
+    {
+      title: 'Thiếu bản ghi',
+      dataIndex: 'missingRecordDays',
+      key: 'missing',
+      width: 120,
+      align: 'right',
+      // Chấm vào mà không chấm ra. Đây là thứ chặn chốt kỳ (mục 7.2 bước 3), nên
+      // phải nhìn thấy ngay trên bảng chứ không đợi tới lúc bấm Chốt mới biết.
+      render: (value: number) =>
+        value > 0 ? (
+          <span style={{ color: 'var(--sf-warning-800)', fontWeight: 600 }}>{value} ngày</span>
         ) : (
           <span className="sf-text-muted">—</span>
         ),
@@ -230,7 +312,9 @@ export function PayrollPage() {
               options={periods.data.map((period) => ({
                 value: period.id,
                 label: (
-                  <div style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div
+                    style={{ padding: '4px 8px', display: 'flex', alignItems: 'center', gap: 8 }}
+                  >
                     <span>{period.name}</span>
                     <StatusBadge tone={periodStatusTone(period.status)} soft>
                       {PERIOD_STATUS_LABEL[period.status] ?? period.status}
@@ -255,7 +339,8 @@ export function PayrollPage() {
               <div style={{ flex: 1, minWidth: 220 }}>
                 <div className="sf-title-sm">{selected.name}</div>
                 <div className="sf-body-sm sf-text-variant">
-                  {formatDay(selected.startDate, timezone)} – {formatDay(selected.endDate, timezone)}
+                  {formatDay(selected.startDate, timezone)} –{' '}
+                  {formatDay(selected.endDate, timezone)}
                   {selected.closedAt
                     ? ` · chốt ngày ${formatDay(selected.closedAt, timezone)}`
                     : ''}
@@ -272,17 +357,21 @@ export function PayrollPage() {
                   <Button
                     icon={<Icon name="calculate" size={20} />}
                     disabled={isClosed}
-                    loading={recalculate.isPending}
+                    loading={recalculate.isPending || recalcRunning}
                     onClick={async () => {
                       try {
-                        await recalculate.mutateAsync(selected.id);
-                        toast.success('Đã đưa yêu cầu tính lại vào hàng đợi');
+                        const result = await recalculate.mutateAsync(selected.id);
+                        setRecalcJobId(result.jobId);
+                        toast.success(
+                          'Đang tính lại bảng công',
+                          'Bạn có thể làm việc khác — bảng bên dưới sẽ tự nạp lại khi tính xong.',
+                        );
                       } catch (caught) {
                         showError(caught);
                       }
                     }}
                   >
-                    Tính lại kỳ
+                    {recalcRunning ? `Đang tính… ${recalcPercent}%` : 'Tính lại kỳ'}
                   </Button>
                 </Can>
 
@@ -327,7 +416,7 @@ export function PayrollPage() {
 
           <DataTable<PayrollSummaryRow>
             rowKey="employeeId"
-            data={summary.data?.rows}
+            data={summary.data?.items}
             isLoading={summary.isLoading}
             error={summary.error}
             onRetry={() => void summary.refetch()}
@@ -418,11 +507,9 @@ function CreatePeriodModal({ open, onClose }: { open: boolean; onClose: () => vo
       okText="Tạo"
       cancelText="Huỷ bỏ"
       okButtonProps={{
-        size: 'large',
         loading: create.isPending,
         disabled: !name.trim() || !range.from || !range.to,
       }}
-      cancelButtonProps={{ size: 'large' }}
       onOk={async () => {
         try {
           await create.mutateAsync({
@@ -439,7 +526,11 @@ function CreatePeriodModal({ open, onClose }: { open: boolean; onClose: () => vo
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-field__label" htmlFor="p-name" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="p-name"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Tên kỳ
           </label>
           <Input

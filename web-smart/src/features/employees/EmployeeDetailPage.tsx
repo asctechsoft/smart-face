@@ -89,10 +89,7 @@ export function EmployeeDetailPage() {
       <PageHeader
         breadcrumb={
           <Breadcrumb
-            items={[
-              { title: <Link to="/employees">Nhân viên</Link> },
-              { title: data.fullName },
-            ]}
+            items={[{ title: <Link to="/employees">Nhân viên</Link> }, { title: data.fullName }]}
           />
         }
         title={data.fullName}
@@ -171,7 +168,11 @@ export function EmployeeDetailPage() {
                     <DetailField label="Vai trò trên hệ thống">
                       <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                         {data.roles.map((role) => (
-                          <StatusBadge key={role} tone={role === 'EMPLOYEE' ? 'neutral' : 'teal'} soft>
+                          <StatusBadge
+                            key={role}
+                            tone={role === 'EMPLOYEE' ? 'neutral' : 'teal'}
+                            soft
+                          >
                             {ROLE_LABEL[role] ?? role}
                           </StatusBadge>
                         ))}

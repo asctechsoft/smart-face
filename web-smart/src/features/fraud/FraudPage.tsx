@@ -21,7 +21,13 @@ import { formatDateTime, firstDayOfMonth, todayWorkDate, toWorkDate } from '@/li
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatNumber } from '@/lib/utils/format';
 import { AttendanceDetailDrawer } from '@/features/attendance/AttendanceDetailDrawer';
-import { useFraudFlags, useFraudStats, useReviewFlag, type FraudFlag, type FraudQuery } from './fraud.api';
+import {
+  useFraudFlags,
+  useFraudStats,
+  useReviewFlag,
+  type FraudFlag,
+  type FraudQuery,
+} from './fraud.api';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
 import { useToast } from '@/components/ui';
 
@@ -44,9 +50,11 @@ export function FraudPage() {
   const canReview = useCan('fraud.review');
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [evidence, setEvidence] = useState<{ employeeId: string; workDate: string; name: string } | null>(
-    null,
-  );
+  const [evidence, setEvidence] = useState<{
+    employeeId: string;
+    workDate: string;
+    name: string;
+  } | null>(null);
   const [reviewTarget, setReviewTarget] = useState<FraudFlag | null>(null);
 
   const review = useReviewFlag();
@@ -59,7 +67,12 @@ export function FraudPage() {
       to: searchParams.get('to') ?? todayWorkDate(timezone),
       code: searchParams.get('code') ?? undefined,
       severity: searchParams.get('severity') ?? undefined,
-      reviewed: searchParams.get('reviewed') === 'true' ? true : searchParams.get('reviewed') === 'false' ? false : undefined,
+      reviewed:
+        searchParams.get('reviewed') === 'true'
+          ? true
+          : searchParams.get('reviewed') === 'false'
+            ? false
+            : undefined,
     }),
     [searchParams, timezone],
   );
@@ -98,9 +111,7 @@ export function FraudPage() {
       key: 'severity',
       width: 130,
       render: (value: string) => (
-        <StatusBadge tone={severityTone(value)}>
-          {FRAUD_SEVERITY_LABEL[value] ?? value}
-        </StatusBadge>
+        <StatusBadge tone={severityTone(value)}>{FRAUD_SEVERITY_LABEL[value] ?? value}</StatusBadge>
       ),
     },
     {
@@ -169,7 +180,9 @@ export function FraudPage() {
     },
   ];
 
-  const activeFilters = ['code', 'severity', 'reviewed'].filter((key) => searchParams.get(key)).length;
+  const activeFilters = ['code', 'severity', 'reviewed'].filter((key) =>
+    searchParams.get(key),
+  ).length;
 
   return (
     <>
@@ -194,7 +207,11 @@ export function FraudPage() {
           </>
         ) : (
           <>
-            <StatCard label="Tổng cảnh báo trong kỳ" value={formatNumber(stats.data?.total)} icon="flag" />
+            <StatCard
+              label="Tổng cảnh báo trong kỳ"
+              value={formatNumber(stats.data?.total)}
+              icon="flag"
+            />
             <StatCard
               label="Chưa xử lý"
               value={formatNumber(stats.data?.pending)}
@@ -305,9 +322,7 @@ export function FraudPage() {
             await review.mutateAsync({ id: reviewTarget.id, decision, reason });
             toast.success(
               decision === 'VOID' ? 'Đã huỷ công của lượt này' : 'Đã ghi nhận quyết định',
-              decision === 'VOID'
-                ? 'Bảng công của ngày đó đang được tính lại.'
-                : undefined,
+              decision === 'VOID' ? 'Bảng công của ngày đó đang được tính lại.' : undefined,
             );
             setReviewTarget(null);
           } catch (caught) {
@@ -343,8 +358,7 @@ function ReviewFlagModal({
       title="Quyết định về cảnh báo"
       okText="Ghi nhận quyết định"
       cancelText="Để sau"
-      okButtonProps={{ disabled: !reasonOk, loading, danger: decision === 'VOID', size: 'large' }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ disabled: !reasonOk, loading, danger: decision === 'VOID' }}
       afterOpenChange={(open) => {
         if (open) {
           setDecision('KEEP');
@@ -396,7 +410,11 @@ function ReviewFlagModal({
           </div>
 
           <div>
-            <label className="sf-field__label" htmlFor="fr-reason" style={{ display: 'block', marginBottom: 4 }}>
+            <label
+              className="sf-field__label"
+              htmlFor="fr-reason"
+              style={{ display: 'block', marginBottom: 4 }}
+            >
               Lý do (bắt buộc)
             </label>
             <Input.TextArea

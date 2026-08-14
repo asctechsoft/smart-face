@@ -54,8 +54,7 @@ export function ReasonDialog({
       title={title}
       okText={confirmText}
       cancelText="Huỷ bỏ"
-      okButtonProps={{ danger, disabled: tooShort, loading, size: 'large' }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ danger, disabled: tooShort, loading }}
       onOk={() => onConfirm(reason.trim())}
       onCancel={onCancel}
       destroyOnClose
@@ -74,7 +73,11 @@ export function ReasonDialog({
 
       {requireReason ? (
         <div>
-          <label className="sf-field__label" htmlFor="sf-reason" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="sf-reason"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Lý do (bắt buộc)
           </label>
           <Input.TextArea

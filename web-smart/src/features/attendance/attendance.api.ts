@@ -85,7 +85,13 @@ export interface AttendanceLog {
 
   fraudFlags?: FraudFlagRef[];
   employee?: EmployeeRef | null;
-  branch?: { id: string; name: string; latitude: number | null; longitude: number | null; radiusMeters: number } | null;
+  branch?: {
+    id: string;
+    name: string;
+    latitude: number | null;
+    longitude: number | null;
+    radiusMeters: number;
+  } | null;
 }
 
 export interface AttendanceAdjustment {
@@ -124,12 +130,20 @@ export interface ExportJob {
   statusUrl: string;
 }
 
+/**
+ * Trạng thái một job chạy nền — dùng chung cho xuất bảng công, xuất lương và
+ * tính lại kỳ (docs/15, `GET /v1/jobs/:id`).
+ *
+ * `COMPLETED` là trạng thái cuối của hợp đồng API. Trong database cột `status`
+ * ghi `DONE`; backend quy đổi tại biên nên phía này chỉ cần biết một từ vựng.
+ */
 export interface JobStatus {
   id: string;
-  status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | string;
+  status: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | string;
   progress?: number;
   downloadUrl?: string | null;
   error?: string | null;
+  errorMessage?: string | null;
   createdAt?: string;
 }
 
@@ -150,8 +164,7 @@ export function useAttendanceList(query: AttendanceQuery) {
 export function useAttendanceLogs(employeeId: string | null, workDate: string | null) {
   return useQuery({
     queryKey: qk.attendanceLogs(employeeId ?? '', workDate ?? ''),
-    queryFn: () =>
-      api.get<AttendanceLog[]>('/admin/attendance/logs', { employeeId, workDate }),
+    queryFn: () => api.get<AttendanceLog[]>('/admin/attendance/logs', { employeeId, workDate }),
     enabled: Boolean(employeeId && workDate),
     // Ảnh trong phản hồi là presigned URL hết hạn sau 5 phút. Cache lâu hơn thế
     // là hiện ảnh hỏng: người dùng mở lại drawer sau 10 phút sẽ thấy ô trắng.

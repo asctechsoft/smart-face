@@ -106,7 +106,6 @@ export function ImportEmployeesModal({ open, onClose }: { open: boolean; onClose
 
           <div style={{ display: 'flex', gap: 12 }}>
             <Button
-              size="large"
               onClick={() => {
                 resetAll();
                 onClose();
@@ -117,7 +116,6 @@ export function ImportEmployeesModal({ open, onClose }: { open: boolean; onClose
             {step === 1 ? (
               <Button
                 type="primary"
-                size="large"
                 loading={execute.isPending}
                 disabled={!validation || validation.validCount === 0}
                 onClick={() => void runImport()}
@@ -133,11 +131,7 @@ export function ImportEmployeesModal({ open, onClose }: { open: boolean; onClose
         current={step}
         size="small"
         style={{ marginBottom: 24 }}
-        items={[
-          { title: 'Chọn file' },
-          { title: 'Kiểm tra dữ liệu' },
-          { title: 'Hoàn tất' },
-        ]}
+        items={[{ title: 'Chọn file' }, { title: 'Kiểm tra dữ liệu' }, { title: 'Hoàn tất' }]}
       />
 
       {error ? (
@@ -258,7 +252,11 @@ export function ImportEmployeesModal({ open, onClose }: { open: boolean; onClose
                 Tin nhắn được gửi qua hàng đợi, không làm chậm quá trình import.
               </div>
             </div>
-            <Switch checked={sendInvite} onChange={setSendInvite} aria-label="Gửi lời mời hàng loạt" />
+            <Switch
+              checked={sendInvite}
+              onChange={setSendInvite}
+              aria-label="Gửi lời mời hàng loạt"
+            />
           </div>
         </div>
       ) : null}

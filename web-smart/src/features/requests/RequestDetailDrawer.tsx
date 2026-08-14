@@ -87,7 +87,14 @@ export function RequestDetailDrawer({
         <ApiErrorState error={detail.error} onRetry={() => void detail.refetch()} />
       ) : !request ? null : (
         <>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 16,
+            }}
+          >
             <EmployeeCell employee={request.employee} />
             <StatusBadge tone={requestStatusTone(request.status)}>
               {REQUEST_STATUS_LABEL[request.status] ?? request.status}
@@ -99,8 +106,7 @@ export function RequestDetailDrawer({
               <DetailField label="Từ">{formatDateTime(request.startAt, timezone)}</DetailField>
               <DetailField label="Đến">{formatDateTime(request.endAt, timezone)}</DetailField>
               <DetailField label="Số lượng">
-                {String(request.quantity)}{' '}
-                {request.requestType?.unit === 'HOUR' ? 'giờ' : 'ngày'}
+                {String(request.quantity)} {request.requestType?.unit === 'HOUR' ? 'giờ' : 'ngày'}
                 {request.isHalfDay ? ' (nửa ngày)' : ''}
               </DetailField>
               <DetailField label="Trừ vào">

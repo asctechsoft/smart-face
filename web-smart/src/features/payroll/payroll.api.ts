@@ -15,25 +15,38 @@ export interface PayrollPeriod {
   reopenReason: string | null;
 }
 
+/**
+ * Một dòng bảng công tổng hợp.
+ *
+ * Backend chuẩn hoá cả hai nguồn (kỳ đang mở tính trực tiếp / kỳ đã chốt đọc
+ * snapshot) về cùng hình dạng này, nên mọi trường số ở đây là `number` thật —
+ * không còn chuỗi `Decimal` của Prisma như trước.
+ */
 export interface PayrollSummaryRow {
   employeeId: string;
   employee: EmployeeRef | null;
   workedMinutes: number;
-  standardDays: string | number;
+  standardDays: number;
+  /** Tổng ba loại OT — ba cột riêng bên dưới dành cho ai cần tách hệ số. */
   otMinutes: number;
-  otPayMinutes?: number;
+  otMinutesNormal: number;
+  otMinutesWeekend: number;
+  otMinutesHoliday: number;
   lateCount: number;
   lateMinutesTotal: number;
   earlyLeaveCount: number;
-  absentDays: number;
   leaveDays: number;
+  unpaidLeaveDays: number;
+  absentDays: number;
+  missingRecordDays: number;
   makeupMinutes: number;
-  penaltyAmount?: number | null;
+  penaltyAmount: number | null;
+  violationCount: number;
 }
 
 export interface PayrollSummary {
   period: PayrollPeriod;
-  rows: PayrollSummaryRow[];
+  items: PayrollSummaryRow[];
   /** Kỳ đã chốt đọc từ snapshot bất biến; kỳ đang mở tính trực tiếp. */
   fromSnapshot: boolean;
 }
@@ -43,13 +56,31 @@ export interface PayrollSummary {
  *
  * "Bước 3 không được bỏ qua. Chốt kỳ khi còn đơn chờ duyệt là nguyên nhân khiếu
  * nại lương phổ biến nhất."
+ *
+ * Ba mục đầu là ĐẾM, không phải danh sách — đúng như tài liệu mô tả ("Số nhân
+ * viên có bản ghi thiếu", "Số đơn còn đang chờ duyệt", "Số lượt chấm công còn
+ * gắn cờ"). Chỉ nhóm cuối là danh sách, vì để xử lý số công bất thường thì phải
+ * biết bất thường ở AI.
  */
+export interface PreCloseBlockers {
+  missingRecords: number;
+  pendingRequests: number;
+  unreviewedFraudFlags: number;
+}
+
+export interface PreCloseAnomaly {
+  employeeId: string;
+  employeeCode: string | null;
+  fullName: string | null;
+  standardDays: number;
+  issue: string;
+}
+
 export interface PreCloseReport {
-  missingRecords: { employee: EmployeeRef | null; workDate: string; issue: string }[];
-  pendingRequests: { id: string; employee: EmployeeRef | null; requestTypeName: string; startAt: string }[];
-  unreviewedFraudFlags: { id: string; employee: EmployeeRef | null; code: string; createdAt: string }[];
-  abnormalEmployees: { employee: EmployeeRef | null; standardDays: number; reason: string }[];
-  blockerCount: number;
+  period: { id: string; name: string; startDate: string; endDate: string; status: string };
+  blockers: PreCloseBlockers;
+  anomalies: PreCloseAnomaly[];
+  canClose: boolean;
 }
 
 export function usePayrollPeriods() {
@@ -96,22 +127,35 @@ export function useCreatePeriod() {
   });
 }
 
+/**
+ * Chạy lại tính công cho kỳ.
+ *
+ * ⚠ KHÔNG `invalidate` ở `onSuccess`. Endpoint trả 202 ngay khi job được nhận,
+ * chứ không phải khi tính xong — làm mới lúc này chỉ tải lại đúng số liệu cũ,
+ * rồi bảng đứng im cho tới khi người dùng tự F5. Việc làm mới thuộc về màn hình:
+ * nó theo dõi `jobId` và chỉ nạp lại khi job báo xong.
+ */
 export function useRecalculatePeriod() {
-  const invalidate = useInvalidatePayroll();
   return useMutation({
     mutationFn: (periodId: string) =>
-      api.post<{ jobId?: string; queued: boolean }>(
+      api.post<{ jobId: string; statusUrl: string; queued: boolean }>(
         `/admin/payroll/periods/${periodId}/recalculate`,
       ),
-    onSuccess: invalidate,
   });
 }
 
 export function useClosePeriod() {
   const invalidate = useInvalidatePayroll();
   return useMutation({
-    mutationFn: ({ periodId, reason, force }: { periodId: string; reason: string; force?: boolean }) =>
-      api.post<PayrollPeriod>(`/admin/payroll/periods/${periodId}/close`, { reason, force }),
+    mutationFn: ({
+      periodId,
+      reason,
+      force,
+    }: {
+      periodId: string;
+      reason: string;
+      force?: boolean;
+    }) => api.post<PayrollPeriod>(`/admin/payroll/periods/${periodId}/close`, { reason, force }),
     onSuccess: invalidate,
   });
 }
@@ -128,6 +172,9 @@ export function useReopenPeriod() {
 export function useExportPayroll() {
   return useMutation({
     mutationFn: (payload: { periodId: string; format?: 'XLSX' | 'CSV' }) =>
-      api.post<{ jobId: string; statusUrl: string }>('/admin/payroll/export', payload),
+      api.post<{ jobId: string; statusUrl: string; queued: boolean }>(
+        '/admin/payroll/export',
+        payload,
+      ),
   });
 }

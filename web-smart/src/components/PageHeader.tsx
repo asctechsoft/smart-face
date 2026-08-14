@@ -50,13 +50,7 @@ export function PageHeader({
 }
 
 /** Tiêu đề nhóm bên trong trang — `headline-md`, không dùng Jakarta. */
-export function SectionTitle({
-  children,
-  extra,
-}: {
-  children: ReactNode;
-  extra?: ReactNode;
-}) {
+export function SectionTitle({ children, extra }: { children: ReactNode; extra?: ReactNode }) {
   return (
     <div
       style={{

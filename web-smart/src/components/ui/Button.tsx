@@ -13,12 +13,7 @@ import { Icon } from './Icon';
  * trống — với "duyệt đơn" hay "chốt kỳ" thì lần bấm thứ hai không vô hại.
  */
 export type ButtonVariant =
-  | 'primary'
-  | 'teal'
-  | 'secondary'
-  | 'tertiary'
-  | 'destructive'
-  | 'destructive-ghost';
+  'primary' | 'teal' | 'secondary' | 'tertiary' | 'destructive' | 'destructive-ghost';
 
 export type ButtonSize = 'sm' | 'md' | 'lg';
 

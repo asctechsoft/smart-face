@@ -44,7 +44,10 @@ export function AdjustAttendanceModal({
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
 
-  const logs = useAttendanceLogs(open ? daily?.employeeId ?? null : null, open ? daily?.workDate ?? null : null);
+  const logs = useAttendanceLogs(
+    open ? (daily?.employeeId ?? null) : null,
+    open ? (daily?.workDate ?? null) : null,
+  );
 
   useEffect(() => {
     if (open) {
@@ -107,8 +110,7 @@ export function AdjustAttendanceModal({
       title="Hiệu chỉnh công"
       okText="Tạo bản ghi hiệu chỉnh"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ disabled: !canSubmit, loading: adjust.isPending, size: 'large' }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ disabled: !canSubmit, loading: adjust.isPending }}
       width={600}
       destroyOnClose
     >
@@ -172,7 +174,11 @@ export function AdjustAttendanceModal({
 
           {needsLog ? (
             <div>
-              <label className="sf-field__label" htmlFor="adj-log" style={{ display: 'block', marginBottom: 4 }}>
+              <label
+                className="sf-field__label"
+                htmlFor="adj-log"
+                style={{ display: 'block', marginBottom: 4 }}
+              >
                 Lượt chấm công cần {adjustType === 'VOID' ? 'huỷ' : 'sửa'}
               </label>
               <Select
@@ -188,7 +194,11 @@ export function AdjustAttendanceModal({
                 options={(logs.data ?? []).map((log) => ({
                   value: log.id,
                   label: `${log.type === 'CHECK_IN' ? 'Vào' : 'Ra'} · ${formatTime(log.recordedAt, timezone)} · ${
-                    log.authMethod === 'FACE' ? 'Khuôn mặt' : log.authMethod === 'FINGERPRINT' ? 'Vân tay' : 'Nhập tay'
+                    log.authMethod === 'FACE'
+                      ? 'Khuôn mặt'
+                      : log.authMethod === 'FINGERPRINT'
+                        ? 'Vân tay'
+                        : 'Nhập tay'
                   }`,
                 }))}
               />
@@ -215,7 +225,11 @@ export function AdjustAttendanceModal({
 
           {needsTime ? (
             <div>
-              <label className="sf-field__label" htmlFor="adj-time" style={{ display: 'block', marginBottom: 4 }}>
+              <label
+                className="sf-field__label"
+                htmlFor="adj-time"
+                style={{ display: 'block', marginBottom: 4 }}
+              >
                 Giờ mới
               </label>
               <TimePicker
@@ -234,7 +248,11 @@ export function AdjustAttendanceModal({
           ) : null}
 
           <div>
-            <label className="sf-field__label" htmlFor="adj-reason" style={{ display: 'block', marginBottom: 4 }}>
+            <label
+              className="sf-field__label"
+              htmlFor="adj-reason"
+              style={{ display: 'block', marginBottom: 4 }}
+            >
               Lý do hiệu chỉnh (bắt buộc)
             </label>
             <Input.TextArea

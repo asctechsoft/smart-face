@@ -11,7 +11,14 @@ import { Icon } from '@/components/Icon';
 import { Can } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { DAILY_STATUS_LABEL, DEFAULT_PAGE_SIZE } from '@/config/constants';
-import { formatDay, formatMinutes, formatTime, firstDayOfMonth, todayWorkDate, toWorkDate } from '@/lib/utils/date';
+import {
+  formatDay,
+  formatMinutes,
+  formatTime,
+  firstDayOfMonth,
+  todayWorkDate,
+  toWorkDate,
+} from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatStandardDays } from '@/lib/utils/format';
 import { useDepartments, useBranches, toSelectOptions } from '@/features/shared/org.api';
@@ -33,9 +40,11 @@ export function AttendanceListPage() {
   const { timezone } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [detail, setDetail] = useState<{ employeeId: string; workDate: string; name: string } | null>(
-    null,
-  );
+  const [detail, setDetail] = useState<{
+    employeeId: string;
+    workDate: string;
+    name: string;
+  } | null>(null);
   const [adjustTarget, setAdjustTarget] = useState<AttendanceDaily | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
 
@@ -132,7 +141,8 @@ export function AttendanceListPage() {
       key: 'ot',
       width: 90,
       align: 'right',
-      render: (value: number) => (value > 0 ? formatMinutes(value) : <span className="sf-text-muted">—</span>),
+      render: (value: number) =>
+        value > 0 ? formatMinutes(value) : <span className="sf-text-muted">—</span>,
     },
     {
       title: 'Công',
@@ -148,7 +158,9 @@ export function AttendanceListPage() {
       key: 'status',
       width: 140,
       render: (value: string) => (
-        <StatusBadge tone={dailyStatusTone(value)}>{DAILY_STATUS_LABEL[value] ?? value}</StatusBadge>
+        <StatusBadge tone={dailyStatusTone(value)}>
+          {DAILY_STATUS_LABEL[value] ?? value}
+        </StatusBadge>
       ),
     },
     {
@@ -201,10 +213,7 @@ export function AttendanceListPage() {
         description="Bảng công theo ngày, tính sẵn từ bản ghi thô. Bấm vào một dòng để xem ảnh, vị trí và điểm nhận diện của từng lượt."
         actions={
           <Can do="attendance.export">
-            <Button
-              icon={<Icon name="download" size={20} />}
-              onClick={() => setExportOpen(true)}
-            >
+            <Button icon={<Icon name="download" size={20} />} onClick={() => setExportOpen(true)}>
               Xuất Excel
             </Button>
           </Can>

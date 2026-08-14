@@ -134,7 +134,13 @@ export function BranchesTab() {
   );
 }
 
-function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; onClose: () => void }) {
+function BranchFormModal({
+  branch,
+  onClose,
+}: {
+  branch: Partial<Branch> | null;
+  onClose: () => void;
+}) {
   const toast = useToast();
   const showError = useErrorToast();
   const upsert = useUpsertBranch();
@@ -153,8 +159,7 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
       title={branch?.id ? `Sửa chi nhánh · ${branch.name}` : 'Thêm chi nhánh'}
       okText="Lưu"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ size: 'large', loading: upsert.isPending, disabled: !value.name }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ loading: upsert.isPending, disabled: !value.name }}
       width={640}
       destroyOnClose
       afterOpenChange={(open) => {
@@ -172,7 +177,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-field__label" htmlFor="b-name" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="b-name"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Tên chi nhánh
           </label>
           <Input
@@ -184,7 +193,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="b-addr" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="b-addr"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Địa chỉ
           </label>
           <Input
@@ -197,7 +210,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
-            <label className="sf-field__label" htmlFor="b-lat" style={{ display: 'block', marginBottom: 4 }}>
+            <label
+              className="sf-field__label"
+              htmlFor="b-lat"
+              style={{ display: 'block', marginBottom: 4 }}
+            >
               Vĩ độ
             </label>
             <InputNumber
@@ -210,7 +227,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
             />
           </div>
           <div>
-            <label className="sf-field__label" htmlFor="b-lng" style={{ display: 'block', marginBottom: 4 }}>
+            <label
+              className="sf-field__label"
+              htmlFor="b-lng"
+              style={{ display: 'block', marginBottom: 4 }}
+            >
               Kinh độ
             </label>
             <InputNumber
@@ -243,7 +264,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="b-bssid" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="b-bssid"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Địa chỉ MAC bộ phát WiFi (BSSID)
           </label>
           <Select
@@ -262,7 +287,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="b-ip" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="b-ip"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Dải IP công cộng của văn phòng (CIDR)
           </label>
           <Select

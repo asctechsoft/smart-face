@@ -309,8 +309,7 @@ function RoleDialog({ target, onClose }: { target: Employee | null; onClose: () 
       title={`Đổi quyền · ${target?.fullName ?? ''}`}
       okText="Lưu"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ size: 'large', loading: update.isPending, disabled: missingScope }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ loading: update.isPending, disabled: missingScope }}
       width={560}
       destroyOnClose
       afterOpenChange={(open) => {
@@ -339,7 +338,11 @@ function RoleDialog({ target, onClose }: { target: Employee | null; onClose: () 
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-field__label" htmlFor="rl-roles" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="rl-roles"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Vai trò trên hệ thống
           </label>
           <Select

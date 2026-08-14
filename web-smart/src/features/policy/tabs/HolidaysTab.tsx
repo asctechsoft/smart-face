@@ -97,7 +97,11 @@ export function HolidaysTab() {
         />
 
         {canEdit ? (
-          <Button type="primary" icon={<Icon name="add" size={20} />} onClick={() => setFormOpen(true)}>
+          <Button
+            type="primary"
+            icon={<Icon name="add" size={20} />}
+            onClick={() => setFormOpen(true)}
+          >
             Thêm ngày lễ
           </Button>
         ) : null}
@@ -175,8 +179,7 @@ function HolidayFormModal({
       title={`Thêm ngày lễ · năm ${year}`}
       okText="Lưu"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ size: 'large', loading: create.isPending, disabled: !name.trim() || !date }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ loading: create.isPending, disabled: !name.trim() || !date }}
       destroyOnClose
       afterOpenChange={(isOpen) => {
         if (isOpen) {
@@ -205,7 +208,11 @@ function HolidayFormModal({
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-field__label" htmlFor="h-name" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="h-name"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Tên ngày lễ
           </label>
           <Input
@@ -218,7 +225,11 @@ function HolidayFormModal({
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
-            <label className="sf-field__label" htmlFor="h-date" style={{ display: 'block', marginBottom: 4 }}>
+            <label
+              className="sf-field__label"
+              htmlFor="h-date"
+              style={{ display: 'block', marginBottom: 4 }}
+            >
               Ngày lễ
             </label>
             <DatePicker
@@ -231,7 +242,11 @@ function HolidayFormModal({
           </div>
 
           <div>
-            <label className="sf-field__label" htmlFor="h-sub" style={{ display: 'block', marginBottom: 4 }}>
+            <label
+              className="sf-field__label"
+              htmlFor="h-sub"
+              style={{ display: 'block', marginBottom: 4 }}
+            >
               Ngày nghỉ bù
             </label>
             <DatePicker
@@ -252,7 +267,11 @@ function HolidayFormModal({
         />
 
         <div>
-          <label className="sf-field__label" htmlFor="h-mul" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="h-mul"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Hệ số OT áp dụng
           </label>
           <InputNumber
@@ -269,7 +288,11 @@ function HolidayFormModal({
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="h-branch" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="h-branch"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Áp dụng cho chi nhánh
           </label>
           <Select

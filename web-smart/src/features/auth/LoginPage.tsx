@@ -188,13 +188,7 @@ export function LoginPage() {
           />
         </Field>
 
-        <Button
-          size="lg"
-          type="submit"
-          loading={submitting}
-          disabled={!isFirebaseConfigured}
-          block
-        >
+        <Button size="lg" type="submit" loading={submitting} disabled={!isFirebaseConfigured} block>
           Đăng nhập
         </Button>
       </form>

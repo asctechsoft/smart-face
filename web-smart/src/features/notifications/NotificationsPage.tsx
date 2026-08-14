@@ -119,7 +119,9 @@ export function NotificationsPage() {
                           padding: 16,
                           border: 'none',
                           borderBottom: '1px solid var(--sf-outline-variant)',
-                          borderLeft: unread ? '2px solid var(--sf-teal-700)' : '2px solid transparent',
+                          borderLeft: unread
+                            ? '2px solid var(--sf-teal-700)'
+                            : '2px solid transparent',
                           background: unread ? 'var(--sf-teal-50)' : 'transparent',
                           cursor: unread ? 'pointer' : 'default',
                         }}
@@ -158,7 +160,10 @@ export function NotificationsPage() {
                             {item.title}
                           </div>
                           <div className="sf-body-sm sf-text-variant">{item.body}</div>
-                          <div className="sf-caption" title={formatDateTime(item.createdAt, timezone)}>
+                          <div
+                            className="sf-caption"
+                            title={formatDateTime(item.createdAt, timezone)}
+                          >
                             {formatRelativeDay(item.createdAt, timezone)}
                           </div>
                         </div>
@@ -184,12 +189,29 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [departmentIds, setDepartmentIds] = useState<string[]>([]);
+  /**
+   * MỘT phòng ban, không phải nhiều.
+   *
+   * Một lần gửi tạo đúng một bản ghi `notification`, và bản ghi đó có duy nhất
+   * một `departmentId` — docs/04 `FR-WEB-NOT-01` cũng viết "toàn công ty HOẶC
+   * theo phòng ban". Ô này từng là `mode="multiple"` gửi lên `departmentIds`:
+   * Backend không có trường đó nên lặng lẽ bỏ qua, và người dùng chọn đúng một
+   * phòng ban vẫn phát ra toàn công ty mà không có lỗi nào báo.
+   */
+  const [departmentId, setDepartmentId] = useState<string | undefined>();
 
   const broadcast = useMutation({
-    mutationFn: (payload: { title: string; body: string; departmentIds?: string[] }) =>
-      api.post<{ recipients: number }>('/admin/notifications/broadcast', payload),
+    mutationFn: (payload: { title: string; body: string; departmentId?: string }) =>
+      api.post<{ notificationId: string; recipients: number }>(
+        '/admin/notifications/broadcast',
+        payload,
+      ),
   });
+
+  const scopeLabel = departmentId
+    ? (departments.data?.find((department) => department.id === departmentId)?.name ??
+      'phòng ban đã chọn')
+    : 'toàn công ty';
 
   return (
     <Modal
@@ -199,18 +221,16 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
       okText="Gửi thông báo"
       cancelText="Huỷ bỏ"
       okButtonProps={{
-        size: 'large',
         loading: broadcast.isPending,
         disabled: !title.trim() || !body.trim(),
       }}
-      cancelButtonProps={{ size: 'large' }}
       width={600}
       destroyOnClose
       afterOpenChange={(isOpen) => {
         if (isOpen) {
           setTitle('');
           setBody('');
-          setDepartmentIds([]);
+          setDepartmentId(undefined);
         }
       }}
       onOk={async () => {
@@ -218,9 +238,15 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
           const result = await broadcast.mutateAsync({
             title: title.trim(),
             body: body.trim(),
-            departmentIds: departmentIds.length > 0 ? departmentIds : undefined,
+            departmentId,
           });
-          toast.success(`Đã gửi thông báo tới ${result.recipients} nhân viên`);
+          // Nhắc lại PHẠM VI vừa gửi, không chỉ con số. Thông báo đã phát thì
+          // không thu hồi được, và sau khi hộp thoại đóng thì "gửi toàn công ty"
+          // với "gửi phòng Kỹ thuật" trông giống hệt nhau.
+          toast.success(
+            `Đã gửi thông báo tới ${result.recipients} nhân viên`,
+            `Phạm vi: ${scopeLabel}. Nhân viên chưa cài ứng dụng sẽ thấy thông báo ở lần mở app kế tiếp.`,
+          );
           onClose();
         } catch (caught) {
           showError(caught);
@@ -236,7 +262,11 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
         />
 
         <div>
-          <label className="sf-field__label" htmlFor="n-title" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="n-title"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Tiêu đề
           </label>
           <Input
@@ -250,7 +280,11 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="n-body" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="n-body"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Nội dung
           </label>
           <Input.TextArea
@@ -265,16 +299,19 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="n-dept" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="n-dept"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Gửi tới
           </label>
           <Select
             id="n-dept"
-            mode="multiple"
             allowClear
             style={{ width: '100%' }}
-            value={departmentIds}
-            onChange={setDepartmentIds}
+            value={departmentId}
+            onChange={setDepartmentId}
             loading={departments.isLoading}
             placeholder="Bỏ trống = toàn bộ công ty"
             options={(departments.data ?? []).map((department) => ({
@@ -282,6 +319,10 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
               label: department.name,
             }))}
           />
+          <p className="sf-body-sm sf-text-variant" style={{ margin: '4px 0 0' }}>
+            Mỗi lần gửi tới được một phòng ban. Muốn gửi cho nhiều phòng ban thì soạn nhiều lần,
+            hoặc bỏ trống để gửi toàn công ty.
+          </p>
         </div>
       </div>
     </Modal>

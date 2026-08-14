@@ -23,7 +23,13 @@ import { CardSkeleton } from '@/components/Skeleton';
 import { EmptyState } from '@/components/EmptyState';
 import { ApiErrorState } from '@/components/ApiErrorState';
 import { useAuth } from '@/lib/auth/auth-context';
-import { firstDayOfMonth, formatDay, formatMinutes, lastDayOfMonth, toWorkDate } from '@/lib/utils/date';
+import {
+  firstDayOfMonth,
+  formatDay,
+  formatMinutes,
+  lastDayOfMonth,
+  toWorkDate,
+} from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatNumber, formatPercent } from '@/lib/utils/format';
 import { useAttendanceTrend } from '@/features/dashboard/dashboard.api';
@@ -118,16 +124,48 @@ function TrendTab({ from, to }: { from: string; to: string }) {
             tick={{ fill: 'var(--sf-neutral-700)', fontSize: 12 }}
             tickLine={false}
           />
-          <YAxis tick={{ fill: 'var(--sf-neutral-700)', fontSize: 12 }} axisLine={false} tickLine={false} />
+          <YAxis
+            tick={{ fill: 'var(--sf-neutral-700)', fontSize: 12 }}
+            axisLine={false}
+            tickLine={false}
+          />
           <Tooltip
             labelFormatter={(value: string) => `Ngày ${formatDay(value, timezone)}`}
             contentStyle={{ borderRadius: 8, border: '1px solid var(--sf-outline-variant)' }}
           />
           <Legend wrapperStyle={{ fontSize: 14 }} />
-          <Line type="monotone" dataKey="onTime" name="Đúng giờ" stroke="#17725A" strokeWidth={2} dot={false} />
-          <Line type="monotone" dataKey="late" name="Đi muộn" stroke="#D49D57" strokeWidth={2} dot={false} />
-          <Line type="monotone" dataKey="absent" name="Vắng mặt" stroke="#FB6457" strokeWidth={2} dot={false} />
-          <Line type="monotone" dataKey="onLeave" name="Nghỉ phép" stroke="#84CAB1" strokeWidth={2} dot={false} />
+          <Line
+            type="monotone"
+            dataKey="onTime"
+            name="Đúng giờ"
+            stroke="#17725A"
+            strokeWidth={2}
+            dot={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="late"
+            name="Đi muộn"
+            stroke="#D49D57"
+            strokeWidth={2}
+            dot={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="absent"
+            name="Vắng mặt"
+            stroke="#FB6457"
+            strokeWidth={2}
+            dot={false}
+          />
+          <Line
+            type="monotone"
+            dataKey="onLeave"
+            name="Nghỉ phép"
+            stroke="#84CAB1"
+            strokeWidth={2}
+            dot={false}
+          />
         </LineChart>
       </ResponsiveContainer>
     </div>
@@ -216,9 +254,7 @@ function OvertimeTab({ from, to }: { from: string; to: string }) {
 
   if (overtime.isLoading) return <CardSkeleton height={400} />;
   if (overtime.error) {
-    return (
-      <ApiErrorState error={overtime.error} onRetry={() => void overtime.refetch()} />
-    );
+    return <ApiErrorState error={overtime.error} onRetry={() => void overtime.refetch()} />;
   }
   if (!overtime.data || overtime.data.totalOtMinutes === 0) {
     return (
@@ -282,8 +318,16 @@ function OvertimeTab({ from, to }: { from: string; to: string }) {
               layout="vertical"
               margin={{ top: 8, right: 24, left: 24, bottom: 0 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--sf-neutral-200)" horizontal={false} />
-              <XAxis type="number" tick={{ fill: 'var(--sf-neutral-700)', fontSize: 12 }} tickLine={false} />
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="var(--sf-neutral-200)"
+                horizontal={false}
+              />
+              <XAxis
+                type="number"
+                tick={{ fill: 'var(--sf-neutral-700)', fontSize: 12 }}
+                tickLine={false}
+              />
               <YAxis
                 type="category"
                 dataKey="name"
@@ -300,7 +344,10 @@ function OvertimeTab({ from, to }: { from: string; to: string }) {
                 {/* Tô đậm dần theo thứ hạng để mắt bắt được phòng ban tốn OT
                     nhất mà không cần đọc số. */}
                 {data.byDepartment.map((_, index) => (
-                  <Cell key={index} fill={index === 0 ? '#005440' : index < 3 ? '#398F75' : '#84CAB1'} />
+                  <Cell
+                    key={index}
+                    fill={index === 0 ? '#005440' : index < 3 ? '#398F75' : '#84CAB1'}
+                  />
                 ))}
               </Bar>
             </BarChart>

@@ -1,5 +1,15 @@
 import { useState } from 'react';
-import { Alert, Button, DatePicker, Input, InputNumber, Modal, Select, Switch, TimePicker } from 'antd';
+import {
+  Alert,
+  Button,
+  DatePicker,
+  Input,
+  InputNumber,
+  Modal,
+  Select,
+  Switch,
+  TimePicker,
+} from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -243,8 +253,7 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
       title={shift?.id ? `Sửa ca · ${shift.name}` : 'Thêm ca làm việc'}
       okText="Lưu"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ size: 'large', loading: upsert.isPending, disabled: !value.name }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ loading: upsert.isPending, disabled: !value.name }}
       width={640}
       destroyOnClose
       afterOpenChange={(open) => {
@@ -466,4 +475,3 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
 function parseTime(value: string | null | undefined): Dayjs | null {
   return value ? dayjs(value, 'HH:mm') : null;
 }
-

@@ -180,12 +180,9 @@ export function EmployeeFormDrawer({
       title={mode === 'create' ? 'Thêm nhân viên' : `Sửa hồ sơ · ${employee?.fullName ?? ''}`}
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-          <Button size="large" onClick={onClose}>
-            Huỷ bỏ
-          </Button>
+          <Button onClick={onClose}>Huỷ bỏ</Button>
           <Button
             type="primary"
-            size="large"
             loading={create.isPending || update.isPending}
             onClick={() => void onSubmit()}
           >
@@ -436,4 +433,3 @@ export function EmployeeFormDrawer({
     </Drawer>
   );
 }
-

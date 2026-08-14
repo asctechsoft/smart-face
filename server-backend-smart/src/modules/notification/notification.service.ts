@@ -73,8 +73,22 @@ export class NotificationService {
     }
   }
 
-  /** FR-WEB-NOT-01 — thông báo toàn công ty hoặc theo phòng ban. */
-  async broadcast(input: Omit<NotifyInput, 'employeeId'>): Promise<{ notificationId: string }> {
+  /**
+   * FR-WEB-NOT-01 — thông báo toàn công ty hoặc theo phòng ban.
+   *
+   * Trả kèm `recipients` vì màn soạn thông báo cần xác nhận lại phạm vi vừa gửi:
+   * "gửi cho toàn công ty" và "gửi cho phòng Kỹ thuật" trông giống hệt nhau sau
+   * khi hộp thoại đóng, và đây là thao tác chạm tới tất cả mọi người cùng lúc —
+   * không có nút thu hồi.
+   */
+  async broadcast(
+    input: Omit<NotifyInput, 'employeeId'>,
+  ): Promise<{ notificationId: string; recipients: number }> {
+    const recipients = await this.notifications.countBroadcastRecipients(
+      input.companyId,
+      input.departmentId,
+    );
+
     const notification = await this.notifications.create({
       companyId: input.companyId,
       departmentId: input.departmentId,
@@ -95,7 +109,7 @@ export class NotificationService {
         );
     }
 
-    return { notificationId: notification.id };
+    return { notificationId: notification.id, recipients };
   }
 
   /** Gửi SMS qua queue (OTP, lời mời nhân viên). */

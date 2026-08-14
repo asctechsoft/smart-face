@@ -60,11 +60,9 @@ export function RequestTypeFormModal({
       okText={existing ? 'Lưu thay đổi' : 'Tạo loại đơn'}
       cancelText="Huỷ bỏ"
       okButtonProps={{
-        size: 'large',
         loading: create.isPending || update.isPending,
         disabled: !canSubmit,
       }}
-      cancelButtonProps={{ size: 'large' }}
       width={600}
       destroyOnClose
       afterOpenChange={(open) => {
@@ -218,4 +216,3 @@ function ToggleRow({
     </div>
   );
 }
-

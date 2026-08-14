@@ -41,9 +41,11 @@ export function DepartmentsTab() {
       key: 'parent',
       width: 200,
       render: (value: string | null) =>
-        value
-          ? (departments.data?.find((item) => item.id === value)?.name ?? '—')
-          : <span className="sf-text-muted">Cấp cao nhất</span>,
+        value ? (
+          (departments.data?.find((item) => item.id === value)?.name ?? '—')
+        ) : (
+          <span className="sf-text-muted">Cấp cao nhất</span>
+        ),
     },
     {
       title: 'Trưởng phòng',
@@ -77,7 +79,11 @@ export function DepartmentsTab() {
     <div>
       {canEdit ? (
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 16 }}>
-          <Button type="primary" icon={<Icon name="add" size={20} />} onClick={() => setEditing({})}>
+          <Button
+            type="primary"
+            icon={<Icon name="add" size={20} />}
+            onClick={() => setEditing({})}
+          >
             Thêm phòng ban
           </Button>
         </div>
@@ -136,8 +142,7 @@ function DepartmentFormModal({
       title={department?.id ? `Sửa phòng ban · ${department.name}` : 'Thêm phòng ban'}
       okText="Lưu"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ size: 'large', loading: upsert.isPending, disabled: !value.name }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ loading: upsert.isPending, disabled: !value.name }}
       destroyOnClose
       afterOpenChange={(open) => {
         if (open) setDraft({});
@@ -154,7 +159,11 @@ function DepartmentFormModal({
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-field__label" htmlFor="d-name" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="d-name"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Tên phòng ban
           </label>
           <Input
@@ -166,7 +175,11 @@ function DepartmentFormModal({
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="d-branch" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="d-branch"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Thuộc chi nhánh
           </label>
           <Select
@@ -184,7 +197,11 @@ function DepartmentFormModal({
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="d-parent" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="d-parent"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Phòng ban cha
           </label>
           <Select

@@ -34,7 +34,12 @@ export function BulkActionBar({
       </span>
       <span className="sf-bulk-divider" aria-hidden="true" />
       {children}
-      <button type="button" onClick={onClear} className="sf-bulk-btn" style={{ marginLeft: 'auto' }}>
+      <button
+        type="button"
+        onClick={onClear}
+        className="sf-bulk-btn"
+        style={{ marginLeft: 'auto' }}
+      >
         Bỏ chọn
       </button>
     </div>

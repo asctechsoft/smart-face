@@ -1,13 +1,5 @@
 import { useState } from 'react';
-import {
-  Alert,
-  Button,
-  DatePicker,
-  InputNumber,
-  Modal,
-  Select,
-  Switch,
-} from 'antd';
+import { Alert, Button, DatePicker, InputNumber, Modal, Select, Switch } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -89,7 +81,8 @@ export function LeavePolicyTab() {
       width: 230,
       render: (_, row) => {
         if (!row.allowCarryOver) return 'Không cho cộng dồn';
-        const cap = row.maxCarryOverDays != null ? `tối đa ${row.maxCarryOverDays} ngày` : 'không giới hạn';
+        const cap =
+          row.maxCarryOverDays != null ? `tối đa ${row.maxCarryOverDays} ngày` : 'không giới hạn';
         const expire = row.carryOverExpireMonth
           ? `, hết hạn cuối tháng ${row.carryOverExpireMonth}`
           : '';
@@ -223,8 +216,7 @@ function LeavePolicyFormModal({
       title={policy?.id ? 'Sửa chính sách phép năm' : 'Thêm chính sách phép năm'}
       okText="Lưu phiên bản mới"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ size: 'large', loading: upsert.isPending, disabled: belowStatutory }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ loading: upsert.isPending, disabled: belowStatutory }}
       width={620}
       destroyOnClose
       afterOpenChange={(open) => {
@@ -406,4 +398,3 @@ function LeavePolicyFormModal({
     </Modal>
   );
 }
-

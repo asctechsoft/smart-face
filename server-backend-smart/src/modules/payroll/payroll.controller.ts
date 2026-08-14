@@ -152,11 +152,12 @@ export class PayrollController {
   @Audit({ action: 'PAYROLL_RECALCULATE', targetType: 'PAYROLL_PERIOD' })
   @ApiOperation({
     summary: 'Chạy lại tính công cho kỳ',
-    description: 'Job idempotent — chạy 2 lần cho cùng dữ liệu ra kết quả giống hệt (NFR-REL-06).',
+    description:
+      'Job idempotent — chạy 2 lần cho cùng dữ liệu ra kết quả giống hệt (NFR-REL-06). Trả `jobId`; hỏi tiến độ qua `GET /v1/jobs/:id` cho tới khi `status` là `COMPLETED` hoặc `FAILED`.',
   })
   @ApiErrors('PAY_PERIOD_NOT_FOUND', 'PAY_PERIOD_CLOSED')
   recalculate(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
-    return this.payroll.recalculatePeriod(ctx.companyId, id);
+    return this.payroll.recalculatePeriod(ctx, id);
   }
 
   @Get('periods/:id/pre-close-report')

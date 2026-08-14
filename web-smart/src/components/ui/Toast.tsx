@@ -166,7 +166,12 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
         ) : null}
       </div>
 
-      <button type="button" className="sf-toast__close" onClick={onDismiss} aria-label="Đóng thông báo">
+      <button
+        type="button"
+        className="sf-toast__close"
+        onClick={onDismiss}
+        aria-label="Đóng thông báo"
+      >
         <Icon name="close" size={16} />
       </button>
     </div>

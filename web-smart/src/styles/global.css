@@ -434,6 +434,10 @@ body {
  * không đặt lại ở đây thì header thành 16 + 16 + 16 = 48px. Ô dữ liệu vẫn giữ
  * 16px vì chúng chứa avatar hai dòng và cần khoảng thở đó; header chỉ có một
  * dòng chữ 12px nên 12px là đủ.
+ *
+ * ⚠ Chỉ đụng tới `padding-block`. Đệm NGANG do `cellPaddingInline*` trong theme
+ * quyết định, vì mỗi bậc mật độ một giá trị — ghi đè bằng CSS ở đây sẽ ép cả ba
+ * bậc về một số và làm bảng dày đặc rộng bằng bảng thường.
  */
 .ant-table-thead > tr > th {
   padding-block: 12px !important;
@@ -444,6 +448,17 @@ body {
   text-transform: uppercase;
 }
 
+/*
+ * Bảng dày đặc: header theo đúng nhịp 8px của thân bảng.
+ *
+ * Không có luật này thì `!important` bên trên ép header về 12px trong khi ô dữ
+ * liệu đã là 8px — header dày hơn cả dòng dữ liệu, ngược hẳn với thứ bậc thị
+ * giác mà một bảng cần có.
+ */
+.ant-table-small .ant-table-thead > tr > th {
+  padding-block: 8px !important;
+}
+
 /* Dòng đã chọn: nền teal-50 + viền trái teal-700 (mục 11.10). */
 .ant-table-tbody > tr.ant-table-row-selected > td:first-child {
   box-shadow: inset 2px 0 0 0 var(--sf-teal-700);
@@ -452,4 +467,118 @@ body {
 /* Bảng dày đặc trong drawer/modal không cần chiều cao dòng 74px. */
 .sf-table-compact .ant-table-tbody > tr > td {
   padding-block: 8px;
+}
+
+/* ==========================================================================
+   Hộp thoại — luôn vừa khung hình, cuộn BÊN TRONG
+   ========================================================================== */
+
+/*
+ * Mặc định của Ant Design là để hộp thoại cao bao nhiêu tuỳ nội dung, rồi cho
+ * cả lớp phủ cuộn theo. Với form dài (soạn thông báo, báo cáo tiền chốt, import
+ * nhân viên) hậu quả là:
+ *
+ *   • tiêu đề trôi khỏi màn hình khi cuộn xuống — mất ngữ cảnh đang làm gì
+ *   • nút "Gửi" / "Lưu" nằm dưới nếp gấp, phải cuộn mới thấy nên trông như
+ *     hộp thoại không có nút bấm
+ *   • cuộn trong hộp thoại và cuộn trang lẫn vào nhau
+ *
+ * Cách chữa: khoá chiều cao khung ở đúng khung hình, cho header và footer đứng
+ * yên, phần thân tự cuộn. `Modal` viết riêng ở `components/ui/Modal.tsx` đã làm
+ * đúng như vậy từ đầu — đây là kéo `Modal` của antd về cùng hành vi.
+ *
+ * ⚠ Cần đặc thù cao hơn antd chứ KHÔNG dùng `!important`: luật gốc của antd là
+ * `.ant-modal` (0,1,0) và `.ant-modal .ant-modal-content` (0,2,0). Thêm
+ * `.ant-modal-root` ở đầu là đủ thắng, mà vẫn để màn hình nào cần thì ghi đè
+ * được bằng `styles={{ body: ... }}`.
+ */
+.ant-modal-root .ant-modal {
+  max-width: calc(100vw - 32px);
+}
+
+/* Chừa 24px trên/dưới. Mặc định `top: 100px` phí gần một phần năm màn laptop. */
+.ant-modal-root .ant-modal-wrap:not(.ant-modal-centered) .ant-modal {
+  top: 24px;
+  padding-bottom: 24px;
+}
+
+/*
+ * `padding: 0` ở khung là mấu chốt của phần nhìn.
+ *
+ * Antd đặt padding trên `.ant-modal-content`, còn header và footer là con nằm
+ * BÊN TRONG lớp padding đó. Hệ quả: nền `headerBg`/`footerBg` không chạm được
+ * mép hộp thoại — dải nền xám của footer nổi lơ lửng giữa một viền trắng, bốn
+ * góc vuông chọi với bo góc 16px của khung. Đó chính là cái xấu nhìn thấy được.
+ *
+ * Bỏ padding ở khung rồi trả lại cho từng phần: header, thân, footer mỗi phần
+ * tự lo đệm của mình và trải hết chiều ngang.
+ */
+.ant-modal-root .ant-modal .ant-modal-content {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 48px);
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Tiêu đề và hàng nút đứng yên — đó là toàn bộ mục đích của việc này. */
+.ant-modal-root .ant-modal .ant-modal-header,
+.ant-modal-root .ant-modal .ant-modal-footer {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 16px 24px;
+}
+
+.ant-modal-root .ant-modal .ant-modal-header {
+  border-bottom: 1px solid var(--sf-outline-variant);
+}
+
+/*
+ * Hàng nút: căn phải, cách nhau 12px (docs/16 mục 11.13).
+ *
+ * `gap` thay cho `margin-inline-start: 8px` mà antd gắn giữa hai nút — để cả hai
+ * cùng chạy thì khoảng cách thành 20px, và nút đầu tiên lại lệch so với nút cuối
+ * một khoảng không ai giải thích được.
+ */
+.ant-modal-root .ant-modal .ant-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--sf-outline-variant);
+}
+
+.ant-modal-root .ant-modal .ant-modal-footer .ant-btn + .ant-btn {
+  margin-inline-start: 0;
+}
+
+/*
+ * `min-height: 0` là mảnh không được bỏ.
+ *
+ * Mục flex mặc định có `min-height: auto`, nghĩa là nó TỪ CHỐI co nhỏ hơn nội
+ * dung bên trong. Thiếu dòng này thì `overflow-y: auto` bên dưới không bao giờ
+ * kích hoạt: thân hộp thoại cứ nở ra, đẩy `max-height` của khung vỡ, và mọi thứ
+ * quay lại y như cũ.
+ */
+.ant-modal-root .ant-modal .ant-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+/*
+ * Hộp thoại xác nhận của antd (`Modal.confirm`) không có header/footer riêng —
+ * toàn bộ nằm trong `.ant-modal-body`, nên nó tự lo đệm và không cần dải nền.
+ */
+.ant-modal-root .ant-modal-confirm .ant-modal-body {
+  padding: 24px;
+}
+
+/*
+ * Drawer: antd đã cho `.ant-drawer-body` cuộn sẵn, chỉ cần chốt hàng nút ở đáy
+ * để nó không trôi mất cùng nội dung.
+ */
+.ant-drawer .ant-drawer-footer {
+  flex: 0 0 auto;
 }

@@ -141,7 +141,6 @@ export function BulkAssignDrawer({
       footer={
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
           <Button
-            size="large"
             danger
             disabled={employeeIds.length === 0}
             loading={clear.isPending}
@@ -150,12 +149,9 @@ export function BulkAssignDrawer({
             Xoá phân ca
           </Button>
           <div style={{ display: 'flex', gap: 12 }}>
-            <Button size="large" onClick={onClose}>
-              Huỷ bỏ
-            </Button>
+            <Button onClick={onClose}>Huỷ bỏ</Button>
             <Button
               type="primary"
-              size="large"
               disabled={!canSubmit}
               loading={assign.isPending}
               onClick={() => void submit()}

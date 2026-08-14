@@ -191,7 +191,15 @@ export function useReactivateEmployee() {
 export function useTerminateEmployee() {
   const invalidate = useInvalidateEmployees();
   return useMutation({
-    mutationFn: ({ id, reason, effectiveDate }: { id: string; reason: string; effectiveDate?: string }) =>
+    mutationFn: ({
+      id,
+      reason,
+      effectiveDate,
+    }: {
+      id: string;
+      reason: string;
+      effectiveDate?: string;
+    }) =>
       api.post<{ status: string; biometricDeleted: boolean }>(`/admin/employees/${id}/terminate`, {
         reason,
         effectiveDate,
@@ -252,9 +260,7 @@ export function useEmployeeDevices(id: string | null) {
   return useQuery({
     queryKey: qk.employeeDevices(id ?? ''),
     queryFn: () =>
-      api.get<{ devices: DeviceBinding[]; activeCount: number }>(
-        `/admin/employees/${id}/devices`,
-      ),
+      api.get<{ devices: DeviceBinding[]; activeCount: number }>(`/admin/employees/${id}/devices`),
     enabled: Boolean(id),
   });
 }

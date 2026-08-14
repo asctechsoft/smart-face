@@ -37,9 +37,7 @@ export function PolicyValuesTab() {
 
   if (policies.isLoading) return <CardSkeleton height={400} />;
   if (policies.error) {
-    return (
-      <ApiErrorState error={policies.error} onRetry={() => void policies.refetch()} />
-    );
+    return <ApiErrorState error={policies.error} onRetry={() => void policies.refetch()} />;
   }
 
   return (
@@ -85,7 +83,9 @@ export function PolicyValuesTab() {
                       id={field.key}
                       disabled={!canEdit}
                       checked={Boolean(draft[field.key])}
-                      onChange={(checked) => setDraft((prev) => ({ ...prev, [field.key]: checked }))}
+                      onChange={(checked) =>
+                        setDraft((prev) => ({ ...prev, [field.key]: checked }))
+                      }
                       aria-label={field.label}
                     />
                   ) : field.type === 'select' ? (

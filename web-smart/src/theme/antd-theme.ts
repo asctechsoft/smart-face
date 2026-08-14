@@ -49,8 +49,9 @@ export const smartFaceTheme: ThemeConfig = {
      * Ba bậc chiều cao — docs/16 mục 11.1.
      *
      *   `SM` 28px  — nút trong bảng và thanh công cụ
-     *   `default` 32px — MẶC ĐỊNH cho mọi nút và mọi ô nhập
-     *   `LG` 40px  — CHỈ nút chính của modal và drawer
+     *   `default` 32px — MẶC ĐỊNH cho mọi nút và mọi ô nhập, KỂ CẢ trong
+     *                    modal và drawer
+     *   `LG` 40px  — chỉ nút CTA chiếm trọn chiều ngang ở màn xác thực
      *
      * ## Vì sao 32px chứ không phải 44px
      *
@@ -69,9 +70,15 @@ export const smartFaceTheme: ThemeConfig = {
      * ⚠ Sửa các con số ở đây thì PHẢI sửa cả khối `pointer: coarse` bên đó,
      * không thì hai bộ số lệch nhau và lỗi chỉ lộ ra trên máy tablet.
      *
-     * ⚠ `size="large"` là ngoại lệ, không phải mặc định. Có giai đoạn nó bị rải
-     * lên 65 ô nhập và 21 nút cấp trang. Trước khi thêm ở đâu, hỏi: đây có phải
-     * nút chính của một modal/drawer không?
+     * ⚠ `size="large"` là ngoại lệ hiếm, không phải mặc định. Nó từng bị rải lên
+     * 65 ô nhập, 21 nút cấp trang, rồi lên cả 43 nút footer của modal và drawer.
+     * Lần cuối cùng đó là lỗi khó thấy nhất: hộp thoại là chỗ NGƯỜI DÙNG ĐANG
+     * NHÌN, nên nút 40px giữa một trang toàn control 32px trông như thuộc về một
+     * sản phẩm khác. Hộp thoại không cần nút to hơn để được chú ý — nó đã chiếm
+     * trọn màn hình rồi.
+     *
+     * Hiện chỉ còn đúng một chỗ dùng `LG`: nút xác thực hai lớp ở màn đăng nhập,
+     * vốn là nút `block` chiếm trọn chiều ngang thẻ.
      */
     controlHeightSM: 28,
     controlHeight: 32,
@@ -136,6 +143,22 @@ export const smartFaceTheme: ThemeConfig = {
       colorBorder: '#BFC9C3',
       cellActiveWithRangeBg: '#E4FEF4',
     },
+    /*
+     * Ba bậc mật độ bảng — docs/16 mục 11.10.
+     *
+     *   mặc định      16 / 24  — bảng dữ liệu cấp trang
+     *   `size="small"` 8 / 16  — bảng tra cứu, bảng xem trước trong modal
+     *
+     * ⚠ PHẢI khai cả bậc `SM` và `MD`. Ant Design KHÔNG suy chúng ra từ
+     * `cellPaddingInline`: bỏ trống thì `size="small"` rơi về mặc định 8px của
+     * thư viện, tức là đệm ngang chỉ bằng MỘT PHẦN BA bảng bên cạnh. Chữ dính
+     * sát mép ô, và tệ hơn là hai bảng trên cùng một trang lệch nhịp nhau —
+     * đúng hiện tượng ở bảng "Vai trò làm được những gì".
+     *
+     * Bậc dày đặc siết theo CHIỀU DỌC là chính (16→8). Đệm ngang chỉ hạ 24→16
+     * chứ không hạ sâu hơn: cột hẹp lại thì bảng buộc phải cuộn ngang, mà cuộn
+     * ngang mới là thứ giết khả năng đọc của một bảng tra cứu.
+     */
     Table: {
       headerBg: '#F2F4F3',
       headerColor: '#3F4944',
@@ -145,6 +168,10 @@ export const smartFaceTheme: ThemeConfig = {
       borderColor: '#BFC9C3',
       cellPaddingBlock: 16,
       cellPaddingInline: 24,
+      cellPaddingBlockMD: 12,
+      cellPaddingInlineMD: 16,
+      cellPaddingBlockSM: 8,
+      cellPaddingInlineSM: 16,
     },
     Modal: { borderRadiusLG: 16, headerBg: '#F8FAF9', footerBg: '#F2F4F3', contentBg: '#FFFFFF' },
     Drawer: { paddingLG: 24 },

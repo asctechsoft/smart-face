@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { Alert, Checkbox, Collapse, Input, Modal, Tag } from 'antd';
 import { CardSkeleton } from '@/components/Skeleton';
 import { Icon } from '@/components/Icon';
-import { useAuth } from '@/lib/auth/auth-context';
-import { formatDateTime, formatDay } from '@/lib/utils/date';
-import { REASON_MIN_LENGTH, FRAUD_CODE_LABEL } from '@/config/constants';
+import { formatStandardDays } from '@/lib/utils/format';
+import { REASON_MIN_LENGTH } from '@/config/constants';
 import { usePreCloseReport, type PayrollPeriod } from './payroll.api';
 import { ApiErrorState } from '@/components/ApiErrorState';
 
@@ -33,7 +32,6 @@ export function PreCloseReportModal({
   onConfirm: (reason: string, force: boolean) => void | Promise<void>;
   closing: boolean;
 }) {
-  const { timezone } = useAuth();
   const report = usePreCloseReport(open ? (period?.id ?? null) : null);
 
   const [reason, setReason] = useState('');
@@ -46,7 +44,11 @@ export function PreCloseReportModal({
     }
   }, [open]);
 
-  const blockers = report.data?.blockerCount ?? 0;
+  const counts = report.data?.blockers;
+  const blockers =
+    (counts?.missingRecords ?? 0) +
+    (counts?.pendingRequests ?? 0) +
+    (counts?.unreviewedFraudFlags ?? 0);
   const hasBlockers = blockers > 0;
   const reasonOk = reason.trim().length >= REASON_MIN_LENGTH;
   const canClose = reasonOk && (!hasBlockers || acknowledged);
@@ -59,8 +61,7 @@ export function PreCloseReportModal({
       title={`Chốt kỳ · ${period?.name ?? ''}`}
       okText="Chốt kỳ lương"
       cancelText="Để sau"
-      okButtonProps={{ disabled: !canClose, loading: closing, danger: hasBlockers, size: 'large' }}
-      cancelButtonProps={{ size: 'large' }}
+      okButtonProps={{ disabled: !canClose, loading: closing, danger: hasBlockers }}
       width={720}
       destroyOnClose
     >
@@ -91,108 +92,74 @@ export function PreCloseReportModal({
             />
           )}
 
+          {/*
+            Ba mục đầu là ĐẾM chứ không phải danh sách — đó là hợp đồng của
+            Backend và cũng đúng nguyên văn docs/04 mục 7.2 ("Số nhân viên có bản
+            ghi thiếu", "Số đơn còn đang chờ duyệt", "Số lượt chấm công còn gắn
+            cờ"). Vì không có chi tiết để bung ra, mỗi dòng nói thẳng đi đâu để
+            xử lý thay vì mời bấm vào một ô rỗng.
+          */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            <IssueRow
+              icon="event_busy"
+              title="Bản ghi thiếu"
+              hint="Chấm vào nhưng không chấm ra"
+              count={counts?.missingRecords ?? 0}
+              fix="Vào Chấm công, lọc trạng thái “Thiếu bản ghi” rồi hiệu chỉnh từng ngày."
+            />
+            <IssueRow
+              icon="assignment_late"
+              title="Đơn còn chờ duyệt"
+              hint="Duyệt xong sẽ làm bảng công thay đổi"
+              count={counts?.pendingRequests ?? 0}
+              fix="Vào Đơn từ, lọc trạng thái “Chờ duyệt” trong khoảng ngày của kỳ."
+            />
+            <IssueRow
+              icon="flag"
+              title="Cờ nghi vấn chưa xử lý"
+              hint="Cần quyết định giữ công hay huỷ công"
+              count={counts?.unreviewedFraudFlags ?? 0}
+              fix="Vào Nghi vấn gian lận, xử lý các cờ chưa rà soát trong kỳ."
+            />
+          </div>
+
           <Collapse
-            defaultActiveKey={hasBlockers ? ['missing', 'requests', 'flags'] : []}
+            defaultActiveKey={report.data.anomalies.length > 0 ? ['abnormal'] : []}
             items={[
-              {
-                key: 'missing',
-                label: (
-                  <IssueLabel
-                    icon="event_busy"
-                    title="Bản ghi thiếu"
-                    hint="Chấm vào nhưng không chấm ra"
-                    count={report.data.missingRecords.length}
-                  />
-                ),
-                children: report.data.missingRecords.length === 0 ? (
-                  <Empty>Không có bản ghi nào thiếu.</Empty>
-                ) : (
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {report.data.missingRecords.map((item, index) => (
-                      <li key={`${item.workDate}-${index}`} className="sf-body-sm">
-                        {item.employee?.fullName ?? 'Không xác định'} ·{' '}
-                        {formatDay(item.workDate, timezone)} · {item.issue}
-                      </li>
-                    ))}
-                  </ul>
-                ),
-              },
-              {
-                key: 'requests',
-                label: (
-                  <IssueLabel
-                    icon="assignment_late"
-                    title="Đơn còn chờ duyệt"
-                    hint="Duyệt xong sẽ làm bảng công thay đổi"
-                    count={report.data.pendingRequests.length}
-                  />
-                ),
-                children: report.data.pendingRequests.length === 0 ? (
-                  <Empty>Không còn đơn nào chờ duyệt ảnh hưởng tới kỳ này.</Empty>
-                ) : (
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {report.data.pendingRequests.map((item) => (
-                      <li key={item.id} className="sf-body-sm">
-                        {item.employee?.fullName ?? 'Không xác định'} · {item.requestTypeName} · từ{' '}
-                        {formatDateTime(item.startAt, timezone)}
-                      </li>
-                    ))}
-                  </ul>
-                ),
-              },
-              {
-                key: 'flags',
-                label: (
-                  <IssueLabel
-                    icon="flag"
-                    title="Cờ nghi vấn chưa xử lý"
-                    hint="Cần quyết định giữ hay huỷ công"
-                    count={report.data.unreviewedFraudFlags.length}
-                  />
-                ),
-                children: report.data.unreviewedFraudFlags.length === 0 ? (
-                  <Empty>Mọi cờ nghi vấn trong kỳ đã được rà soát.</Empty>
-                ) : (
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {report.data.unreviewedFraudFlags.map((item) => (
-                      <li key={item.id} className="sf-body-sm">
-                        {item.employee?.fullName ?? 'Không xác định'} ·{' '}
-                        {FRAUD_CODE_LABEL[item.code] ?? item.code} ·{' '}
-                        {formatDateTime(item.createdAt, timezone)}
-                      </li>
-                    ))}
-                  </ul>
-                ),
-              },
               {
                 key: 'abnormal',
                 label: (
                   <IssueLabel
                     icon="query_stats"
                     title="Số công bất thường"
-                    hint="Quá cao hoặc quá thấp so với mặt bằng"
-                    count={report.data.abnormalEmployees.length}
+                    hint="Quá cao hoặc quá thấp so với trung vị công ty"
+                    count={report.data.anomalies.length}
                     warningOnly
                   />
                 ),
-                children: report.data.abnormalEmployees.length === 0 ? (
-                  <Empty>Không có nhân viên nào có số công bất thường.</Empty>
-                ) : (
-                  <ul style={{ margin: 0, paddingLeft: 20 }}>
-                    {report.data.abnormalEmployees.map((item, index) => (
-                      <li key={index} className="sf-body-sm">
-                        {item.employee?.fullName ?? 'Không xác định'} · {item.standardDays} công ·{' '}
-                        {item.reason}
-                      </li>
-                    ))}
-                  </ul>
-                ),
+                children:
+                  report.data.anomalies.length === 0 ? (
+                    <Empty>Không có nhân viên nào có số công bất thường.</Empty>
+                  ) : (
+                    <ul style={{ margin: 0, paddingLeft: 20 }}>
+                      {report.data.anomalies.map((item) => (
+                        <li key={item.employeeId} className="sf-body-sm">
+                          {item.fullName ?? item.employeeCode ?? 'Không xác định'} ·{' '}
+                          {formatStandardDays(item.standardDays)} công · {item.issue}
+                        </li>
+                      ))}
+                    </ul>
+                  ),
               },
             ]}
           />
 
           <div>
-            <label className="sf-field__label" htmlFor="close-reason" style={{ display: 'block', marginBottom: 4 }}>
+            <label
+              className="sf-field__label"
+              htmlFor="close-reason"
+              style={{ display: 'block', marginBottom: 4 }}
+            >
               Ghi chú chốt kỳ (bắt buộc)
             </label>
             <Input.TextArea
@@ -212,7 +179,10 @@ export function PreCloseReportModal({
           </div>
 
           {hasBlockers ? (
-            <Checkbox checked={acknowledged} onChange={(event) => setAcknowledged(event.target.checked)}>
+            <Checkbox
+              checked={acknowledged}
+              onChange={(event) => setAcknowledged(event.target.checked)}
+            >
               Tôi đã xem hết các vấn đề trên và chấp nhận chốt kỳ dù chưa xử lý xong.
             </Checkbox>
           ) : null}
@@ -226,6 +196,55 @@ export function PreCloseReportModal({
         </div>
       ) : null}
     </Modal>
+  );
+}
+
+/**
+ * Một dòng vướng mắc kèm cách xử lý.
+ *
+ * Dòng đã sạch thì không hiện câu hướng dẫn: đọc "Vào Đơn từ, lọc trạng thái
+ * Chờ duyệt" dưới một mục đang ghi số 0 chỉ làm người ta khựng lại kiểm tra xem
+ * mình có bỏ sót gì không.
+ */
+function IssueRow({
+  icon,
+  title,
+  hint,
+  count,
+  fix,
+}: {
+  icon: string;
+  title: string;
+  hint: string;
+  count: number;
+  fix: string;
+}) {
+  const clean = count === 0;
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: 12,
+        padding: '12px 16px',
+        borderRadius: 8,
+        background: clean ? 'transparent' : 'var(--sf-error-50, #FFF5F5)',
+      }}
+    >
+      <Icon
+        name={clean ? 'check_circle' : icon}
+        size={20}
+        color={clean ? 'var(--sf-success-600)' : 'var(--sf-error-600)'}
+      />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <span className="sf-body-md" style={{ fontWeight: 600 }}>
+          {title}
+        </span>
+        <div className="sf-body-sm sf-text-variant">{clean ? hint : fix}</div>
+      </div>
+      <Tag color={clean ? 'success' : 'error'}>{count}</Tag>
+    </div>
   );
 }
 

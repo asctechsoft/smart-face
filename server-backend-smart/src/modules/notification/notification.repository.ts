@@ -109,6 +109,26 @@ export class NotificationRepository extends BaseRepository {
     return this.findPushTokensForUsers([employee.userId]);
   }
 
+  /**
+   * Số nhân viên sẽ NHÌN THẤY một thông báo broadcast.
+   *
+   * ⚠ Khác với `findPushTokensForCompany` bên dưới: đó là số THIẾT BỊ nhận được
+   * push, còn đây là số NGƯỜI. Nhân viên chưa cài app vẫn thấy thông báo khi mở
+   * app lần sau, vì danh sách trong app đọc thẳng từ bảng `notification`. Báo
+   * theo số thiết bị sẽ ra một con số nhỏ hơn thực tế và người gửi tưởng thông
+   * báo không tới được ai.
+   */
+  async countBroadcastRecipients(companyId: string, departmentId?: string | null): Promise<number> {
+    return this.db().employee.count({
+      where: {
+        companyId,
+        deletedAt: null,
+        status: 'ACTIVE',
+        ...(departmentId ? { departmentId } : {}),
+      },
+    });
+  }
+
   /** Push token của toàn công ty, hoặc thu hẹp theo phòng ban khi broadcast. */
   async findPushTokensForCompany(
     companyId: string,

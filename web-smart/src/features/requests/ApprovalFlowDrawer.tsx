@@ -96,12 +96,9 @@ export function ApprovalFlowDrawer({
       title={`Luồng duyệt · ${requestType?.name ?? ''}`}
       footer={
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
-          <Button size="large" onClick={onClose}>
-            Huỷ bỏ
-          </Button>
+          <Button onClick={onClose}>Huỷ bỏ</Button>
           <Button
             type="primary"
-            size="large"
             loading={replace.isPending}
             disabled={!hasRequired || invalidThreshold}
             onClick={async () => {

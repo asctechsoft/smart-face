@@ -21,7 +21,9 @@ const DashboardPage = lazy(() =>
   import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
 );
 const AttendanceListPage = lazy(() =>
-  import('@/features/attendance/AttendanceListPage').then((m) => ({ default: m.AttendanceListPage })),
+  import('@/features/attendance/AttendanceListPage').then((m) => ({
+    default: m.AttendanceListPage,
+  })),
 );
 const RequestListPage = lazy(() =>
   import('@/features/requests/RequestListPage').then((m) => ({ default: m.RequestListPage })),
@@ -163,7 +165,6 @@ export function AppRouter() {
             <Route element={<RequirePermission permission="audit.view" />}>
               <Route path="/audit-logs" element={<AuditLogPage />} />
             </Route>
-
 
             <Route
               path="*"

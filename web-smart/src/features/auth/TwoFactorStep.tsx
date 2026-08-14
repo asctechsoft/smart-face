@@ -68,7 +68,11 @@ export function TwoFactorStep({
       {error ? <Alert type="error" showIcon message={error} role="alert" /> : null}
 
       <div>
-        <label className="sf-field__label" htmlFor="otp" style={{ display: 'block', marginBottom: 4 }}>
+        <label
+          className="sf-field__label"
+          htmlFor="otp"
+          style={{ display: 'block', marginBottom: 4 }}
+        >
           Mã xác thực
         </label>
         <Input
@@ -96,7 +100,12 @@ export function TwoFactorStep({
         <Button type="link" onClick={onCancel} style={{ paddingInline: 0 }}>
           Quay lại đăng nhập
         </Button>
-        <Button type="link" disabled={cooldown > 0} onClick={() => void resend()} style={{ paddingInline: 0 }}>
+        <Button
+          type="link"
+          disabled={cooldown > 0}
+          onClick={() => void resend()}
+          style={{ paddingInline: 0 }}
+        >
           {cooldown > 0 ? `Gửi lại sau ${cooldown}s` : 'Gửi lại mã'}
         </Button>
       </div>

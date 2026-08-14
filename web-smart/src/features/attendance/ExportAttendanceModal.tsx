@@ -79,7 +79,9 @@ export function ExportAttendanceModal({
     }
   }
 
-  const running = job.data?.status === 'PENDING' || job.data?.status === 'PROCESSING';
+  // `QUEUED` là trạng thái Backend đặt lúc tạo job — không phải `PENDING`. Sai
+  // tên ở đây thì nút mất trạng thái quay trong suốt lúc job còn nằm chờ.
+  const running = job.data?.status === 'QUEUED' || job.data?.status === 'PROCESSING';
   const done = job.data?.status === 'COMPLETED';
 
   return (
@@ -93,9 +95,7 @@ export function ExportAttendanceModal({
       okButtonProps={{
         loading: startExport.isPending || running,
         disabled: !from || !to,
-        size: 'large',
       }}
-      cancelButtonProps={{ size: 'large' }}
       width={560}
       destroyOnClose
     >
@@ -118,7 +118,11 @@ export function ExportAttendanceModal({
         </div>
 
         <div>
-          <label className="sf-field__label" htmlFor="exp-dept" style={{ display: 'block', marginBottom: 4 }}>
+          <label
+            className="sf-field__label"
+            htmlFor="exp-dept"
+            style={{ display: 'block', marginBottom: 4 }}
+          >
             Phòng ban
           </label>
           <Select

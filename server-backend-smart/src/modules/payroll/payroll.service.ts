@@ -4,6 +4,7 @@ import { DailyStatus, PayrollPeriodStatus, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { AppException } from 'src/common/errors';
 import { eachWorkDate, formatWorkDate, parseWorkDate } from 'src/common/utils';
+import { isRedisEnabled } from 'src/config/configuration';
 import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { JOBS, QUEUES } from 'src/infra/queue/queue.constants';
 import { AuditService } from '../audit/audit.service';
@@ -64,23 +65,85 @@ export class PayrollService {
   }
 
   /**
-   * Tính lại toàn bộ bảng công của kỳ — chạy nền qua queue.
+   * Tính lại toàn bộ bảng công của kỳ — chạy nền.
    * NFR-PERF-07: 500 nhân viên × 31 ngày phải xong dưới 5 phút.
+   *
+   * ## Vì sao phải trả `jobId`
+   *
+   * Trước đây endpoint chỉ trả `{ queued: true }`. Giao diện không có gì để hỏi
+   * tiến độ nên chỉ báo được đúng một câu "đã đưa vào hàng đợi" rồi im lặng mãi
+   * mãi — kế toán không biết bảng công đã tính xong chưa, và cách duy nhất để
+   * kiểm tra là tự tải lại trang vài lần. Giờ job có bản ghi trong `export_job`
+   * như job xuất Excel, hỏi qua `GET /v1/jobs/:id`.
+   *
+   * ## Vì sao có nhánh chạy nội tuyến
+   *
+   * `REDIS_ENABLED=false` thì `payrollQueue` là queue giả: nó VỨT BỎ job và chỉ
+   * ghi một dòng warn (xem `disabled-queue.ts`). Endpoint vẫn trả 202 nên người
+   * dùng được báo "đã xếp hàng" cho một việc sẽ không bao giờ chạy. Thà chạy
+   * ngay trong tiến trình API — chậm hơn, không thử lại được, nhưng KẾT QUẢ CÓ
+   * THẬT và tiến độ vẫn theo dõi được qua đúng đường cũ.
    */
-  async recalculatePeriod(companyId: string, periodId: string) {
-    const period = await this.getPeriod(companyId, periodId);
+  async recalculatePeriod(ctx: TenantContext, periodId: string) {
+    const period = await this.getPeriod(ctx.companyId, periodId);
     if (period.status === PayrollPeriodStatus.CLOSED) {
       throw new AppException('PAY_PERIOD_CLOSED');
     }
 
-    await this.payrollQueue.add(JOBS.RECALCULATE_PERIOD, {
-      companyId,
-      periodId,
-      from: formatWorkDate(period.startDate),
-      to: formatWorkDate(period.endDate),
+    const from = formatWorkDate(period.startDate);
+    const to = formatWorkDate(period.endDate);
+
+    const job = await this.payrolls.createExportJob(ctx.companyId, {
+      createdBy: ctx.userId,
+      kind: 'PAYROLL_RECALCULATE',
+      params: { periodId, from, to } as Prisma.InputJsonValue,
     });
 
-    return { queued: true, periodId };
+    if (isRedisEnabled()) {
+      await this.payrollQueue.add(JOBS.RECALCULATE_PERIOD, {
+        companyId: ctx.companyId,
+        periodId,
+        jobId: job.id,
+        from,
+        to,
+      });
+    } else {
+      // Cố ý không `await`: request phải trả 202 ngay, client theo dõi qua job.
+      // `.catch` bắt trọn vì promise không ai giữ — để lọt sẽ thành
+      // unhandledRejection và giết tiến trình Node.
+      void this.runTrackedRecalculate(
+        ctx.companyId,
+        job.id,
+        period.startDate,
+        period.endDate,
+      ).catch((error: Error) =>
+        this.logger.error(`Tính lại kỳ ${periodId} (nội tuyến) thất bại: ${error.message}`),
+      );
+    }
+
+    return { jobId: job.id, statusUrl: `/v1/jobs/${job.id}`, queued: true, periodId };
+  }
+
+  /**
+   * Chạy tính lại và cập nhật bản ghi job — DÙNG CHUNG cho worker BullMQ và cho
+   * nhánh nội tuyến ở trên.
+   *
+   * Ném lại lỗi sau khi đã ghi FAILED: BullMQ cần thấy exception mới thử lại
+   * theo `DEFAULT_JOB_OPTIONS`. Phía nội tuyến tự nuốt bằng `.catch`.
+   */
+  async runTrackedRecalculate(companyId: string, jobId: string, from: Date, to: Date) {
+    await this.payrolls.markJobProcessing(jobId);
+
+    try {
+      const result = await this.runRecalculateRange(companyId, from, to, undefined, (percent) =>
+        this.payrolls.setJobProgress(jobId, percent),
+      );
+      await this.payrolls.markJobDone(jobId);
+      return result;
+    } catch (error) {
+      await this.payrolls.markJobFailed(jobId, 'PAY_RECALC_FAILED', (error as Error).message);
+      throw error;
+    }
   }
 
   /**
@@ -249,15 +312,80 @@ export class PayrollService {
       return {
         period,
         fromSnapshot: true,
-        items: summaries.map((summary) => ({
-          ...summary,
-          employee: employeeMap.get(summary.employeeId) ?? null,
-        })),
+        items: summaries.map((summary) =>
+          this.toSummaryRow(summary, employeeMap.get(summary.employeeId) ?? null),
+        ),
       };
     }
 
-    const items = await this.buildSummaries(companyId, period.startDate, period.endDate);
-    return { period, fromSnapshot: false, items };
+    const rows = await this.buildSummaries(companyId, period.startDate, period.endDate);
+    return {
+      period,
+      fromSnapshot: false,
+      items: rows.map((row) => this.toSummaryRow(row, row.employee)),
+    };
+  }
+
+  /**
+   * Một dòng bảng công — hình dạng GIỐNG NHAU cho kỳ đang mở và kỳ đã chốt.
+   *
+   * Hai nhánh của `getPeriodSummary` đọc từ hai nguồn khác nhau và trước đây trả
+   * ra hai hình dạng khác nhau: nhánh snapshot đọc thẳng từ Prisma nên
+   * `standardDays`, `leaveDays`, `penaltyAmount` là `Decimal` — tuần tự hoá thành
+   * CHUỖI trong JSON — còn nhánh tính trực tiếp trả `number`. Client phải đoán
+   * kiểu theo trạng thái kỳ, và `formatNumber("18.50")` thì ra `NaN`.
+   *
+   * Hai trường được suy thêm ở đây thay vì để client tự tính:
+   *
+   *   `otMinutes`  — tổng ba loại OT. Bảng chỉ có một cột OT; ba cột riêng vẫn
+   *                  giữ nguyên cho ai cần tách hệ số (docs/04 mục 7.3).
+   *   `absentDays` — đếm từ `breakdown.statusCounts`. Không có cột riêng trong
+   *                  `payroll_summary`, nhưng `breakdown` được chốt cùng snapshot
+   *                  nên số này đúng cho cả kỳ đã chốt.
+   */
+  private toSummaryRow<E>(
+    row: {
+      employeeId: string;
+      standardDays: Prisma.Decimal | number;
+      workedMinutes: number;
+      otMinutesNormal: number;
+      otMinutesWeekend: number;
+      otMinutesHoliday: number;
+      lateCount: number;
+      lateMinutesTotal: number;
+      earlyLeaveCount: number;
+      leaveDays: Prisma.Decimal | number;
+      unpaidLeaveDays: Prisma.Decimal | number;
+      makeupMinutes: number;
+      penaltyAmount: Prisma.Decimal | number | null;
+      violationCount: number;
+      breakdown: unknown;
+    },
+    employee: E,
+  ) {
+    const statusCounts =
+      (row.breakdown as { statusCounts?: Record<string, number> } | null)?.statusCounts ?? {};
+
+    return {
+      employeeId: row.employeeId,
+      employee,
+      standardDays: Number(row.standardDays),
+      workedMinutes: row.workedMinutes,
+      otMinutes: row.otMinutesNormal + row.otMinutesWeekend + row.otMinutesHoliday,
+      otMinutesNormal: row.otMinutesNormal,
+      otMinutesWeekend: row.otMinutesWeekend,
+      otMinutesHoliday: row.otMinutesHoliday,
+      lateCount: row.lateCount,
+      lateMinutesTotal: row.lateMinutesTotal,
+      earlyLeaveCount: row.earlyLeaveCount,
+      leaveDays: Number(row.leaveDays),
+      unpaidLeaveDays: Number(row.unpaidLeaveDays),
+      absentDays: statusCounts[DailyStatus.ABSENT] ?? 0,
+      missingRecordDays: statusCounts[DailyStatus.MISSING_RECORD] ?? 0,
+      makeupMinutes: row.makeupMinutes,
+      penaltyAmount: row.penaltyAmount === null ? null : Number(row.penaltyAmount),
+      violationCount: row.violationCount,
+    };
   }
 
   /**
@@ -355,8 +483,21 @@ export class PayrollService {
       params: { periodId, format } as Prisma.InputJsonValue,
     });
 
+    // Khác với tính lại kỳ, xuất Excel KHÔNG chạy nội tuyến được: file phải nằm
+    // trên object storage rồi trả về bằng link có thời hạn, mà cả worker lẫn
+    // storage đều tắt trong cấu hình không-Redis. Nên đánh hỏng ngay từ đây —
+    // để job nằm im ở trạng thái QUEUED thì giao diện quay vòng đến hết ngày.
+    if (!isRedisEnabled()) {
+      await this.payrolls.markJobFailed(
+        job.id,
+        'SYS_WORKER_UNAVAILABLE',
+        'Máy chủ đang chạy không có dịch vụ nền (REDIS_ENABLED=false) nên không dựng được file Excel.',
+      );
+      return { jobId: job.id, statusUrl: `/v1/jobs/${job.id}`, queued: false };
+    }
+
     await this.exportQueue.add(JOBS.EXPORT_PAYROLL, { exportJobId: job.id });
-    return { jobId: job.id, statusUrl: `/v1/jobs/${job.id}` };
+    return { jobId: job.id, statusUrl: `/v1/jobs/${job.id}`, queued: true };
   }
 
   // ===========================================================================
@@ -384,6 +525,7 @@ export class PayrollService {
     from: Date,
     to: Date,
     employeeIds?: string[],
+    onProgress?: (percent: number) => Promise<void>,
   ): Promise<{ calculated: number; skippedLockedDays: number }> {
     const employees = await this.payrolls.findCalculableEmployeeIds(companyId, employeeIds);
 
@@ -395,14 +537,28 @@ export class PayrollService {
     let calculated = 0;
     let skippedLockedDays = 0;
 
-    for (const workDate of eachWorkDate(from, to)) {
+    const workDates = eachWorkDate(from, to);
+    // Chỉ ghi tiến độ khi con số nhảy đủ xa. Cập nhật sau MỖI ngày là thêm 31
+    // lượt UPDATE cho một việc chỉ để vẽ thanh tiến trình — trong khi mắt người
+    // không phân biệt nổi 61% với 64%.
+    let reportedPercent = 0;
+
+    for (const [index, workDate] of workDates.entries()) {
       if (isLocked(workDate)) {
         skippedLockedDays += employees.length;
-        continue;
+      } else {
+        for (const employeeId of employees) {
+          await this.engine.calculateAndPersist(companyId, employeeId, workDate);
+          calculated += 1;
+        }
       }
-      for (const employeeId of employees) {
-        await this.engine.calculateAndPersist(companyId, employeeId, workDate);
-        calculated += 1;
+
+      if (onProgress) {
+        const percent = Math.round(((index + 1) / workDates.length) * 100);
+        if (percent - reportedPercent >= 5 || index === workDates.length - 1) {
+          reportedPercent = percent;
+          await onProgress(percent);
+        }
       }
     }
 

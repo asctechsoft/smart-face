@@ -17,7 +17,13 @@ import { EmptyState } from '@/components/EmptyState';
 import { StatusBadge, severityTone } from '@/components/StatusBadge';
 import { Icon } from '@/components/Icon';
 import { useAuth } from '@/lib/auth/auth-context';
-import { formatMinutes, firstDayOfMonth, lastDayOfMonth, formatTime, formatDay } from '@/lib/utils/date';
+import {
+  formatMinutes,
+  firstDayOfMonth,
+  lastDayOfMonth,
+  formatTime,
+  formatDay,
+} from '@/lib/utils/date';
 import { formatNumber } from '@/lib/utils/format';
 import { FRAUD_CODE_LABEL, FRAUD_SEVERITY_LABEL } from '@/config/constants';
 import { useDashboard, useDashboardAlerts, useAttendanceTrend } from './dashboard.api';
@@ -198,7 +204,11 @@ export function DashboardPage() {
                     {FRAUD_SEVERITY_LABEL[alert.severity] ?? alert.severity}
                   </StatusBadge>
 
-                  <Link to={`/fraud?flagId=${alert.id}`} className="sf-body-sm" style={{ fontWeight: 700 }}>
+                  <Link
+                    to={`/fraud?flagId=${alert.id}`}
+                    className="sf-body-sm"
+                    style={{ fontWeight: 700 }}
+                  >
                     Xử lý
                   </Link>
                 </li>
@@ -240,7 +250,11 @@ export function DashboardPage() {
           <div className="sf-card" style={{ height: 360, padding: 24 }}>
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={trend.data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--sf-neutral-200)" vertical={false} />
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="var(--sf-neutral-200)"
+                  vertical={false}
+                />
                 <XAxis
                   dataKey="workDate"
                   tickFormatter={(value: string) => value.slice(8)}
@@ -264,10 +278,22 @@ export function DashboardPage() {
                 <Legend wrapperStyle={{ fontSize: 14 }} />
                 {/* Màu lấy từ ramp, không phải bảng mặc định của Recharts —
                     docs/16 nguyên tắc số 1. */}
-                <Bar dataKey="onTime" name="Đúng giờ" stackId="a" fill="#17725A" radius={[0, 0, 0, 0]} />
+                <Bar
+                  dataKey="onTime"
+                  name="Đúng giờ"
+                  stackId="a"
+                  fill="#17725A"
+                  radius={[0, 0, 0, 0]}
+                />
                 <Bar dataKey="late" name="Đi muộn" stackId="a" fill="#D49D57" />
                 <Bar dataKey="onLeave" name="Nghỉ phép" stackId="a" fill="#84CAB1" />
-                <Bar dataKey="absent" name="Vắng mặt" stackId="a" fill="#FB6457" radius={[4, 4, 0, 0]} />
+                <Bar
+                  dataKey="absent"
+                  name="Vắng mặt"
+                  stackId="a"
+                  fill="#FB6457"
+                  radius={[4, 4, 0, 0]}
+                />
               </BarChart>
             </ResponsiveContainer>
           </div>

@@ -401,13 +401,46 @@ export class PayrollRepository extends BaseRepository {
   }
 
   // ===========================================================================
-  //  Job xuất Excel
+  //  Job chạy nền
   // ===========================================================================
 
+  /**
+   * Bảng `export_job` theo dõi MỌI job dài, không riêng job xuất file — `kind`
+   * phân biệt (`PAYROLL`, `ATTENDANCE`, `PAYROLL_RECALCULATE`...). Client hỏi
+   * tiến độ qua `GET /v1/jobs/:id` cho tất cả.
+   *
+   * Trạng thái nằm ở DATABASE chứ không chỉ trong BullMQ: nó phải sống sót qua
+   * lần Redis restart, và `GET /v1/jobs/:id` không được phụ thuộc vào Redis.
+   */
   async createExportJob(
     companyId: string,
     data: { createdBy: string; kind: string; params: Prisma.InputJsonValue },
   ): Promise<ExportJob> {
     return this.db().exportJob.create({ data: { companyId, status: 'QUEUED', ...data } });
+  }
+
+  async markJobProcessing(jobId: string, progress = 5): Promise<void> {
+    await this.db().exportJob.update({
+      where: { id: jobId },
+      data: { status: 'PROCESSING', progress },
+    });
+  }
+
+  async setJobProgress(jobId: string, progress: number): Promise<void> {
+    await this.db().exportJob.update({ where: { id: jobId }, data: { progress } });
+  }
+
+  async markJobDone(jobId: string): Promise<void> {
+    await this.db().exportJob.update({
+      where: { id: jobId },
+      data: { status: 'DONE', progress: 100, completedAt: new Date() },
+    });
+  }
+
+  async markJobFailed(jobId: string, errorCode: string, errorMessage: string): Promise<void> {
+    await this.db().exportJob.update({
+      where: { id: jobId },
+      data: { status: 'FAILED', errorCode, errorMessage, completedAt: new Date() },
+    });
   }
 }

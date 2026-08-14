@@ -79,14 +79,23 @@ export class PayrollProcessor extends WorkerHost {
   }
 
   private async recalculatePeriod(job: Job) {
-    const { companyId, from, to } = job.data as { companyId: string; from: string; to: string };
+    const { companyId, from, to, jobId } = job.data as {
+      companyId: string;
+      from: string;
+      to: string;
+      /** Bản ghi `export_job` để client hỏi tiến độ. Job cũ trong Redis không có. */
+      jobId?: string;
+    };
     const startedAt = Date.now();
 
-    const result = await this.payroll.runRecalculateRange(
-      companyId,
-      parseWorkDate(from),
-      parseWorkDate(to),
-    );
+    const result = jobId
+      ? await this.payroll.runTrackedRecalculate(
+          companyId,
+          jobId,
+          parseWorkDate(from),
+          parseWorkDate(to),
+        )
+      : await this.payroll.runRecalculateRange(companyId, parseWorkDate(from), parseWorkDate(to));
 
     // NFR-PERF-07: 500 nhân viên × 31 ngày phải xong dưới 5 phút.
     const elapsedMs = Date.now() - startedAt;

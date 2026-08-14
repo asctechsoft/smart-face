@@ -46,11 +46,9 @@ export function RecordMakeupModal({
       okText="Ghi nhận"
       cancelText="Huỷ bỏ"
       okButtonProps={{
-        size: 'large',
         loading: save.isPending,
         disabled: totalMinutes <= 0 || exceeds,
       }}
-      cancelButtonProps={{ size: 'large' }}
       width={560}
       destroyOnClose
       afterOpenChange={(open) => {
@@ -99,8 +97,8 @@ export function RecordMakeupModal({
               onChange={(date) => setMakeupWorkDate(toWorkDate(date?.toDate()) ?? makeupWorkDate)}
             />
             <p className="sf-body-sm sf-text-variant" style={{ margin: '4px 0 0' }}>
-              Giờ bù được cộng vào bảng công của ĐÚNG ngày này, nên phải là ngày nhân viên thật sự
-              ở lại làm.
+              Giờ bù được cộng vào bảng công của ĐÚNG ngày này, nên phải là ngày nhân viên thật sự ở
+              lại làm.
             </p>
           </Field>
 
@@ -149,4 +147,3 @@ export function RecordMakeupModal({
     </Modal>
   );
 }
-
