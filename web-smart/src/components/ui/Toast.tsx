@@ -30,17 +30,33 @@ import { Icon } from './Icon';
  */
 export type ToastTone = 'success' | 'warning' | 'error';
 
+/**
+ * Đường đi tiếp sau khi thao tác xong.
+ *
+ * "Đã tạo 195 nhân viên" là tin tốt, nhưng người dùng vừa làm xong việc đó gần
+ * như luôn muốn xem kết quả — và họ phải tự tìm đường quay lại. Một nút ngay
+ * trong thông báo tiết kiệm đúng bước đó.
+ *
+ * Cố ý chỉ MỘT hành động: hai nút trong một toast là bắt người ta ra quyết định
+ * trong lúc thông báo đang đếm ngược để tự đóng.
+ */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface ToastItem {
   id: number;
   tone: ToastTone;
   title: string;
   body?: string;
+  action?: ToastAction;
 }
 
 interface ToastApi {
-  success: (title: string, body?: string) => void;
-  warning: (title: string, body?: string) => void;
-  error: (title: string, body?: string) => void;
+  success: (title: string, body?: string, action?: ToastAction) => void;
+  warning: (title: string, body?: string, action?: ToastAction) => void;
+  error: (title: string, body?: string, action?: ToastAction) => void;
   dismiss: (id: number) => void;
 }
 
@@ -66,20 +82,23 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setItems((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
-  const push = useCallback((tone: ToastTone, title: string, body?: string) => {
-    setItems((prev) => {
-      const item: ToastItem = { id: nextId.current++, tone, title, body };
-      // Giữ tối đa 4 toast: chồng nhiều hơn thì cái cũ nhất bị đẩy khỏi màn hình
-      // mà người dùng chưa đọc, và cả cột che mất nội dung phía dưới.
-      return [...prev, item].slice(-4);
-    });
-  }, []);
+  const push = useCallback(
+    (tone: ToastTone, title: string, body?: string, action?: ToastAction) => {
+      setItems((prev) => {
+        const item: ToastItem = { id: nextId.current++, tone, title, body, action };
+        // Giữ tối đa 4 toast: chồng nhiều hơn thì cái cũ nhất bị đẩy khỏi màn hình
+        // mà người dùng chưa đọc, và cả cột che mất nội dung phía dưới.
+        return [...prev, item].slice(-4);
+      });
+    },
+    [],
+  );
 
   const api = useMemo<ToastApi>(
     () => ({
-      success: (title, body) => push('success', title, body),
-      warning: (title, body) => push('warning', title, body),
-      error: (title, body) => push('error', title, body),
+      success: (title, body, action) => push('success', title, body, action),
+      warning: (title, body, action) => push('warning', title, body, action),
+      error: (title, body, action) => push('error', title, body, action),
       dismiss,
     }),
     [push, dismiss],
@@ -130,6 +149,21 @@ function ToastCard({ item, onDismiss }: { item: ToastItem; onDismiss: () => void
       <div style={{ flex: 1, minWidth: 0 }}>
         <div className="sf-toast__title">{item.title}</div>
         {item.body ? <p className="sf-toast__body">{item.body}</p> : null}
+
+        {item.action ? (
+          <button
+            type="button"
+            className="sf-toast__action"
+            onClick={() => {
+              item.action?.onClick();
+              // Đóng luôn sau khi bấm: người dùng đã rời khỏi ngữ cảnh của thông
+              // báo, để nó nằm lại trên màn hình mới là rác.
+              onDismiss();
+            }}
+          >
+            {item.action.label}
+          </button>
+        ) : null}
       </div>
 
       <button type="button" className="sf-toast__close" onClick={onDismiss} aria-label="Đóng thông báo">

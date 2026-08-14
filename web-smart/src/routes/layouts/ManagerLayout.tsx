@@ -3,9 +3,11 @@ import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { Badge, Button, Drawer, Dropdown, Tooltip } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '@/components/Icon';
+import { EmployeeQuickSearch } from '@/components/EmployeeQuickSearch';
 import { useAuth } from '@/lib/auth/auth-context';
 import { hasPermission } from '@/lib/rbac/permissions';
 import { NAV_GROUPS } from '@/routes/nav-items';
+import { documentTitleFor, resolvePageTitle } from '@/routes/page-title';
 import { ROLE_LABEL } from '@/config/constants';
 import { initials } from '@/lib/utils/format';
 import { formatDayLong } from '@/lib/utils/date';
@@ -21,11 +23,24 @@ import { qk } from '@/lib/api/query-client';
  *   ≥ 2xl:        nội dung giới hạn bề rộng 1440px
  */
 export function ManagerLayout() {
-  const { company, roles, logout } = useAuth();
+  const { company, roles, timezone, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isDesktop, setIsDesktop] = useState(() => window.innerWidth >= 768);
+
+  const pageTitle = resolvePageTitle(location.pathname);
+
+  /**
+   * Tiêu đề tab trình duyệt.
+   *
+   * Kế toán thường mở song song vài tab — bảng công, kỳ lương, đơn từ. Trước đây
+   * cả ba tab đều tên "SmartFace · Quản lý chấm công" nên phải bấm vào từng cái
+   * mới biết cái nào là cái nào.
+   */
+  useEffect(() => {
+    document.title = documentTitleFor(location.pathname, company?.name);
+  }, [location.pathname, company?.name]);
 
   useEffect(() => {
     const media = window.matchMedia('(min-width: 768px)');
@@ -56,14 +71,14 @@ export function ManagerLayout() {
 
   const nav = (
     <nav className="sf-sidenav" aria-label="Điều hướng chính">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '0 16px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, padding: '0 12px' }}>
         <span className="sf-title-lg" style={{ color: 'var(--sf-teal-700)' }}>
           SmartFace
         </span>
         <span className="sf-label-md">{company?.name ?? 'Quản lý chấm công'}</span>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {NAV_GROUPS.map((group) => {
           const visible = group.items.filter((item) => hasPermission(roles, item.permission));
           if (visible.length === 0) return null;
@@ -151,8 +166,25 @@ export function ManagerLayout() {
             />
           ) : null}
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div className="sf-body-sm sf-text-variant">{formatDayLong(new Date())}</div>
+          {/*
+            Tên trang đang xem, không phải chỉ ngày tháng.
+
+            Trên desktop, mục nav đang chọn đã nói người dùng đang ở đâu — nhưng
+            trên tablet và mobile thì sidenav ẩn hẳn, và trước đây dải ngang giá
+            trị nhất của màn hình chỉ hiện đúng một dòng ngày tháng.
+          */}
+          <div style={{ minWidth: 0, flexShrink: 0 }}>
+            <h2 className="sf-title-sm" style={{ margin: 0, whiteSpace: 'nowrap' }}>
+              {pageTitle}
+            </h2>
+            <div className="sf-caption" style={{ whiteSpace: 'nowrap' }}>
+              {formatDayLong(new Date(), timezone)}
+            </div>
+          </div>
+
+          {/* Tìm nhanh nhân viên — thao tác lặp nhiều nhất của HR trong ngày. */}
+          <div style={{ flex: 1, minWidth: 0, display: 'flex', justifyContent: 'center' }}>
+            <EmployeeQuickSearch />
           </div>
 
           <Tooltip title="Thông báo">

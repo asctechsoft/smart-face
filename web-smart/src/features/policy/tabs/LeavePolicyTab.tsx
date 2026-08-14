@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   Alert,
-  App as AntApp,
   Button,
   DatePicker,
   InputNumber,
@@ -17,8 +16,9 @@ import { useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatDay, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useLeavePolicies, useUpsertLeavePolicy, type LeavePolicy } from '../policy.api';
+import { Field, useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /** NFR-LEGAL-07 — Điều 113 Bộ luật Lao động 2019, điều kiện làm việc bình thường. */
 const STATUTORY_MIN_DAYS = 12;
@@ -173,7 +173,6 @@ export function LeavePolicyTab() {
           canEdit ? (
             <Button
               type="primary"
-              size="large"
               onClick={() =>
                 setEditing({
                   baseDaysPerYear: STATUTORY_MIN_DAYS,
@@ -204,7 +203,8 @@ function LeavePolicyFormModal({
   policy: Partial<LeavePolicy> | null;
   onClose: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const upsert = useUpsertLeavePolicy();
   const [draft, setDraft] = useState<Partial<LeavePolicy>>({});
 
@@ -247,10 +247,10 @@ function LeavePolicyFormModal({
             accrualMode: value.accrualMode ?? 'YEARLY',
             ...(value.effectiveFrom ? { effectiveFrom: value.effectiveFrom.slice(0, 10) } : {}),
           });
-          message.success('Đã lưu phiên bản mới của chính sách phép năm.');
+          toast.success('Đã lưu phiên bản mới của chính sách phép năm');
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
@@ -258,7 +258,6 @@ function LeavePolicyFormModal({
         <Field label="Áp dụng cho loại hợp đồng" htmlFor="lp-contract">
           <Select
             id="lp-contract"
-            size="large"
             allowClear
             style={{ width: '100%' }}
             placeholder="Bỏ trống = chính sách mặc định cho mọi loại hợp đồng"
@@ -274,7 +273,6 @@ function LeavePolicyFormModal({
         <Field label="Phép cơ bản mỗi năm" htmlFor="lp-base" required>
           <InputNumber
             id="lp-base"
-            size="large"
             min={0}
             max={60}
             step={0.5}
@@ -299,7 +297,6 @@ function LeavePolicyFormModal({
           <Field label="Cộng thêm theo thâm niên" htmlFor="lp-sen-days">
             <InputNumber
               id="lp-sen-days"
-              size="large"
               min={0}
               step={0.5}
               addonAfter="ngày"
@@ -311,7 +308,6 @@ function LeavePolicyFormModal({
           <Field label="Cứ mỗi" htmlFor="lp-sen-years">
             <InputNumber
               id="lp-sen-years"
-              size="large"
               min={1}
               addonAfter="năm làm việc"
               style={{ width: '100%' }}
@@ -324,7 +320,6 @@ function LeavePolicyFormModal({
         <Field label="Cách cấp phép" htmlFor="lp-accrual">
           <Select
             id="lp-accrual"
-            size="large"
             style={{ width: '100%' }}
             value={value.accrualMode ?? 'YEARLY'}
             onChange={(accrualMode) => patch({ accrualMode })}
@@ -371,7 +366,6 @@ function LeavePolicyFormModal({
             <Field label="Tối đa được cộng dồn" htmlFor="lp-max-carry">
               <InputNumber
                 id="lp-max-carry"
-                size="large"
                 min={0}
                 step={0.5}
                 addonAfter="ngày"
@@ -384,7 +378,6 @@ function LeavePolicyFormModal({
             <Field label="Hết hạn cuối tháng" htmlFor="lp-expire">
               <Select
                 id="lp-expire"
-                size="large"
                 style={{ width: '100%' }}
                 value={value.carryOverExpireMonth ?? 3}
                 onChange={(month) => patch({ carryOverExpireMonth: month })}
@@ -400,7 +393,6 @@ function LeavePolicyFormModal({
         <Field label="Hiệu lực từ" htmlFor="lp-eff">
           <DatePicker
             id="lp-eff"
-            size="large"
             format="DD/MM/YYYY"
             style={{ width: '100%' }}
             value={toDayjs(value.effectiveFrom?.slice(0, 10))}
@@ -415,24 +407,3 @@ function LeavePolicyFormModal({
   );
 }
 
-function Field({
-  label,
-  htmlFor,
-  required,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="sf-label-md" htmlFor={htmlFor} style={{ display: 'block', marginBottom: 4 }}>
-        {label}
-        {required ? <span style={{ color: 'var(--sf-error-600)' }}> *</span> : null}
-      </label>
-      {children}
-    </div>
-  );
-}

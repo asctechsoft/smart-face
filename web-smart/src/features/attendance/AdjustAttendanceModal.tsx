@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, App as AntApp, Input, Modal, Radio, Select, TimePicker } from 'antd';
+import { Alert, Input, Modal, Radio, Select, TimePicker } from 'antd';
 import { useAuth } from '@/lib/auth/auth-context';
 import { toUserMessage } from '@/lib/errors/api-error';
 import { formatDay, formatTime } from '@/lib/utils/date';
@@ -11,6 +11,7 @@ import {
   type AttendanceDaily,
   type AdjustPayload,
 } from './attendance.api';
+import { useToast } from '@/components/ui';
 
 type AdjustType = 'ADD' | 'MODIFY_TIME' | 'VOID';
 
@@ -33,7 +34,7 @@ export function AdjustAttendanceModal({
   onClose: () => void;
 }) {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
   const adjust = useAdjustAttendance();
 
   const [adjustType, setAdjustType] = useState<AdjustType>('MODIFY_TIME');
@@ -91,7 +92,7 @@ export function AdjustAttendanceModal({
 
     try {
       await adjust.mutateAsync(payload);
-      message.success('Đã tạo bản ghi hiệu chỉnh. Bảng công của ngày này đang được tính lại.');
+      toast.success('Đã tạo bản ghi hiệu chỉnh', 'Bảng công của ngày này đang được tính lại.');
       onClose();
     } catch (caught) {
       setError(toUserMessage(caught));
@@ -140,7 +141,7 @@ export function AdjustAttendanceModal({
           {error ? <Alert type="error" showIcon message={error} role="alert" /> : null}
 
           <div>
-            <label className="sf-label-md" style={{ display: 'block', marginBottom: 8 }}>
+            <label className="sf-field__label" style={{ display: 'block', marginBottom: 8 }}>
               Loại hiệu chỉnh
             </label>
             <Radio.Group
@@ -171,7 +172,7 @@ export function AdjustAttendanceModal({
 
           {needsLog ? (
             <div>
-              <label className="sf-label-md" htmlFor="adj-log" style={{ display: 'block', marginBottom: 4 }}>
+              <label className="sf-field__label" htmlFor="adj-log" style={{ display: 'block', marginBottom: 4 }}>
                 Lượt chấm công cần {adjustType === 'VOID' ? 'huỷ' : 'sửa'}
               </label>
               <Select
@@ -196,7 +197,7 @@ export function AdjustAttendanceModal({
 
           {adjustType === 'ADD' ? (
             <div>
-              <label className="sf-label-md" style={{ display: 'block', marginBottom: 4 }}>
+              <label className="sf-field__label" style={{ display: 'block', marginBottom: 4 }}>
                 Loại lượt bổ sung
               </label>
               <Radio.Group
@@ -214,7 +215,7 @@ export function AdjustAttendanceModal({
 
           {needsTime ? (
             <div>
-              <label className="sf-label-md" htmlFor="adj-time" style={{ display: 'block', marginBottom: 4 }}>
+              <label className="sf-field__label" htmlFor="adj-time" style={{ display: 'block', marginBottom: 4 }}>
                 Giờ mới
               </label>
               <TimePicker
@@ -233,7 +234,7 @@ export function AdjustAttendanceModal({
           ) : null}
 
           <div>
-            <label className="sf-label-md" htmlFor="adj-reason" style={{ display: 'block', marginBottom: 4 }}>
+            <label className="sf-field__label" htmlFor="adj-reason" style={{ display: 'block', marginBottom: 4 }}>
               Lý do hiệu chỉnh (bắt buộc)
             </label>
             <Input.TextArea

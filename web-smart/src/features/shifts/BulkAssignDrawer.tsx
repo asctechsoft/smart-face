@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, App as AntApp, Button, DatePicker, Drawer, Select } from 'antd';
+import { useNavigate } from 'react-router-dom';
+import { Alert, Button, DatePicker, Drawer, Select } from 'antd';
 import { toUserMessage } from '@/lib/errors/api-error';
 import { toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
@@ -9,6 +10,8 @@ import {
   useClearShiftAssignments,
   type ShiftBoardEmployee,
 } from './shifts.api';
+import { ConfirmDialog, Field, useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Thứ trong tuần dạng SỐ THỨ TỰ — `1 = T2 … 7 = CN`.
@@ -54,7 +57,9 @@ export function BulkAssignDrawer({
   employees: ShiftBoardEmployee[];
   onDone: () => void;
 }) {
-  const { message, modal } = AntApp.useApp();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const showError = useErrorToast();
   const shifts = useShifts();
   const assign = useBulkAssignShifts();
   const clear = useClearShiftAssignments();
@@ -65,6 +70,7 @@ export function BulkAssignDrawer({
   const [to, setTo] = useState(defaultRange.to);
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [error, setError] = useState<string | null>(null);
+  const [clearOpen, setClearOpen] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -91,12 +97,16 @@ export function BulkAssignDrawer({
         weekdays: weekdays.length > 0 ? weekdays : undefined,
       });
 
-      message.success(
-        `Đã phân ca cho ${result.employeeCount} nhân viên trong ${result.dayCount} ngày (${result.assigned} lượt).`,
+      toast.success(
+        `Đã phân ca cho ${result.employeeCount} nhân viên`,
+        `${result.dayCount} ngày, tổng ${result.assigned} lượt. Bảng công của những ngày ĐÃ TÍNH không tự đổi theo ca mới.`,
+        // Hệ quả nói ở dòng trên chỉ có ích khi kèm đường đi tới chỗ xử lý nó.
+        { label: 'Chạy lại tính công', onClick: () => navigate('/payroll') },
       );
       if (result.skippedEmployeeIds.length > 0) {
-        message.warning(
-          `${result.skippedEmployeeIds.length} nhân viên bị bỏ qua vì không còn thuộc phạm vi bạn quản lý.`,
+        toast.warning(
+          `Bỏ qua ${result.skippedEmployeeIds.length} nhân viên`,
+          'Những người này không còn thuộc phạm vi phòng ban bạn quản lý.',
         );
       }
       onDone();
@@ -106,24 +116,19 @@ export function BulkAssignDrawer({
     }
   }
 
-  function confirmClear() {
-    modal.confirm({
-      title: 'Xoá phân ca trong khoảng đã chọn?',
-      content: `${employeeIds.length} nhân viên sẽ mất phân ca từ ${from} đến ${to} và quay về ca mặc định của công ty. Bảng công đã tính của những ngày đó không thay đổi.`,
-      okText: 'Xoá phân ca',
-      okButtonProps: { danger: true },
-      cancelText: 'Huỷ bỏ',
-      onOk: async () => {
-        try {
-          const result = await clear.mutateAsync({ employeeIds, from, to });
-          message.success(`Đã xoá ${result.deleted} lượt phân ca.`);
-          onDone();
-          onClose();
-        } catch (caught) {
-          message.error(toUserMessage(caught));
-        }
-      },
-    });
+  async function clearAssignments() {
+    try {
+      const result = await clear.mutateAsync({ employeeIds, from, to });
+      toast.success(
+        `Đã xoá ${result.deleted} lượt phân ca`,
+        'Những người này quay về ca mặc định của công ty cho tới khi được xếp ca mới.',
+      );
+      setClearOpen(false);
+      onDone();
+      onClose();
+    } catch (caught) {
+      showError(caught);
+    }
   }
 
   return (
@@ -140,7 +145,7 @@ export function BulkAssignDrawer({
             danger
             disabled={employeeIds.length === 0}
             loading={clear.isPending}
-            onClick={confirmClear}
+            onClick={() => setClearOpen(true)}
           >
             Xoá phân ca
           </Button>
@@ -168,7 +173,6 @@ export function BulkAssignDrawer({
           <Select
             id="ba-emp"
             mode="multiple"
-            size="large"
             style={{ width: '100%' }}
             placeholder="Chọn nhân viên"
             value={employeeIds}
@@ -196,7 +200,6 @@ export function BulkAssignDrawer({
         <Field label="Ca làm việc" htmlFor="ba-shift" required>
           <Select
             id="ba-shift"
-            size="large"
             style={{ width: '100%' }}
             placeholder="Chọn ca"
             loading={shifts.isLoading}
@@ -216,7 +219,6 @@ export function BulkAssignDrawer({
           <Field label="Từ ngày" htmlFor="ba-from" required>
             <DatePicker
               id="ba-from"
-              size="large"
               allowClear={false}
               format="DD/MM/YYYY"
               style={{ width: '100%' }}
@@ -227,7 +229,6 @@ export function BulkAssignDrawer({
           <Field label="Đến ngày" htmlFor="ba-to" required>
             <DatePicker
               id="ba-to"
-              size="large"
               allowClear={false}
               format="DD/MM/YYYY"
               style={{ width: '100%' }}
@@ -281,28 +282,17 @@ export function BulkAssignDrawer({
           description="Ngày nào đã có ca khác sẽ bị thay bằng ca chọn ở đây. Bảng công của những ngày ĐÃ TÍNH không tự đổi theo — muốn áp dụng, chạy lại tính công cho khoảng đó ở màn Kỳ lương."
         />
       </div>
-    </Drawer>
-  );
-}
 
-function Field({
-  label,
-  htmlFor,
-  required,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="sf-label-md" htmlFor={htmlFor} style={{ display: 'block', marginBottom: 4 }}>
-        {label}
-        {required ? <span style={{ color: 'var(--sf-error-600)' }}> *</span> : null}
-      </label>
-      {children}
-    </div>
+      <ConfirmDialog
+        open={clearOpen}
+        title="Xoá phân ca trong khoảng đã chọn?"
+        message={`${employeeIds.length} nhân viên sẽ mất phân ca từ ${from} đến ${to} và quay về ca mặc định của công ty. Bảng công đã tính của những ngày đó không thay đổi.`}
+        confirmText="Xoá phân ca"
+        danger
+        loading={clear.isPending}
+        onCancel={() => setClearOpen(false)}
+        onConfirm={() => void clearAssignments()}
+      />
+    </Drawer>
   );
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, Button, DatePicker, Input, InputNumber, Modal, Select } from 'antd';
+import { Alert, Button, DatePicker, Input, InputNumber, Modal, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
 import { Icon } from '@/components/Icon';
@@ -7,9 +7,10 @@ import { useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatDay, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useBranches } from '@/features/shared/org.api';
 import { useCreateHoliday, useDeleteHoliday, useHolidays, type Holiday } from '../policy.api';
+import { ConfirmDialog, useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Danh mục ngày nghỉ lễ — `FR-WEB-POL-06`.
@@ -21,11 +22,13 @@ import { useCreateHoliday, useDeleteHoliday, useHolidays, type Holiday } from '.
  */
 export function HolidaysTab() {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canEdit = useCan('policy.edit');
 
   const [year, setYear] = useState(new Date().getFullYear());
   const [formOpen, setFormOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Holiday | null>(null);
 
   const holidays = useHolidays(year);
   const remove = useDeleteHoliday();
@@ -70,29 +73,7 @@ export function HolidaysTab() {
             key: 'actions',
             width: 100,
             render: (_: unknown, row: Holiday) => (
-              <Button
-                size="small"
-                type="text"
-                danger
-                onClick={() =>
-                  Modal.confirm({
-                    title: `Xoá ngày lễ "${row.name}"?`,
-                    content:
-                      'Bảng công của ngày này sẽ được tính như ngày làm việc bình thường ở lần tính lại tiếp theo.',
-                    okText: 'Xoá',
-                    okButtonProps: { danger: true },
-                    cancelText: 'Huỷ',
-                    onOk: async () => {
-                      try {
-                        await remove.mutateAsync(row.id);
-                        message.success('Đã xoá ngày lễ.');
-                      } catch (caught) {
-                        message.error(toUserMessage(caught));
-                      }
-                    },
-                  })
-                }
-              >
+              <Button size="small" type="text" danger onClick={() => setDeleteTarget(row)}>
                 Xoá
               </Button>
             ),
@@ -135,7 +116,7 @@ export function HolidaysTab() {
         emptyDescription="Không khai ngày lễ thì các ngày đó được tính như ngày làm việc bình thường, và hệ số OT ngày lễ không được áp dụng."
         emptyAction={
           canEdit ? (
-            <Button type="primary" size="large" onClick={() => setFormOpen(true)}>
+            <Button type="primary" onClick={() => setFormOpen(true)}>
               Thêm ngày lễ
             </Button>
           ) : undefined
@@ -143,6 +124,26 @@ export function HolidaysTab() {
       />
 
       <HolidayFormModal open={formOpen} year={year} onClose={() => setFormOpen(false)} />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`Xoá ngày lễ "${deleteTarget?.name ?? ''}"?`}
+        message="Bảng công của ngày này sẽ được tính như ngày làm việc bình thường ở lần tính lại tiếp theo."
+        confirmText="Xoá ngày lễ"
+        danger
+        loading={remove.isPending}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            await remove.mutateAsync(deleteTarget.id);
+            toast.success('Đã xoá ngày lễ');
+            setDeleteTarget(null);
+          } catch (caught) {
+            showError(caught);
+          }
+        }}
+      />
     </div>
   );
 }
@@ -156,7 +157,8 @@ function HolidayFormModal({
   year: number;
   onClose: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const branches = useBranches();
   const create = useCreateHoliday();
 
@@ -171,7 +173,7 @@ function HolidayFormModal({
       open={open}
       onCancel={onClose}
       title={`Thêm ngày lễ · năm ${year}`}
-      okText="Lưu ngày lễ"
+      okText="Lưu"
       cancelText="Huỷ bỏ"
       okButtonProps={{ size: 'large', loading: create.isPending, disabled: !name.trim() || !date }}
       cancelButtonProps={{ size: 'large' }}
@@ -194,21 +196,20 @@ function HolidayFormModal({
             otMultiplier,
             branchIds,
           });
-          message.success('Đã thêm ngày lễ.');
+          toast.success('Đã thêm ngày lễ');
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-label-md" htmlFor="h-name" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="h-name" style={{ display: 'block', marginBottom: 4 }}>
             Tên ngày lễ
           </label>
           <Input
             id="h-name"
-            size="large"
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Quốc khánh 2/9"
@@ -217,12 +218,11 @@ function HolidayFormModal({
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
-            <label className="sf-label-md" htmlFor="h-date" style={{ display: 'block', marginBottom: 4 }}>
+            <label className="sf-field__label" htmlFor="h-date" style={{ display: 'block', marginBottom: 4 }}>
               Ngày lễ
             </label>
             <DatePicker
               id="h-date"
-              size="large"
               format="DD/MM/YYYY"
               style={{ width: '100%' }}
               value={toDayjs(date)}
@@ -231,12 +231,11 @@ function HolidayFormModal({
           </div>
 
           <div>
-            <label className="sf-label-md" htmlFor="h-sub" style={{ display: 'block', marginBottom: 4 }}>
+            <label className="sf-field__label" htmlFor="h-sub" style={{ display: 'block', marginBottom: 4 }}>
               Ngày nghỉ bù
             </label>
             <DatePicker
               id="h-sub"
-              size="large"
               format="DD/MM/YYYY"
               style={{ width: '100%' }}
               value={toDayjs(substituteDate)}
@@ -253,12 +252,11 @@ function HolidayFormModal({
         />
 
         <div>
-          <label className="sf-label-md" htmlFor="h-mul" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="h-mul" style={{ display: 'block', marginBottom: 4 }}>
             Hệ số OT áp dụng
           </label>
           <InputNumber
             id="h-mul"
-            size="large"
             style={{ width: '100%' }}
             min={1}
             step={0.5}
@@ -271,12 +269,11 @@ function HolidayFormModal({
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="h-branch" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="h-branch" style={{ display: 'block', marginBottom: 4 }}>
             Áp dụng cho chi nhánh
           </label>
           <Select
             id="h-branch"
-            size="large"
             mode="multiple"
             allowClear
             style={{ width: '100%' }}

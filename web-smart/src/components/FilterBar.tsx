@@ -53,7 +53,13 @@ export function FilterBar({
   );
 }
 
-/** Một ô lọc có nhãn thường trực phía trên — docs/16 mục 14.2 điều 5. */
+/**
+ * Một ô lọc có nhãn thường trực phía trên — docs/16 mục 14.2 điều 5.
+ *
+ * Dùng `.sf-field__label` (chữ thường) chứ không phải `.sf-label-md` (chữ in):
+ * đây là nhãn của một ô ĐIỀU KHIỂN, cùng loại với nhãn form, nên phải đọc được
+ * ở tốc độ liếc mắt — xem chú thích ở `components.css`.
+ */
 export function FilterField({
   label,
   htmlFor,
@@ -67,7 +73,7 @@ export function FilterField({
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, width }}>
-      <label className="sf-label-md" htmlFor={htmlFor}>
+      <label className="sf-field__label" htmlFor={htmlFor}>
         {label}
       </label>
       {children}

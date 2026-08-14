@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert, App as AntApp, Button, DatePicker, Dropdown, Input, Modal, Select } from 'antd';
+import { Alert, Button, DatePicker, Dropdown, Input, Modal, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
@@ -17,7 +17,6 @@ import { DEFAULT_PAGE_SIZE, REASON_MIN_LENGTH } from '@/config/constants';
 import { formatDay, formatMinutes, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatStandardDays } from '@/lib/utils/format';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useDepartments, toSelectOptions } from '@/features/shared/org.api';
 import { CreateDebtModal } from './CreateDebtModal';
 import { RecordMakeupModal } from './RecordMakeupModal';
@@ -30,6 +29,8 @@ import {
   type MakeupQuery,
   type MakeupRecord,
 } from './makeup.api';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 const { RangePicker } = DatePicker;
 
@@ -48,7 +49,8 @@ const { RangePicker } = DatePicker;
  */
 export function MakeupPage() {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canManage = useCan('makeup.manage');
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -264,7 +266,6 @@ export function MakeupPage() {
           <Can do="makeup.manage">
             <Button
               type="primary"
-              size="large"
               icon={<Icon name="add" size={20} />}
               onClick={() => setCreateOpen(true)}
             >
@@ -420,10 +421,10 @@ export function MakeupPage() {
           if (!extendTarget) return;
           try {
             await extend.mutateAsync({ id: extendTarget.id, dueDate, reason });
-            message.success('Đã gia hạn làm bù.');
+            toast.success('Đã gia hạn làm bù');
             setExtendTarget(null);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />
@@ -445,10 +446,10 @@ export function MakeupPage() {
           if (!cancelTarget) return;
           try {
             await cancel.mutateAsync({ id: cancelTarget.id, reason });
-            message.success('Đã huỷ khoản nợ công.');
+            toast.success('Đã huỷ khoản nợ công');
             setCancelTarget(null);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />
@@ -524,7 +525,7 @@ function ExtendDialog({
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
           <label
-            className="sf-label-md"
+            className="sf-field__label"
             htmlFor="mk-due"
             style={{ display: 'block', marginBottom: 4 }}
           >
@@ -532,7 +533,6 @@ function ExtendDialog({
           </label>
           <DatePicker
             id="mk-due"
-            size="large"
             format="DD/MM/YYYY"
             style={{ width: '100%' }}
             value={toDayjs(dueDate)}
@@ -542,7 +542,7 @@ function ExtendDialog({
 
         <div>
           <label
-            className="sf-label-md"
+            className="sf-field__label"
             htmlFor="mk-extend-reason"
             style={{ display: 'block', marginBottom: 4 }}
           >

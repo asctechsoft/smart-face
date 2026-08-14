@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { App as AntApp, Button, DatePicker, Modal, Select, Tabs } from 'antd';
+import { Button, DatePicker, Modal, Select, Tabs } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
@@ -14,7 +14,6 @@ import { useCan } from '@/lib/rbac/Can';
 import { REQUEST_STATUS_LABEL, DEFAULT_PAGE_SIZE } from '@/config/constants';
 import { formatDateTime, formatDay, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useDepartments, toSelectOptions } from '@/features/shared/org.api';
 import {
   useApproveRequest,
@@ -27,6 +26,8 @@ import {
   type RequestQuery,
 } from './requests.api';
 import { RequestDetailDrawer } from './RequestDetailDrawer';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 const { RangePicker } = DatePicker;
 
@@ -41,7 +42,8 @@ const { RangePicker } = DatePicker;
  */
 export function RequestListPage() {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canApprove = useCan('request.approve');
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -88,9 +90,9 @@ export function RequestListPage() {
   async function approveOne(request: LeaveRequest) {
     try {
       await approve.mutateAsync({ id: request.id });
-      message.success(`Đã duyệt đơn của ${request.employee?.fullName ?? 'nhân viên'}.`);
+      toast.success(`Đã duyệt đơn của ${request.employee?.fullName ?? 'nhân viên'}`);
     } catch (caught) {
-      message.error(toUserMessage(caught));
+      showError(caught);
     }
   }
 
@@ -100,7 +102,7 @@ export function RequestListPage() {
       setSelectedIds([]);
 
       if (result.failedCount === 0) {
-        message.success(`Đã duyệt ${result.approvedCount} đơn.`);
+        toast.success(`Đã duyệt ${result.approvedCount} đơn`);
       } else {
         // Không gộp thành một dòng "duyệt xong": người dùng phải biết đơn nào
         // bị bỏ lại và vì sao, nếu không họ tưởng cả lô đã xong (BR-APV-05).
@@ -113,7 +115,7 @@ export function RequestListPage() {
         });
       }
     } catch (caught) {
-      message.error(toUserMessage(caught));
+      showError(caught);
     }
   }
 
@@ -393,10 +395,10 @@ export function RequestListPage() {
           if (!rejectTarget) return;
           try {
             await reject.mutateAsync({ id: rejectTarget.id, reason });
-            message.success('Đã từ chối đơn và gửi thông báo tới nhân viên.');
+            toast.success('Đã từ chối đơn và gửi thông báo tới nhân viên');
             setRejectTarget(null);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />

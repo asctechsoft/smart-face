@@ -108,7 +108,7 @@
 
   /* ── Kích thước bố cục ─────────────────────────────── */
   --sf-sidenav-width: 256px;
-  --sf-topbar-height: 64px;
+  --sf-topbar-height: 56px;
   --sf-content-max-width: 1440px;
 }
 

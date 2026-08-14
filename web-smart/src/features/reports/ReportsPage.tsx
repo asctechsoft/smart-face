@@ -20,12 +20,12 @@ import { FilterBar, FilterField } from '@/components/FilterBar';
 import { EmployeeCell } from '@/components/EmployeeCell';
 import { StatCard } from '@/components/StatCard';
 import { CardSkeleton } from '@/components/Skeleton';
-import { EmptyState, ErrorState } from '@/components/EmptyState';
+import { EmptyState } from '@/components/EmptyState';
+import { ApiErrorState } from '@/components/ApiErrorState';
 import { useAuth } from '@/lib/auth/auth-context';
 import { firstDayOfMonth, formatDay, formatMinutes, lastDayOfMonth, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatNumber, formatPercent } from '@/lib/utils/format';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useAttendanceTrend } from '@/features/dashboard/dashboard.api';
 import {
   useLeaveUsage,
@@ -95,7 +95,7 @@ function TrendTab({ from, to }: { from: string; to: string }) {
 
   if (trend.isLoading) return <CardSkeleton height={400} />;
   if (trend.error) {
-    return <ErrorState description={toUserMessage(trend.error)} onRetry={() => void trend.refetch()} />;
+    return <ApiErrorState error={trend.error} onRetry={() => void trend.refetch()} />;
   }
   if (!trend.data || trend.data.length === 0) {
     return (
@@ -179,7 +179,7 @@ function ViolationsTab({ from, to }: { from: string; to: string }) {
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 12 }}>
-        <label className="sf-label-md" htmlFor="min-occ">
+        <label className="sf-field__label" htmlFor="min-occ">
           Ngưỡng số lần vi phạm
         </label>
         <InputNumber
@@ -217,7 +217,7 @@ function OvertimeTab({ from, to }: { from: string; to: string }) {
   if (overtime.isLoading) return <CardSkeleton height={400} />;
   if (overtime.error) {
     return (
-      <ErrorState description={toUserMessage(overtime.error)} onRetry={() => void overtime.refetch()} />
+      <ApiErrorState error={overtime.error} onRetry={() => void overtime.refetch()} />
     );
   }
   if (!overtime.data || overtime.data.totalOtMinutes === 0) {

@@ -45,9 +45,37 @@ export const smartFaceTheme: ThemeConfig = {
     borderRadiusSM: 8,
     borderRadius: 12,
     borderRadiusLG: 16,
-    controlHeightSM: 36,
-    controlHeight: 44,
-    controlHeightLG: 52,
+    /**
+     * Ba bậc chiều cao — docs/16 mục 11.1.
+     *
+     *   `SM` 28px  — nút trong bảng và thanh công cụ
+     *   `default` 32px — MẶC ĐỊNH cho mọi nút và mọi ô nhập
+     *   `LG` 40px  — CHỈ nút chính của modal và drawer
+     *
+     * ## Vì sao 32px chứ không phải 44px
+     *
+     * Đây là công cụ quản trị dùng trên desktop, màn hình đặc dữ liệu: một thanh
+     * lọc bốn ô cộng một bảng hai mươi dòng. Ở mật độ đó, control 44px đẩy nội
+     * dung thật xuống dưới nếp gấp và làm trang trông nặng nề.
+     *
+     * ## Vùng chạm vẫn 44px — trên thiết bị cảm ứng
+     *
+     * 32px sẽ vi phạm mục 10.2 (sàn vùng chạm 44×44) nếu áp cho MỌI thiết bị.
+     * Giải pháp không phải chọn một trong hai: `components.css` có khối
+     * `@media (pointer: coarse)` nâng mọi control lên 44px khi thiết bị nhập là
+     * ngón tay. Desktop được độ gọn, tablet giữ được vùng chạm — docs/04 mục
+     * 12.4 nói rõ web phải dùng được trên tablet.
+     *
+     * ⚠ Sửa các con số ở đây thì PHẢI sửa cả khối `pointer: coarse` bên đó,
+     * không thì hai bộ số lệch nhau và lỗi chỉ lộ ra trên máy tablet.
+     *
+     * ⚠ `size="large"` là ngoại lệ, không phải mặc định. Có giai đoạn nó bị rải
+     * lên 65 ô nhập và 21 nút cấp trang. Trước khi thêm ở đâu, hỏi: đây có phải
+     * nút chính của một modal/drawer không?
+     */
+    controlHeightSM: 28,
+    controlHeight: 32,
+    controlHeightLG: 40,
 
     motionDurationFast: '0.15s',
     motionDurationMid: '0.2s',
@@ -57,35 +85,57 @@ export const smartFaceTheme: ThemeConfig = {
     boxShadowSecondary: '0 10px 15px -3px rgba(0,0,0,.1), 0 4px 6px -4px rgba(0,0,0,.1)',
   },
   components: {
+    /*
+     * Chữ TRONG control là 14px, không phải 16px của `token.fontSize`.
+     *
+     * `token.fontSize: 16` là cỡ chữ CHẠY (body-md, mục 3.2) — đúng cho đoạn văn
+     * và ô chi tiết. Nhưng nhét chữ 16px (dòng 24px) vào control cao 32px chỉ
+     * còn 3px đệm trên dưới, chữ dính sát viền. 14px cho ra 5px đệm, đọc thoáng
+     * mà control vẫn gọn.
+     */
     Button: {
       // Nút "primary" của SmartFace là amber, không phải teal.
       colorPrimary: '#FCAA33',
       colorPrimaryHover: '#FFBD67',
       colorPrimaryActive: '#FCAA33',
       primaryColor: '#6B4200',
-      borderRadius: 12,
+      borderRadius: 8,
+      fontSize: 14,
       fontWeight: 700,
-      paddingInline: 24,
+      // 24px đệm ngang cân với nút cao 44px; với nút 32px thì nút dài ngoẵng.
+      paddingInline: 16,
       dangerColor: '#FFFFFF',
       colorError: '#BA1A1A',
       colorErrorHover: '#980001',
     },
     Input: {
-      borderRadius: 12,
-      paddingBlock: 8,
+      borderRadius: 8,
+      fontSize: 14,
+      paddingBlock: 4,
       paddingInline: 12,
       colorBorder: '#6F7974',
       activeBorderColor: '#003B2C',
       activeShadow: '0 0 0 3px #D1F7E8',
     },
     InputNumber: {
-      borderRadius: 12,
+      borderRadius: 8,
+      fontSize: 14,
       colorBorder: '#6F7974',
       activeBorderColor: '#003B2C',
       activeShadow: '0 0 0 3px #D1F7E8',
     },
-    Select: { borderRadius: 8, colorBorder: '#BFC9C3', optionSelectedBg: '#D1F7E8' },
-    DatePicker: { borderRadius: 8, colorBorder: '#BFC9C3', cellActiveWithRangeBg: '#E4FEF4' },
+    Select: {
+      borderRadius: 8,
+      fontSize: 14,
+      colorBorder: '#BFC9C3',
+      optionSelectedBg: '#D1F7E8',
+    },
+    DatePicker: {
+      borderRadius: 8,
+      fontSize: 14,
+      colorBorder: '#BFC9C3',
+      cellActiveWithRangeBg: '#E4FEF4',
+    },
     Table: {
       headerBg: '#F2F4F3',
       headerColor: '#3F4944',
@@ -98,12 +148,21 @@ export const smartFaceTheme: ThemeConfig = {
     },
     Modal: { borderRadiusLG: 16, headerBg: '#F8FAF9', footerBg: '#F2F4F3', contentBg: '#FFFFFF' },
     Drawer: { paddingLG: 24 },
+    /*
+     * Sidenav KHÔNG dùng `Menu` của antd — nó là `.sf-nav-item` viết riêng
+     * (`global.css`, mục 11.15). Cấu hình ở đây chỉ tác động tới `Dropdown`,
+     * vốn dựng bằng `Menu` bên trong: menu thao tác trên từng dòng bảng và menu
+     * tài khoản ở góc phải.
+     *
+     * Vì vậy `itemHeight` phải theo nhịp control 32px, không theo nhịp sidenav.
+     */
     Menu: {
       itemSelectedBg: '#FCAA33',
       itemSelectedColor: '#6B4200',
       itemHoverBg: '#E1E3E2',
-      itemBorderRadius: 8,
-      itemHeight: 48,
+      itemBorderRadius: 6,
+      itemHeight: 32,
+      fontSize: 14,
     },
     Card: { borderRadiusLG: 12, colorBorderSecondary: '#BFC9C3', paddingLG: 16 },
     Tag: { borderRadiusSM: 9999, defaultBg: '#E1E3E2', defaultColor: '#191C1C' },

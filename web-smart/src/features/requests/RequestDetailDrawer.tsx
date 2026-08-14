@@ -1,17 +1,18 @@
-import { App as AntApp, Button, Drawer, Steps } from 'antd';
+import { Button, Drawer, Steps } from 'antd';
 import { DetailField, DetailGrid, DetailSection } from '@/components/DetailField';
 import { StatusBadge, requestStatusTone } from '@/components/StatusBadge';
 import { EmployeeCell } from '@/components/EmployeeCell';
 import { CardSkeleton } from '@/components/Skeleton';
-import { ErrorState } from '@/components/EmptyState';
 import { Icon } from '@/components/Icon';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useCan } from '@/lib/rbac/Can';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { formatDateTime, formatRelativeDay } from '@/lib/utils/date';
 import { formatFileSize } from '@/lib/utils/format';
 import { REQUEST_STATUS_LABEL } from '@/config/constants';
 import { useApproveRequest, useRequestDetail, type LeaveRequest } from './requests.api';
+import { ApiErrorState } from '@/components/ApiErrorState';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Chi tiết một đơn — docs/04 mục 4 (`FR-WEB-REQ-06`, `FR-WEB-REQ-07`).
@@ -30,7 +31,8 @@ export function RequestDetailDrawer({
   onReject: (request: LeaveRequest) => void;
 }) {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canApprove = useCan('request.approve');
   const detail = useRequestDetail(requestId);
   const approve = useApproveRequest();
@@ -65,10 +67,10 @@ export function RequestDetailDrawer({
               onClick={async () => {
                 try {
                   await approve.mutateAsync({ id: request.id });
-                  message.success('Đã duyệt đơn.');
+                  toast.success('Đã duyệt đơn');
                   onClose();
                 } catch (caught) {
-                  message.error(toUserMessage(caught));
+                  showError(caught);
                 }
               }}
             >
@@ -82,7 +84,7 @@ export function RequestDetailDrawer({
       {detail.isLoading ? (
         <CardSkeleton height={320} />
       ) : detail.error ? (
-        <ErrorState description={toUserMessage(detail.error)} onRetry={() => void detail.refetch()} />
+        <ApiErrorState error={detail.error} onRetry={() => void detail.refetch()} />
       ) : !request ? null : (
         <>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>

@@ -13,15 +13,15 @@ import {
 import { PageHeader, SectionTitle } from '@/components/PageHeader';
 import { StatCard } from '@/components/StatCard';
 import { StatCardSkeleton, CardSkeleton } from '@/components/Skeleton';
-import { EmptyState, ErrorState } from '@/components/EmptyState';
+import { EmptyState } from '@/components/EmptyState';
 import { StatusBadge, severityTone } from '@/components/StatusBadge';
 import { Icon } from '@/components/Icon';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatMinutes, firstDayOfMonth, lastDayOfMonth, formatTime, formatDay } from '@/lib/utils/date';
 import { formatNumber } from '@/lib/utils/format';
 import { FRAUD_CODE_LABEL, FRAUD_SEVERITY_LABEL } from '@/config/constants';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useDashboard, useDashboardAlerts, useAttendanceTrend } from './dashboard.api';
+import { ApiErrorState } from '@/components/ApiErrorState';
 
 /**
  * Dashboard tổng quan — docs/04 mục 2 (`FR-WEB-DASH-01..06`).
@@ -53,7 +53,6 @@ export function DashboardPage() {
         actions={
           <Button
             icon={<Icon name="refresh" size={20} />}
-            size="large"
             onClick={() => {
               void summary.refetch();
               void alerts.refetch();
@@ -138,7 +137,7 @@ export function DashboardPage() {
         {alerts.isLoading ? (
           <CardSkeleton height={160} />
         ) : alerts.error ? (
-          <ErrorState description={toUserMessage(alerts.error)} onRetry={() => void alerts.refetch()} />
+          <ApiErrorState error={alerts.error} onRetry={() => void alerts.refetch()} />
         ) : !alerts.data || alerts.data.items.length === 0 ? (
           <EmptyState
             icon="verified_user"
@@ -230,7 +229,7 @@ export function DashboardPage() {
         {trend.isLoading ? (
           <CardSkeleton height={320} />
         ) : trend.error ? (
-          <ErrorState description={toUserMessage(trend.error)} onRetry={() => void trend.refetch()} />
+          <ApiErrorState error={trend.error} onRetry={() => void trend.refetch()} />
         ) : !trend.data || trend.data.length === 0 ? (
           <EmptyState
             icon="monitoring"

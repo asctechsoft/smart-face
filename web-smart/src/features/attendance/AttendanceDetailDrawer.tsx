@@ -3,14 +3,13 @@ import { DetailField, DetailGrid, DetailSection } from '@/components/DetailField
 import { StatusBadge, severityTone } from '@/components/StatusBadge';
 import { Icon } from '@/components/Icon';
 import { CardSkeleton } from '@/components/Skeleton';
-import { ErrorState } from '@/components/EmptyState';
 import { useAuth } from '@/lib/auth/auth-context';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { formatDay, formatSecondsGap, formatTimeWithSeconds } from '@/lib/utils/date';
 import { formatDistance, formatScore } from '@/lib/utils/format';
 import { FRAUD_CODE_LABEL, FRAUD_SEVERITY_LABEL } from '@/config/constants';
 import { env } from '@/config/env';
 import { useAttendanceLogs, type AttendanceLog } from './attendance.api';
+import { ApiErrorState } from '@/components/ApiErrorState';
 
 /**
  * Chi tiết một ngày công — docs/04 mục 3.2 (`FR-WEB-ATT-03`).
@@ -57,7 +56,7 @@ export function AttendanceDetailDrawer({
       {logs.isLoading ? (
         <CardSkeleton height={280} />
       ) : logs.error ? (
-        <ErrorState description={toUserMessage(logs.error)} onRetry={() => void logs.refetch()} />
+        <ApiErrorState error={logs.error} onRetry={() => void logs.refetch()} />
       ) : !logs.data || logs.data.length === 0 ? (
         <Empty
           description={

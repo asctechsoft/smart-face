@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Alert, App as AntApp, Button, Drawer, InputNumber, Select, Switch } from 'antd';
+import { Alert, Button, Drawer, InputNumber, Select, Switch } from 'antd';
 import { Icon } from '@/components/Icon';
-import { toUserMessage } from '@/lib/errors/api-error';
 import {
   APPROVER_ROLE_LABEL,
   useReplaceApprovalFlow,
   type ApprovalFlowStep,
   type RequestTypeConfig,
 } from './request-config.api';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Cấu hình luồng duyệt của một loại đơn — docs/04 mục 4.1 (`FR-WEB-REQ-05`).
@@ -30,7 +31,8 @@ export function ApprovalFlowDrawer({
   requestType: RequestTypeConfig | null;
   onClose: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const replace = useReplaceApprovalFlow();
 
   const [steps, setSteps] = useState<ApprovalFlowStep[]>([]);
@@ -106,10 +108,10 @@ export function ApprovalFlowDrawer({
               if (!requestType) return;
               try {
                 await replace.mutateAsync({ id: requestType.id, steps });
-                message.success('Đã lưu luồng duyệt. Đơn đang chờ duyệt giữ nguyên luồng cũ.');
+                toast.success('Đã lưu luồng duyệt', 'Đơn đang chờ duyệt giữ nguyên luồng cũ.');
                 onClose();
               } catch (caught) {
-                message.error(toUserMessage(caught));
+                showError(caught);
               }
             }}
           >
@@ -183,11 +185,10 @@ export function ApprovalFlowDrawer({
             </div>
 
             <div>
-              <label className="sf-label-md" style={{ display: 'block', marginBottom: 4 }}>
+              <label className="sf-field__label" style={{ display: 'block', marginBottom: 4 }}>
                 Người duyệt
               </label>
               <Select
-                size="large"
                 style={{ width: '100%' }}
                 value={step.approverRole}
                 onChange={(approverRole) => patchStep(index, { approverRole })}
@@ -206,11 +207,10 @@ export function ApprovalFlowDrawer({
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
-                <label className="sf-label-md" style={{ display: 'block', marginBottom: 4 }}>
+                <label className="sf-field__label" style={{ display: 'block', marginBottom: 4 }}>
                   Chỉ áp dụng khi đơn từ
                 </label>
                 <InputNumber
-                  size="large"
                   min={0}
                   addonAfter="ngày trở lên"
                   style={{ width: '100%' }}
@@ -220,11 +220,10 @@ export function ApprovalFlowDrawer({
                 />
               </div>
               <div>
-                <label className="sf-label-md" style={{ display: 'block', marginBottom: 4 }}>
+                <label className="sf-field__label" style={{ display: 'block', marginBottom: 4 }}>
                   Và không quá
                 </label>
                 <InputNumber
-                  size="large"
                   min={0}
                   addonAfter="ngày"
                   style={{ width: '100%' }}
@@ -269,7 +268,7 @@ export function ApprovalFlowDrawer({
           </div>
         ))}
 
-        <Button size="large" icon={<Icon name="add" size={20} />} onClick={addStep}>
+        <Button icon={<Icon name="add" size={20} />} onClick={addStep}>
           Thêm cấp duyệt
         </Button>
 

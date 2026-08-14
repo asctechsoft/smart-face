@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Alert, App as AntApp, Button, Input, Modal, Select, Table } from 'antd';
+import { Alert, Button, Input, Modal, Select, Table } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader, SectionTitle } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
@@ -9,7 +9,6 @@ import { EmployeeCell } from '@/components/EmployeeCell';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Icon } from '@/components/Icon';
 import { ROLE_LABEL, SystemRole } from '@/config/constants';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { rolesFor, type Permission } from '@/lib/rbac/permissions';
 import { useDepartments, toSelectOptions } from '@/features/shared/org.api';
 import {
@@ -18,6 +17,8 @@ import {
   type Employee,
   type EmployeeQuery,
 } from '@/features/employees/employees.api';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /** Các vai trò gán được từ Web Quản lý. `SYSTEM_ADMIN` chỉ cấp ở tầng nền tảng. */
 const ASSIGNABLE_ROLES = [
@@ -289,7 +290,8 @@ function PermissionMatrix() {
 }
 
 function RoleDialog({ target, onClose }: { target: Employee | null; onClose: () => void }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const departments = useDepartments();
   const update = useUpdateEmployee();
 
@@ -305,7 +307,7 @@ function RoleDialog({ target, onClose }: { target: Employee | null; onClose: () 
     <Modal
       open={Boolean(target)}
       title={`Đổi quyền · ${target?.fullName ?? ''}`}
-      okText="Lưu phân quyền"
+      okText="Lưu"
       cancelText="Huỷ bỏ"
       okButtonProps={{ size: 'large', loading: update.isPending, disabled: missingScope }}
       cancelButtonProps={{ size: 'large' }}
@@ -328,22 +330,21 @@ function RoleDialog({ target, onClose }: { target: Employee | null; onClose: () 
             // dữ liệu rác mà `ScopeGuard` không bao giờ đọc tới.
             ...(isManager ? { managedDepartmentIds: scope } : { managedDepartmentIds: [] }),
           });
-          message.success(`Đã cập nhật phân quyền của ${target.fullName}.`);
+          toast.success(`Đã cập nhật phân quyền của ${target.fullName}`);
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-label-md" htmlFor="rl-roles" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="rl-roles" style={{ display: 'block', marginBottom: 4 }}>
             Vai trò trên hệ thống
           </label>
           <Select
             id="rl-roles"
             mode="multiple"
-            size="large"
             style={{ width: '100%' }}
             value={roles}
             onChange={setRoles}
@@ -354,7 +355,7 @@ function RoleDialog({ target, onClose }: { target: Employee | null; onClose: () 
         {isManager ? (
           <div>
             <label
-              className="sf-label-md"
+              className="sf-field__label"
               htmlFor="rl-scope"
               style={{ display: 'block', marginBottom: 4 }}
             >
@@ -363,7 +364,6 @@ function RoleDialog({ target, onClose }: { target: Employee | null; onClose: () 
             <Select
               id="rl-scope"
               mode="multiple"
-              size="large"
               style={{ width: '100%' }}
               placeholder="Chọn các phòng ban người này quản lý"
               loading={departments.isLoading}

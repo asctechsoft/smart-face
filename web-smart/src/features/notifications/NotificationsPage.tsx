@@ -1,17 +1,19 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Alert, App as AntApp, Button, Input, Modal, Select, Tabs } from 'antd';
+import { Alert, Button, Input, Modal, Select, Tabs } from 'antd';
 import { PageHeader } from '@/components/PageHeader';
-import { EmptyState, ErrorState } from '@/components/EmptyState';
+import { EmptyState } from '@/components/EmptyState';
 import { CardSkeleton } from '@/components/Skeleton';
 import { Icon } from '@/components/Icon';
+import { ApiErrorState } from '@/components/ApiErrorState';
 import { Can } from '@/lib/rbac/Can';
 import { api } from '@/lib/api/client';
 import { qk } from '@/lib/api/query-client';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatRelativeDay, formatDateTime } from '@/lib/utils/date';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useDepartments } from '@/features/shared/org.api';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 interface Notification {
   id: string;
@@ -61,7 +63,6 @@ export function NotificationsPage() {
           <>
             {unreadCount > 0 ? (
               <Button
-                size="large"
                 onClick={() => void markAllRead.mutateAsync()}
                 loading={markAllRead.isPending}
               >
@@ -71,7 +72,6 @@ export function NotificationsPage() {
             <Can do="notification.send">
               <Button
                 type="primary"
-                size="large"
                 icon={<Icon name="campaign" size={20} />}
                 onClick={() => setComposeOpen(true)}
               >
@@ -90,9 +90,10 @@ export function NotificationsPage() {
             children: notifications.isLoading ? (
               <CardSkeleton height={240} />
             ) : notifications.error ? (
-              <ErrorState
-                description={toUserMessage(notifications.error)}
+              <ApiErrorState
+                error={notifications.error}
                 onRetry={() => void notifications.refetch()}
+                fallbackDescription="Không tải được hộp thư thông báo."
               />
             ) : !notifications.data || notifications.data.items.length === 0 ? (
               <EmptyState
@@ -177,7 +178,8 @@ export function NotificationsPage() {
 }
 
 function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const departments = useDepartments();
 
   const [title, setTitle] = useState('');
@@ -218,10 +220,10 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
             body: body.trim(),
             departmentIds: departmentIds.length > 0 ? departmentIds : undefined,
           });
-          message.success(`Đã gửi thông báo tới ${result.recipients} nhân viên.`);
+          toast.success(`Đã gửi thông báo tới ${result.recipients} nhân viên`);
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
@@ -234,12 +236,11 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
         />
 
         <div>
-          <label className="sf-label-md" htmlFor="n-title" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="n-title" style={{ display: 'block', marginBottom: 4 }}>
             Tiêu đề
           </label>
           <Input
             id="n-title"
-            size="large"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             maxLength={120}
@@ -249,7 +250,7 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="n-body" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="n-body" style={{ display: 'block', marginBottom: 4 }}>
             Nội dung
           </label>
           <Input.TextArea
@@ -264,12 +265,11 @@ function ComposeModal({ open, onClose }: { open: boolean; onClose: () => void })
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="n-dept" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="n-dept" style={{ display: 'block', marginBottom: 4 }}>
             Gửi tới
           </label>
           <Select
             id="n-dept"
-            size="large"
             mode="multiple"
             allowClear
             style={{ width: '100%' }}

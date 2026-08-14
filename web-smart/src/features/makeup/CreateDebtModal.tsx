@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, DatePicker, Input, InputNumber, Modal, Select } from 'antd';
+import { Alert, DatePicker, Input, InputNumber, Modal, Select } from 'antd';
 import { REASON_MIN_LENGTH } from '@/config/constants';
 import { formatMinutes, toWorkDate, todayWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useEmployeeList } from '@/features/employees/employees.api';
 import { useCreateMakeupDebt } from './makeup.api';
+import { Field, useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Ghi nhận một khoản nợ công — docs/04 mục 5.1.
@@ -21,7 +22,8 @@ import { useCreateMakeupDebt } from './makeup.api';
  */
 export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const create = useCreateMakeupDebt();
 
   const [employeeId, setEmployeeId] = useState<string | undefined>();
@@ -72,10 +74,10 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
             ...(dueDate ? { dueDate } : {}),
             reason: reason.trim(),
           });
-          message.success('Đã ghi nhận khoản nợ công và thông báo cho nhân viên.');
+          toast.success('Đã ghi nhận khoản nợ công và thông báo cho nhân viên');
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
@@ -83,7 +85,6 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
         <Field label="Nhân viên" htmlFor="md-emp" required>
           <Select
             id="md-emp"
-            size="large"
             showSearch
             optionFilterProp="label"
             style={{ width: '100%' }}
@@ -101,7 +102,6 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
         <Field label="Ngày phát sinh nợ" htmlFor="md-date" required>
           <DatePicker
             id="md-date"
-            size="large"
             allowClear={false}
             format="DD/MM/YYYY"
             style={{ width: '100%' }}
@@ -113,7 +113,6 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
         <Field label="Số giờ còn thiếu" required>
           <div style={{ display: 'flex', gap: 12 }}>
             <InputNumber
-              size="large"
               min={0}
               max={24}
               addonAfter="giờ"
@@ -123,7 +122,6 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
               aria-label="Số giờ còn thiếu"
             />
             <InputNumber
-              size="large"
               min={0}
               max={59}
               addonAfter="phút"
@@ -143,7 +141,6 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
         <Field label="Hạn làm bù" htmlFor="md-due">
           <DatePicker
             id="md-due"
-            size="large"
             format="DD/MM/YYYY"
             style={{ width: '100%' }}
             value={toDayjs(dueDate)}
@@ -177,24 +174,3 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
   );
 }
 
-function Field({
-  label,
-  htmlFor,
-  required,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="sf-label-md" htmlFor={htmlFor} style={{ display: 'block', marginBottom: 4 }}>
-        {label}
-        {required ? <span style={{ color: 'var(--sf-error-600)' }}> *</span> : null}
-      </label>
-      {children}
-    </div>
-  );
-}

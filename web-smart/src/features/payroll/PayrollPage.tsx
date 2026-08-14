@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { App as AntApp, Button, DatePicker, Input, Modal, Segmented } from 'antd';
+import { Button, DatePicker, Input, Modal, Segmented } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader, SectionTitle } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
@@ -15,7 +15,6 @@ import { PERIOD_STATUS_LABEL } from '@/config/constants';
 import { formatDay, formatMinutes, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatNumber, formatStandardDays } from '@/lib/utils/format';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { downloadFromUrl } from '@/lib/utils/download';
 import { useExportJob } from '@/features/attendance/attendance.api';
 import {
@@ -30,6 +29,8 @@ import {
   type PayrollSummaryRow,
 } from './payroll.api';
 import { PreCloseReportModal } from './PreCloseReportModal';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Tính công & kỳ lương — docs/04 mục 7 (`FR-WEB-PAY-01..08`).
@@ -44,7 +45,8 @@ import { PreCloseReportModal } from './PreCloseReportModal';
  */
 export function PayrollPage() {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canClose = useCan('payroll.close');
 
   const periods = usePayrollPeriods();
@@ -72,13 +74,31 @@ export function PayrollPage() {
   useEffect(() => {
     if (exportJob.data?.status === 'COMPLETED' && exportJob.data.downloadUrl) {
       downloadFromUrl(exportJob.data.downloadUrl, 'bang-luong.xlsx');
-      message.success('Đã tải bảng lương.');
+      toast.success('Đã tải bảng lương');
       setExportJobId(null);
     }
-  }, [exportJob.data, message]);
+  }, [exportJob.data, toast]);
 
   const selected = periods.data?.find((period) => period.id === selectedId) ?? null;
   const isClosed = selected?.status === 'CLOSED';
+
+  /**
+   * Xuất file bàn giao cho bộ phận lương — docs/04 mục 7.2 bước 6.
+   *
+   * Tách thành hàm vì gọi từ hai chỗ: nút "Xuất Excel" trên thanh công cụ, và
+   * nút hành động trong thông báo sau khi chốt kỳ. Xuất chạy bất đồng bộ qua
+   * hàng đợi nên chỉ nhận `jobId`; `useEffect` bên trên theo dõi job và tự tải
+   * file khi xong.
+   */
+  async function exportForHandover(periodId: string) {
+    try {
+      const result = await exportPayroll.mutateAsync({ periodId });
+      setExportJobId(result.jobId);
+      toast.success('Đang tạo file', 'Hệ thống sẽ tự tải xuống khi xong, bạn không cần chờ ở đây.');
+    } catch (caught) {
+      showError(caught);
+    }
+  }
 
   const columns: ColumnsType<PayrollSummaryRow> = [
     {
@@ -177,7 +197,6 @@ export function PayrollPage() {
           <Can do="payroll.close">
             <Button
               type="primary"
-              size="large"
               icon={<Icon name="add" size={20} />}
               onClick={() => setCreateOpen(true)}
             >
@@ -196,7 +215,7 @@ export function PayrollPage() {
           description="Tạo kỳ lương đầu tiên (thường là theo tháng) để bắt đầu tổng hợp bảng công và chốt số liệu bàn giao cho bộ phận lương."
           action={
             <Can do="payroll.close">
-              <Button type="primary" size="large" onClick={() => setCreateOpen(true)}>
+              <Button type="primary" onClick={() => setCreateOpen(true)}>
                 Tạo kỳ lương
               </Button>
             </Can>
@@ -257,9 +276,9 @@ export function PayrollPage() {
                     onClick={async () => {
                       try {
                         await recalculate.mutateAsync(selected.id);
-                        message.success('Đã đưa yêu cầu tính lại vào hàng đợi.');
+                        toast.success('Đã đưa yêu cầu tính lại vào hàng đợi');
                       } catch (caught) {
-                        message.error(toUserMessage(caught));
+                        showError(caught);
                       }
                     }}
                   >
@@ -270,15 +289,7 @@ export function PayrollPage() {
                 <Button
                   icon={<Icon name="download" size={20} />}
                   loading={exportPayroll.isPending || Boolean(exportJobId)}
-                  onClick={async () => {
-                    try {
-                      const result = await exportPayroll.mutateAsync({ periodId: selected.id });
-                      setExportJobId(result.jobId);
-                      message.info('Đang tạo file. Hệ thống sẽ tự tải khi xong.');
-                    } catch (caught) {
-                      message.error(toUserMessage(caught));
-                    }
-                  }}
+                  onClick={() => void exportForHandover(selected.id)}
                 >
                   Xuất Excel
                 </Button>
@@ -341,10 +352,20 @@ export function PayrollPage() {
           if (!selected) return;
           try {
             await closePeriod.mutateAsync({ periodId: selected.id, reason, force });
-            message.success(`Đã chốt ${selected.name}. Dữ liệu chấm công của kỳ đã bị khoá.`);
+            toast.success(
+              `Đã chốt ${selected.name}`,
+              'Dữ liệu chấm công của kỳ đã khoá — không chấm, không sửa, không duyệt đơn vào kỳ này nữa.',
+              // Bước kế tiếp thật sự của kế toán là bàn giao file cho bộ phận
+              // lương (docs/04 mục 7.2 bước 6), nên đặt ngay đây thay vì bắt họ
+              // tìm lại nút Xuất Excel.
+              {
+                label: 'Xuất Excel bàn giao',
+                onClick: () => void exportForHandover(selected.id),
+              },
+            );
             setPreCloseOpen(false);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
         closing={closePeriod.isPending}
@@ -364,10 +385,10 @@ export function PayrollPage() {
           if (!reopenTarget) return;
           try {
             await reopen.mutateAsync({ periodId: reopenTarget.id, reason });
-            message.success('Đã mở lại kỳ.');
+            toast.success('Đã mở lại kỳ');
             setReopenTarget(null);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />
@@ -376,7 +397,8 @@ export function PayrollPage() {
 }
 
 function CreatePeriodModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const create = useCreatePeriod();
   const [name, setName] = useState('');
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
@@ -393,7 +415,7 @@ function CreatePeriodModal({ open, onClose }: { open: boolean; onClose: () => vo
       open={open}
       onCancel={onClose}
       title="Tạo kỳ lương"
-      okText="Tạo kỳ"
+      okText="Tạo"
       cancelText="Huỷ bỏ"
       okButtonProps={{
         size: 'large',
@@ -408,21 +430,20 @@ function CreatePeriodModal({ open, onClose }: { open: boolean; onClose: () => vo
             startDate: range.from as string,
             endDate: range.to as string,
           });
-          message.success('Đã tạo kỳ lương.');
+          toast.success('Đã tạo kỳ lương');
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-label-md" htmlFor="p-name" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="p-name" style={{ display: 'block', marginBottom: 4 }}>
             Tên kỳ
           </label>
           <Input
             id="p-name"
-            size="large"
             value={name}
             onChange={(event) => setName(event.target.value)}
             placeholder="Tháng 08/2026"
@@ -430,11 +451,10 @@ function CreatePeriodModal({ open, onClose }: { open: boolean; onClose: () => vo
         </div>
 
         <div>
-          <label className="sf-label-md" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" style={{ display: 'block', marginBottom: 4 }}>
             Khoảng ngày của kỳ
           </label>
           <DatePicker.RangePicker
-            size="large"
             format="DD/MM/YYYY"
             style={{ width: '100%' }}
             value={[toDayjs(range.from), toDayjs(range.to)]}

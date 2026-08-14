@@ -1,6 +1,5 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, Input, InputNumber, Modal, Select, Switch } from 'antd';
-import { toUserMessage } from '@/lib/errors/api-error';
+import { Alert, Input, InputNumber, Modal, Select, Switch } from 'antd';
 import {
   DEDUCT_FROM_LABEL,
   REQUEST_UNIT_LABEL,
@@ -9,6 +8,8 @@ import {
   type RequestTypeConfig,
   type UpsertRequestTypePayload,
 } from './request-config.api';
+import { Field, useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Tạo / sửa một loại đơn — docs/04 mục 4.
@@ -25,7 +26,8 @@ export function RequestTypeFormModal({
   target: RequestTypeConfig | 'create' | null;
   onClose: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const create = useCreateRequestType();
   const update = useUpdateRequestType();
 
@@ -79,14 +81,14 @@ export function RequestTypeFormModal({
 
           if (existing) {
             await update.mutateAsync({ id: existing.id, ...payload });
-            message.success('Đã cập nhật loại đơn.');
+            toast.success('Đã cập nhật loại đơn');
           } else {
             await create.mutateAsync(payload);
-            message.success('Đã tạo loại đơn. Cấu hình luồng duyệt ở nút "Luồng duyệt".');
+            toast.success('Đã tạo loại đơn', 'Cấu hình luồng duyệt ở nút "Luồng duyệt".');
           }
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
@@ -94,7 +96,6 @@ export function RequestTypeFormModal({
         <Field label="Tên hiển thị" htmlFor="rt-name" required>
           <Input
             id="rt-name"
-            size="large"
             placeholder="Xin nghỉ phép"
             value={value.name}
             onChange={(event) => patch({ name: event.target.value })}
@@ -104,7 +105,6 @@ export function RequestTypeFormModal({
         <Field label="Mã loại đơn" htmlFor="rt-code" required>
           <Input
             id="rt-code"
-            size="large"
             placeholder="ANNUAL_LEAVE"
             readOnly={codeLocked}
             status={value.code && !codeValid ? 'error' : undefined}
@@ -123,7 +123,6 @@ export function RequestTypeFormModal({
           <Field label="Đơn vị tính" htmlFor="rt-unit">
             <Select
               id="rt-unit"
-              size="large"
               style={{ width: '100%' }}
               value={value.unit}
               onChange={(unit) => patch({ unit })}
@@ -137,7 +136,6 @@ export function RequestTypeFormModal({
           <Field label="Trừ vào quỹ nào" htmlFor="rt-deduct">
             <Select
               id="rt-deduct"
-              size="large"
               style={{ width: '100%' }}
               value={value.deductFrom}
               onChange={(deductFrom) => patch({ deductFrom })}
@@ -152,7 +150,6 @@ export function RequestTypeFormModal({
         <Field label="Số ngày tối đa mỗi đơn" htmlFor="rt-max">
           <InputNumber
             id="rt-max"
-            size="large"
             min={1}
             style={{ width: '100%' }}
             placeholder="Bỏ trống = không giới hạn"
@@ -222,24 +219,3 @@ function ToggleRow({
   );
 }
 
-function Field({
-  label,
-  htmlFor,
-  required,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="sf-label-md" htmlFor={htmlFor} style={{ display: 'block', marginBottom: 4 }}>
-        {label}
-        {required ? <span style={{ color: 'var(--sf-error-600)' }}> *</span> : null}
-      </label>
-      {children}
-    </div>
-  );
-}

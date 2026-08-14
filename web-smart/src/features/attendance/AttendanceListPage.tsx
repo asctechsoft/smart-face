@@ -202,7 +202,6 @@ export function AttendanceListPage() {
         actions={
           <Can do="attendance.export">
             <Button
-              size="large"
               icon={<Icon name="download" size={20} />}
               onClick={() => setExportOpen(true)}
             >

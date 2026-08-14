@@ -79,7 +79,7 @@ export {
 export { EmptyState, ErrorState } from './EmptyState';
 
 export { ToastProvider, useToast } from './Toast';
-export type { ToastTone } from './Toast';
+export type { ToastAction, ToastTone } from './Toast';
 
 export { Modal, ConfirmDialog } from './Modal';
 export { Drawer, BottomSheet } from './Drawer';

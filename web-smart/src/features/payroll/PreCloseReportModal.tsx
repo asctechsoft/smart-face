@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import { Alert, Checkbox, Collapse, Input, Modal, Tag } from 'antd';
 import { CardSkeleton } from '@/components/Skeleton';
-import { ErrorState } from '@/components/EmptyState';
 import { Icon } from '@/components/Icon';
 import { useAuth } from '@/lib/auth/auth-context';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { formatDateTime, formatDay } from '@/lib/utils/date';
 import { REASON_MIN_LENGTH, FRAUD_CODE_LABEL } from '@/config/constants';
 import { usePreCloseReport, type PayrollPeriod } from './payroll.api';
+import { ApiErrorState } from '@/components/ApiErrorState';
 
 /**
  * Báo cáo tiền chốt — docs/04 mục 7.2 bước 3.
@@ -68,10 +67,11 @@ export function PreCloseReportModal({
       {report.isLoading ? (
         <CardSkeleton height={280} />
       ) : report.error ? (
-        <ErrorState
+        <ApiErrorState
+          error={report.error}
           title="Không đọc được báo cáo tiền chốt"
-          description={toUserMessage(report.error)}
           onRetry={() => void report.refetch()}
+          fallbackDescription="Chưa dựng được báo cáo tiền chốt cho kỳ này. Không có báo cáo thì không nên chốt kỳ."
         />
       ) : report.data ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -192,7 +192,7 @@ export function PreCloseReportModal({
           />
 
           <div>
-            <label className="sf-label-md" htmlFor="close-reason" style={{ display: 'block', marginBottom: 4 }}>
+            <label className="sf-field__label" htmlFor="close-reason" style={{ display: 'block', marginBottom: 4 }}>
               Ghi chú chốt kỳ (bắt buộc)
             </label>
             <Input.TextArea

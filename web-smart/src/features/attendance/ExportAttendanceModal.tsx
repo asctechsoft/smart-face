@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
-import { Alert, App as AntApp, DatePicker, Modal, Progress, Radio, Select } from 'antd';
+import { Alert, DatePicker, Modal, Progress, Radio, Select } from 'antd';
 import { toUserMessage } from '@/lib/errors/api-error';
 import { toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { downloadFromUrl } from '@/lib/utils/download';
 import { useDepartments } from '@/features/shared/org.api';
 import { useExportAttendance, useExportJob } from './attendance.api';
+import { useToast } from '@/components/ui';
 
 const { RangePicker } = DatePicker;
 
@@ -28,7 +29,7 @@ export function ExportAttendanceModal({
   defaultTo?: string;
   onClose: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
   const departments = useDepartments();
   const startExport = useExportAttendance();
 
@@ -56,12 +57,12 @@ export function ExportAttendanceModal({
   useEffect(() => {
     if (job.data?.status === 'COMPLETED' && job.data.downloadUrl) {
       downloadFromUrl(job.data.downloadUrl, `bang-cong-${from}-${to}.${format.toLowerCase()}`);
-      message.success('Đã tải file bảng công.');
+      toast.success('Đã tải file bảng công');
     }
     if (job.data?.status === 'FAILED') {
       setError(job.data.error ?? 'Không tạo được file. Thử thu hẹp khoảng ngày rồi xuất lại.');
     }
-  }, [job.data, from, to, format, message]);
+  }, [job.data, from, to, format, toast]);
 
   async function submit() {
     setError(null);
@@ -102,7 +103,7 @@ export function ExportAttendanceModal({
         {error ? <Alert type="error" showIcon message={error} role="alert" /> : null}
 
         <div>
-          <label className="sf-label-md" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" style={{ display: 'block', marginBottom: 4 }}>
             Khoảng ngày
           </label>
           <RangePicker
@@ -117,7 +118,7 @@ export function ExportAttendanceModal({
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="exp-dept" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="exp-dept" style={{ display: 'block', marginBottom: 4 }}>
             Phòng ban
           </label>
           <Select
@@ -137,7 +138,7 @@ export function ExportAttendanceModal({
         </div>
 
         <div>
-          <label className="sf-label-md" style={{ display: 'block', marginBottom: 8 }}>
+          <label className="sf-field__label" style={{ display: 'block', marginBottom: 8 }}>
             Định dạng
           </label>
           <Radio.Group

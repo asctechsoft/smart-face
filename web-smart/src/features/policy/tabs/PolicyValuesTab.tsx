@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Alert, App as AntApp, InputNumber, Select, Switch } from 'antd';
+import { Alert, InputNumber, Select, Switch } from 'antd';
 import { CardSkeleton } from '@/components/Skeleton';
-import { ErrorState } from '@/components/EmptyState';
 import { ReasonDialog } from '@/components/ReasonDialog';
 import { SectionTitle } from '@/components/PageHeader';
+import { ApiErrorState } from '@/components/ApiErrorState';
 import { useCan } from '@/lib/rbac/Can';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { POLICY_FIELDS, usePolicies, useUpdatePolicies, type PolicyValues } from '../policy.api';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Chỉnh giá trị chính sách.
@@ -17,7 +18,8 @@ import { POLICY_FIELDS, usePolicies, useUpdatePolicies, type PolicyValues } from
  * là thứ duy nhất trả lời được.
  */
 export function PolicyValuesTab() {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canEdit = useCan('policy.edit');
   const policies = usePolicies();
   const update = useUpdatePolicies();
@@ -36,7 +38,7 @@ export function PolicyValuesTab() {
   if (policies.isLoading) return <CardSkeleton height={400} />;
   if (policies.error) {
     return (
-      <ErrorState description={toUserMessage(policies.error)} onRetry={() => void policies.refetch()} />
+      <ApiErrorState error={policies.error} onRetry={() => void policies.refetch()} />
     );
   }
 
@@ -162,10 +164,10 @@ export function PolicyValuesTab() {
           const patch = Object.fromEntries(changedKeys.map((key) => [key, draft[key]]));
           try {
             await update.mutateAsync({ policies: patch, reason });
-            message.success('Đã lưu chính sách.');
+            toast.success('Đã lưu chính sách');
             setConfirmOpen(false);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />

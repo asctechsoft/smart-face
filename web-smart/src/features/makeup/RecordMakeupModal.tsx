@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, DatePicker, InputNumber, Modal } from 'antd';
+import { Alert, DatePicker, InputNumber, Modal } from 'antd';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatDay, formatMinutes, toWorkDate, todayWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useRecordMakeup, type MakeupRecord } from './makeup.api';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Field, useToast } from '@/components/ui';
 
 /**
  * Ghi nhận một lần làm bù — `FR-WEB-MKUP-02`, `FR-WEB-MKUP-03`.
@@ -25,7 +26,8 @@ export function RecordMakeupModal({
   onClose: () => void;
 }) {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const save = useRecordMakeup();
 
   const [makeupWorkDate, setMakeupWorkDate] = useState(todayWorkDate(timezone));
@@ -68,14 +70,15 @@ export function RecordMakeupModal({
             minutes: totalMinutes,
           });
 
-          message.success(
+          toast.success(
+            `Đã ghi nhận ${formatMinutes(totalMinutes)} làm bù`,
             result.carried
-              ? `Đã ghi nhận ${formatMinutes(totalMinutes)}. Phần còn nợ ${formatMinutes(result.carried.remainingMinutes)} chuyển sang một khoản mới, giữ nguyên hạn cũ.`
-              : `Đã ghi nhận ${formatMinutes(totalMinutes)}. Nhân viên đã bù đủ giờ.`,
+              ? `Còn nợ ${formatMinutes(result.carried.remainingMinutes)} — phần này chuyển sang một khoản mới, giữ nguyên hạn cũ.`
+              : 'Nhân viên đã bù đủ giờ, khoản nợ này được đóng lại.',
           );
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
@@ -89,7 +92,6 @@ export function RecordMakeupModal({
           <Field label="Ngày làm bù" htmlFor="rm-date" required>
             <DatePicker
               id="rm-date"
-              size="large"
               allowClear={false}
               format="DD/MM/YYYY"
               style={{ width: '100%' }}
@@ -105,7 +107,6 @@ export function RecordMakeupModal({
           <Field label="Số giờ đã bù" required>
             <div style={{ display: 'flex', gap: 12 }}>
               <InputNumber
-                size="large"
                 min={0}
                 max={24}
                 addonAfter="giờ"
@@ -115,7 +116,6 @@ export function RecordMakeupModal({
                 aria-label="Số giờ đã bù"
               />
               <InputNumber
-                size="large"
                 min={0}
                 max={59}
                 addonAfter="phút"
@@ -150,24 +150,3 @@ export function RecordMakeupModal({
   );
 }
 
-function Field({
-  label,
-  htmlFor,
-  required,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="sf-label-md" htmlFor={htmlFor} style={{ display: 'block', marginBottom: 4 }}>
-        {label}
-        {required ? <span style={{ color: 'var(--sf-error-600)' }}> *</span> : null}
-      </label>
-      {children}
-    </div>
-  );
-}

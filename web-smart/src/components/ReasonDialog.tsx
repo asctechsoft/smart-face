@@ -74,7 +74,7 @@ export function ReasonDialog({
 
       {requireReason ? (
         <div>
-          <label className="sf-label-md" htmlFor="sf-reason" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="sf-reason" style={{ display: 'block', marginBottom: 4 }}>
             Lý do (bắt buộc)
           </label>
           <Input.TextArea

@@ -45,16 +45,29 @@ export function EmptyState({
  * `traceId` hiện dưới dạng chú thích nhỏ: nó là mã kỹ thuật nên không được làm
  * thông điệp chính (mục 14.2 điều 9), nhưng người dùng chụp màn hình gửi hỗ trợ
  * thì nó tiết kiệm hàng giờ dò log.
+ *
+ * ## Vì sao `canRetry` mặc định `true`
+ *
+ * Nút "Thử lại" chỉ nên hiện khi bấm vào thật sự có ích. Với lỗi 403 (không có
+ * quyền) hay 404 (chức năng chưa mở), bấm bao nhiêu lần cũng ra đúng kết quả đó
+ * — và người dùng sẽ bấm vài lần trước khi đi tìm người hỗ trợ, mất thời gian ở
+ * cả hai phía. `toUserError()` đọc cờ `retryable` của Backend và trả về đây.
+ *
+ * Mặc định `true` để những chỗ gọi cũ chưa kịp truyền cờ vẫn giữ nguyên hành vi
+ * — lỗi mạng, thứ hay gặp nhất, vốn luôn đáng thử lại.
  */
 export function ErrorState({
   title = 'Không tải được dữ liệu',
   description,
   traceId,
+  canRetry = true,
   onRetry,
 }: {
   title?: string;
   description: string;
   traceId?: string;
+  /** `false` = ẩn nút, thay bằng dòng hướng dẫn liên hệ. */
+  canRetry?: boolean;
   onRetry?: () => void;
 }) {
   return (
@@ -66,7 +79,7 @@ export function ErrorState({
       <p className="sf-body-md sf-text-variant" style={{ margin: 0, maxWidth: '48ch' }}>
         {description}
       </p>
-      {onRetry ? <Button onClick={onRetry}>Thử lại</Button> : null}
+      {canRetry && onRetry ? <Button onClick={onRetry}>Thử lại</Button> : null}
       {traceId ? <span className="sf-caption">Mã truy vết: {traceId}</span> : null}
     </div>
   );

@@ -68,12 +68,11 @@ export function TwoFactorStep({
       {error ? <Alert type="error" showIcon message={error} role="alert" /> : null}
 
       <div>
-        <label className="sf-label-md" htmlFor="otp" style={{ display: 'block', marginBottom: 4 }}>
+        <label className="sf-field__label" htmlFor="otp" style={{ display: 'block', marginBottom: 4 }}>
           Mã xác thực
         </label>
         <Input
           id="otp"
-          size="large"
           value={code}
           onChange={(event) => setCode(event.target.value)}
           onPressEnter={() => void submit()}

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, Button, DatePicker, Input, InputNumber, Modal, Select, Switch, TimePicker } from 'antd';
+import { Alert, Button, DatePicker, Input, InputNumber, Modal, Select, Switch, TimePicker } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -9,8 +9,9 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { WEEKDAYS } from '@/config/constants';
 import { formatDay, toWorkDate } from '@/lib/utils/date';
 import { dayjs, toDayjs, type Dayjs } from '@/lib/utils/dayjs';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useDeleteShift, useShifts, useUpsertShift, type Shift } from '../policy.api';
+import { ConfirmDialog, Field, useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Ca làm việc — docs/04 mục 6.1.
@@ -26,12 +27,14 @@ import { useDeleteShift, useShifts, useUpsertShift, type Shift } from '../policy
  */
 export function ShiftsTab() {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canEdit = useCan('policy.edit');
 
   const shifts = useShifts();
   const remove = useDeleteShift();
   const [editing, setEditing] = useState<Partial<Shift> | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Shift | null>(null);
 
   const columns: ColumnsType<Shift> = [
     {
@@ -121,29 +124,7 @@ export function ShiftsTab() {
                 <Button size="small" onClick={() => setEditing(row)}>
                   Sửa
                 </Button>
-                <Button
-                  size="small"
-                  type="text"
-                  danger
-                  onClick={() =>
-                    Modal.confirm({
-                      title: `Xoá ca "${row.name}"?`,
-                      content:
-                        'Nhân viên đang được phân ca này sẽ chuyển về ca mặc định của công ty. Bảng công đã tính không thay đổi.',
-                      okText: 'Xoá ca',
-                      okButtonProps: { danger: true },
-                      cancelText: 'Huỷ',
-                      onOk: async () => {
-                        try {
-                          await remove.mutateAsync(row.id);
-                          message.success('Đã xoá ca làm việc.');
-                        } catch (caught) {
-                          message.error(toUserMessage(caught));
-                        }
-                      },
-                    })
-                  }
-                >
+                <Button size="small" type="text" danger onClick={() => setDeleteTarget(row)}>
                   Xoá
                 </Button>
               </div>
@@ -193,7 +174,6 @@ export function ShiftsTab() {
           canEdit ? (
             <Button
               type="primary"
-              size="large"
               onClick={() =>
                 setEditing({
                   name: 'Hành chính',
@@ -214,12 +194,33 @@ export function ShiftsTab() {
       />
 
       <ShiftFormModal shift={editing} onClose={() => setEditing(null)} />
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        title={`Xoá ca "${deleteTarget?.name ?? ''}"?`}
+        message="Nhân viên đang được phân ca này sẽ chuyển về ca mặc định của công ty. Bảng công đã tính không thay đổi."
+        confirmText="Xoá ca"
+        danger
+        loading={remove.isPending}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={async () => {
+          if (!deleteTarget) return;
+          try {
+            await remove.mutateAsync(deleteTarget.id);
+            toast.success('Đã xoá ca làm việc');
+            setDeleteTarget(null);
+          } catch (caught) {
+            showError(caught);
+          }
+        }}
+      />
     </div>
   );
 }
 
 function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onClose: () => void }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const upsert = useUpsertShift();
   const [draft, setDraft] = useState<Partial<Shift>>({});
 
@@ -240,7 +241,7 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
       open={Boolean(shift)}
       onCancel={onClose}
       title={shift?.id ? `Sửa ca · ${shift.name}` : 'Thêm ca làm việc'}
-      okText="Lưu ca"
+      okText="Lưu"
       cancelText="Huỷ bỏ"
       okButtonProps={{ size: 'large', loading: upsert.isPending, disabled: !value.name }}
       cancelButtonProps={{ size: 'large' }}
@@ -255,10 +256,10 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
             ...value,
             effectiveFrom: value.effectiveFrom ?? new Date().toISOString().slice(0, 10),
           });
-          message.success('Đã lưu ca làm việc.');
+          toast.success('Đã lưu ca làm việc');
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
@@ -266,7 +267,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
         <Field label="Tên ca" htmlFor="s-name">
           <Input
             id="s-name"
-            size="large"
             value={value.name ?? ''}
             onChange={(event) => patch({ name: event.target.value })}
             placeholder="Hành chính"
@@ -276,7 +276,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
         <Field label="Loại ca" htmlFor="s-type">
           <Select
             id="s-type"
-            size="large"
             style={{ width: '100%' }}
             value={value.type ?? 'FIXED'}
             onChange={(type) => patch({ type })}
@@ -292,7 +291,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
           <Field label="Số giờ phải làm mỗi ngày" htmlFor="s-required">
             <InputNumber
               id="s-required"
-              size="large"
               style={{ width: '100%' }}
               min={0}
               addonAfter="phút"
@@ -309,7 +307,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
               <Field label="Giờ vào" htmlFor="s-start">
                 <TimePicker
                   id="s-start"
-                  size="large"
                   format="HH:mm"
                   style={{ width: '100%' }}
                   value={parseTime(value.startTime)}
@@ -319,7 +316,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
               <Field label="Giờ ra" htmlFor="s-end">
                 <TimePicker
                   id="s-end"
-                  size="large"
                   format="HH:mm"
                   style={{ width: '100%' }}
                   value={parseTime(value.endTime)}
@@ -361,7 +357,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
           <Field label="Nghỉ giữa ca" htmlFor="s-break">
             <InputNumber
               id="s-break"
-              size="large"
               style={{ width: '100%' }}
               min={0}
               addonAfter="phút"
@@ -372,7 +367,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
           <Field label="Trễ cho phép" htmlFor="s-late">
             <InputNumber
               id="s-late"
-              size="large"
               style={{ width: '100%' }}
               min={0}
               addonAfter="phút"
@@ -383,7 +377,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
           <Field label="Về sớm cho phép" htmlFor="s-early">
             <InputNumber
               id="s-early"
-              size="large"
               style={{ width: '100%' }}
               min={0}
               addonAfter="phút"
@@ -429,7 +422,6 @@ function ShiftFormModal({ shift, onClose }: { shift: Partial<Shift> | null; onCl
         <Field label="Hiệu lực từ" htmlFor="s-eff">
           <DatePicker
             id="s-eff"
-            size="large"
             format="DD/MM/YYYY"
             style={{ width: '100%' }}
             value={toDayjs(value.effectiveFrom?.slice(0, 10))}
@@ -475,21 +467,3 @@ function parseTime(value: string | null | undefined): Dayjs | null {
   return value ? dayjs(value, 'HH:mm') : null;
 }
 
-function Field({
-  label,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="sf-label-md" htmlFor={htmlFor} style={{ display: 'block', marginBottom: 4 }}>
-        {label}
-      </label>
-      {children}
-    </div>
-  );
-}

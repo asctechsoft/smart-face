@@ -1,12 +1,11 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, Button, Switch } from 'antd';
+import { Alert, Button, Switch } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Icon } from '@/components/Icon';
 import { Can, useCan } from '@/lib/rbac/Can';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { ApprovalFlowDrawer } from './ApprovalFlowDrawer';
 import { RequestTypeFormModal } from './RequestTypeFormModal';
 import {
@@ -17,6 +16,8 @@ import {
   useUpdateRequestType,
   type RequestTypeConfig,
 } from './request-config.api';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { useToast } from '@/components/ui';
 
 /**
  * Cấu hình loại đơn & luồng duyệt — docs/04 mục 4.1 (`FR-WEB-REQ-05`).
@@ -29,7 +30,8 @@ import {
  * bấm — đây là thông tin người ta mở màn hình này để xem.
  */
 export function RequestTypesPage() {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canEdit = useCan('request.configure');
 
   const types = useRequestTypeConfigs();
@@ -51,13 +53,14 @@ export function RequestTypesPage() {
         ...(row.maxDaysPerRequest != null ? { maxDaysPerRequest: row.maxDaysPerRequest } : {}),
         isActive,
       });
-      message.success(
+      toast.success(
+        isActive ? `Đã bật lại "${row.name}"` : `Đã tắt "${row.name}"`,
         isActive
-          ? `Đã bật lại loại đơn "${row.name}".`
-          : `Đã tắt "${row.name}". Nhân viên không tạo đơn loại này nữa; đơn đang chờ duyệt vẫn xử lý bình thường.`,
+          ? 'Nhân viên gửi được đơn loại này từ bây giờ.'
+          : 'Nhân viên không tạo đơn loại này nữa. Đơn đang chờ duyệt vẫn xử lý bình thường.',
       );
     } catch (caught) {
-      message.error(toUserMessage(caught));
+      showError(caught);
     }
   }
 
@@ -203,7 +206,6 @@ export function RequestTypesPage() {
           <Can do="request.configure">
             <Button
               type="primary"
-              size="large"
               icon={<Icon name="add" size={20} />}
               onClick={() => setFormTarget('create')}
             >
@@ -234,7 +236,7 @@ export function RequestTypesPage() {
         emptyDescription="Chưa khai loại đơn thì nhân viên không gửi được đơn nào từ ứng dụng. Bắt đầu với Nghỉ phép, Xin ra ngoài và Bổ sung công."
         emptyAction={
           canEdit ? (
-            <Button type="primary" size="large" onClick={() => setFormTarget('create')}>
+            <Button type="primary" onClick={() => setFormTarget('create')}>
               Thêm loại đơn
             </Button>
           ) : undefined

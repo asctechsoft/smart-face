@@ -224,7 +224,8 @@ Component **không bao giờ tham chiếu trực tiếp vào ramp**. Chúng ch�
 | `body-sm` | Inter | 400 | 14 / 20 | 0 | Chữ phụ, mô tả, nhãn chip |
 | `label-lg` | Inter | 600 | 14 / 20 | +0.7 | Chữ nút `sm`, tên người trong bảng |
 | `label-lg-strong` | Inter | 700 | 14 / 20 | 0 | Tiêu đề toast, liên kết hành động |
-| `label-md` | Inter | 600 | 12 / 16 | +0.6 | **Nhãn trường form** (VIẾT HOA) |
+| `field-label` | Inter | 600 | 13 / 18 | 0 | **Nhãn trường form và bộ lọc** (chữ thường) |
+| `label-md` | Inter | 600 | 12 / 16 | +0.6 | Nhãn thẻ chỉ số, micro-label trong bảng (VIẾT HOA) |
 | `label-md-caps` | Inter | 700 | 12 / 16 | +0.6 | Header bảng (VIẾT HOA) |
 | `label-sm` | Inter | 500 | 12 / 16 | 0 | Chữ badge, nhãn nhỏ |
 | `caption` | Inter | 400 | 10 / 15 | 0 | Dòng thời gian, chú thích |
@@ -234,9 +235,16 @@ Component **không bao giờ tham chiếu trực tiếp vào ramp**. Chúng ch�
 
 1. **Chữ càng to, giãn chữ càng âm.** 40px → −0.8 · 32px → −0.64 · ≤24px → 0 hoặc dương.
 2. **Chữ nhỏ viết hoa bắt buộc giãn chữ dương.** 12px hoa → +0.6 · 10px hoa → +0.5. Viết hoa mà `letter-spacing: 0` là lỗi.
-3. **Không có weight 800/900.** Thang dừng ở 700.
-4. **Không tạo cỡ chữ mới.** Cần cỡ khác → dùng bậc gần nhất.
-5. **Chữ mặc định `on-surface`, chữ phụ `on-surface-variant`.** `on-surface-muted` (`#6F7974`) **chỉ** dùng cho placeholder và chữ disabled — không dùng cho nội dung đọc được.
+3. **Nhãn ô nhập KHÔNG viết hoa.** Tiếng Việt xếp dấu thanh và dấu mũ chồng lên nhau
+   (`ữ`, `ắ`, `ề`); ở 12px viết hoa, phần dấu bị đẩy sát mép trên và chen vào dòng
+   trước, đồng thời chữ in xoá mất hình dạng từ — thứ giúp mắt nhận ra "Phòng ban"
+   mà không phải đọc từng chữ cái. Nhãn ô nhập là chỗ đọc sai thì điền sai, nên
+   dùng `field-label` (13px chữ thường, màu `on-surface`).
+   Chữ in vẫn giữ ở `label-md` cho **nhãn thẻ chỉ số** và **micro-label trong
+   bảng**: chuỗi ngắn, đọc lướt, và ở đó chữ in giúp tách nhãn khỏi con số bên cạnh.
+4. **Không có weight 800/900.** Thang dừng ở 700.
+5. **Không tạo cỡ chữ mới.** Cần cỡ khác → dùng bậc gần nhất.
+6. **Chữ mặc định `on-surface`, chữ phụ `on-surface-variant`.** `on-surface-muted` (`#6F7974`) **chỉ** dùng cho placeholder và chữ disabled — không dùng cho nội dung đọc được.
 
 ---
 
@@ -357,6 +365,17 @@ Bulk action bar dùng `z-sticky`; FAB dùng `z-sticky`.
 - `< lg`: bảng chuyển sang dạng card xếp dọc (dùng "dòng bảng dạng card" ở mục 11.10), drawer chiếm toàn bộ bề rộng.
 - `< md`: modal chiếm toàn màn hình, bo góc về `0`.
 
+**Kích thước khung cố định** (token trong `tokens.css`):
+
+| Token | Giá trị | Ghi chú |
+|---|---|---|
+| `--sf-sidenav-width` | `256px` | |
+| `--sf-topbar-height` | `56px` | Chứa hai dòng: tên trang (`title-sm`) + ngày (`caption`) |
+| `--sf-content-max-width` | `1440px` | Áp từ `2xl` |
+
+⚠ Chiều cao thanh trên cùng đi theo nhịp control ở mục 11.1. Đổi `controlHeight`
+thì xem lại con số này — thanh 64px trên nền control 32px trông rỗng ở giữa.
+
 ---
 
 ## 9. Biểu tượng (Icons)
@@ -416,7 +435,15 @@ Dùng `:focus-visible` chứ **không** dùng `:focus` — tránh hiện vòng f
 
 ### 10.2. Vùng chạm
 
-Mọi phần tử tương tác trên mobile phải có vùng chạm **≥ 44 × 44px**. Phần tử nhìn nhỏ hơn thì mở rộng bằng pseudo-element trong suốt:
+Mọi phần tử tương tác trên **thiết bị cảm ứng** phải có vùng chạm **≥ 44 × 44px**.
+
+Ranh giới là **thiết bị trỏ**, không phải bề rộng màn hình: `@media (pointer: coarse)`
+trong `components.css` nâng toàn bộ control lên `44px`, còn trên desktop chúng giữ
+mật độ gọn ở mục 11.1. Một tablet 1024px nằm ngang rộng hơn cả laptop nhỏ nhưng
+vẫn bấm bằng ngón tay, nên breakpoint bề rộng phân loại sai đúng nhóm thiết bị
+cần được bảo vệ nhất.
+
+Phần tử nhìn nhỏ hơn thì mở rộng bằng pseudo-element trong suốt:
 
 ```css
 .sf-touch-target { position: relative; }
@@ -436,13 +463,27 @@ Bắt buộc áp dụng cho: checkbox `24px`, radio `24px`, **nút đóng toast 
 
 **Ba kích thước:**
 
-| Size | Cao | Padding ngang | Radius | Chữ |
-|---|---|---|---|---|
-| `sm` | `36px` | `16px` | `8px` | `label-lg` (Inter 600/14, +0.7) |
-| `md` | `44px` | `24px` | `12px` | `title-sm` (Inter 700/16) |
-| `lg` | `52px` | `24px` | `12px` | `title-sm` (Inter 700/16) |
+| Size | Cao (con trỏ) | Cao (cảm ứng) | Padding ngang | Radius | Chữ |
+|---|---|---|---|---|---|
+| `sm` | `28px` | `40px` | `12px` | `6px` | Inter 600/13, +0.5 |
+| `md` | `32px` | `44px` | `16px` | `8px` | Inter 700/14 |
+| `lg` | `40px` | `44px` | `20px` | `8px` | Inter 700/14 |
 
-> `md` là mặc định — `44px` đạt đúng ngưỡng vùng chạm. `sm` chỉ dùng trong bảng và thanh công cụ. `lg` dùng cho nút chính của modal và drawer.
+> `md` là mặc định. `sm` chỉ dùng trong bảng và thanh công cụ. `lg` dùng cho nút
+> chính của modal và drawer — **không dùng ở cấp trang**.
+
+**Hai cột chiều cao là có chủ đích.** Đây là công cụ quản trị dùng trên desktop,
+màn hình đặc dữ liệu: một thanh lọc bốn ô cộng một bảng hai mươi dòng. Ở mật độ
+đó, control `44px` đẩy nội dung thật xuống dưới nếp gấp.
+
+Nhưng ngón tay không trỏ chính xác như chuột. Vì vậy `components.css` có khối
+`@media (pointer: coarse)` nâng mọi control lên `44px` khi thiết bị nhập là ngón
+tay — giữ đúng sàn vùng chạm ở mục 10.2 và yêu cầu dùng được trên tablet ở
+docs/04 mục 12.4.
+
+Dùng `pointer: coarse` chứ **không** dùng breakpoint bề rộng: một tablet 1024px
+nằm ngang rộng hơn cả laptop nhỏ nhưng vẫn bấm bằng ngón tay. Bề rộng màn hình
+không nói gì về thiết bị trỏ.
 
 **Sáu biến thể** (mọi ô đều đã kiểm chứng tương phản):
 
@@ -521,8 +562,8 @@ Mục trong dropdown: cao `40px`, hover `neutral-100`, mục đang chọn nền 
 | Disabled | `neutral-200` | `1px neutral-300` | `neutral-500` |
 | Readonly | `neutral-100` | `1px neutral-300` | `on-surface-variant` |
 
-Cao `42px`, radius `12px`, padding `8px 12px` (có icon: `8px 40px`).
-Nhãn phía trên: `label-md` VIẾT HOA `on-surface-variant`, cách input `4px`.
+Cao `32px` (cảm ứng: `44px`), radius `8px`, padding `4px 12px` (có icon: `4px 40px`). Chữ trong ô `14px` — chữ chạy `16px` của mục 3.2 là cho đoạn văn, nhét vào control `32px` chỉ còn 3px đệm.
+Nhãn phía trên: `field-label` chữ thường `on-surface`, cách input `4px` — xem quy tắc 3 ở mục 3.3.
 Placeholder: `body-md` `neutral-500`.
 **Chữ báo lỗi:** `body-sm` màu `error-700` (8.99:1), đặt dưới input cách `4px`, kèm icon `error` `16px`.
 
@@ -541,7 +582,7 @@ Placeholder: `body-md` `neutral-500`.
 
 ### 11.6. Chip / Pill lọc
 
-`radius-full`, padding `8px 16px`, cao `38px`, chữ `body-sm`.
+`radius-full`, padding `6px 14px`, cao `32px` (cảm ứng: `44px`), chữ `body-sm`.
 
 | Trạng thái | Nền | Viền | Chữ |
 |---|---|---|---|
@@ -672,18 +713,38 @@ Yêu cầu tiếp cận giống modal.
 
 ### 11.15. Sidenav
 
-Rộng `256px`, nền `neutral-100`, padding `24px 16px`.
+Rộng `256px`, nền `neutral-100`, padding `16px 12px`, cách nhau giữa các nhóm `16px`.
 Logo `title-lg` (Jakarta 700/20) `teal-700`; phụ đề `label-md` `on-surface-variant`.
-Mục nav: cao `48px`, `radius-sm`, padding `12px 16px`, gap `12px`, cách nhau `8px`.
+
+Mục nav: cao **`36px`** (cảm ứng: `44px`), `radius-sm`, padding `8px 12px`,
+gap icon–chữ `10px`, cách nhau `2px` (cảm ứng: `4px`). Chữ `body-sm` (14px).
 
 | Trạng thái | Nền | Chữ + icon |
 |---|---|---|
-| Thường | trong suốt | `on-surface-variant`, `body-md` |
-| Hover | `neutral-200` | `on-surface`, `body-md` |
-| **Active** | `amber-500` | `amber-900`, Inter 700/16 — 4.55:1 |
+| Thường | trong suốt | `on-surface-variant`, `body-sm` |
+| Hover | `neutral-200` | `on-surface`, `body-sm` |
+| **Active** | `amber-500` | `amber-900`, Inter 700/14 — 4.55:1 |
 | Active + hover | `amber-400` | `amber-900` — 5.29:1 |
 
+**Vì sao mục nav không cao 48px như control là 32px.** Mục đang chọn được tô nền
+`amber-500` đặc, nên nó là **khối màu lớn nhất trên toàn màn hình**. Ở `48px` với
+chữ 16px, khối đó nặng hơn cả tiêu đề trang và kéo mắt về phía thanh điều hướng —
+trong khi điều hướng là thứ người dùng nhìn một lần rồi thôi, còn dữ liệu mới là
+thứ họ ở lại với nó. `36px` giữ được sự hiện diện của mục đang chọn mà không
+tranh chấp với nội dung.
+
+⚠ **Vị trí khối `@media (pointer: coarse)` của sidenav.** Nó nằm ở cuối
+`global.css`, KHÔNG nằm cùng các control khác trong `components.css`. Lý do:
+`components.css` được `@import` ở đầu `global.css`, nên luật của nó đứng trước
+trong thứ tự nguồn; media query không cộng thêm đặc thù, nên `.sf-nav-item` 36px
+sẽ thắng và phần nâng vùng chạm im lặng vô tác dụng — lỗi chỉ lộ ra khi cầm
+tablet lên thử.
+
 Dùng `<nav>` + `<ul>`; mục đang mở có `aria-current="page"`.
+
+**Menu thả xuống** (`Dropdown` của Ant Design, dùng cho menu thao tác trên dòng
+bảng và menu tài khoản) theo nhịp control chứ không theo nhịp sidenav: cao
+`32px`, chữ 14px, `radius-xs`.
 
 ### 11.16. FAB
 

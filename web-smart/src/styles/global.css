@@ -205,10 +205,10 @@ body {
 .sf-sidenav {
   width: var(--sf-sidenav-width);
   background: var(--sf-neutral-100);
-  padding: 24px 16px;
+  padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px;
   height: 100%;
   overflow-y: auto;
 }
@@ -219,19 +219,29 @@ body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
 }
 
+/*
+ * Mục điều hướng — 36px, cùng nhịp với control 32px ở mục 11.1.
+ *
+ * Mục đang chọn được tô nền amber đặc, nên nó là KHỐI MÀU LỚN NHẤT trên màn
+ * hình. Ở 48px với chữ 16px, khối đó nặng hơn cả tiêu đề trang và kéo mắt về
+ * phía thanh điều hướng thay vì về phía dữ liệu — trong khi điều hướng là thứ
+ * người dùng chỉ nhìn một lần rồi thôi.
+ *
+ * Vùng chạm 44px được khôi phục ở khối `pointer: coarse` cuối file (mục 10.2).
+ */
 .sf-nav-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 48px;
-  padding: 12px 16px;
+  gap: 10px;
+  height: 36px;
+  padding: 8px 12px;
   border-radius: 8px;
   color: var(--sf-on-surface-variant);
-  font-size: 16px;
-  line-height: 24px;
+  font-size: 14px;
+  line-height: 20px;
   text-decoration: none;
   transition: background-color var(--sf-motion-instant), color var(--sf-motion-instant);
 }
@@ -258,8 +268,33 @@ body {
   letter-spacing: 0.6px;
   text-transform: uppercase;
   color: var(--sf-on-surface-variant);
-  padding: 0 16px;
+  padding: 0 12px;
   margin-bottom: 4px;
+}
+
+/*
+ * Vùng chạm của mục điều hướng — mục 10.2.
+ *
+ * Khối này BẮT BUỘC nằm ở đây chứ không ở `components.css` cùng các control
+ * khác: file đó được `@import` ở đầu tệp này, nên luật của nó đứng TRƯỚC trong
+ * thứ tự nguồn. Media query không cộng thêm đặc thù, nên `.sf-nav-item` 36px
+ * bên trên sẽ thắng và phần nâng vùng chạm im lặng vô tác dụng — loại lỗi chỉ
+ * lộ ra khi cầm tablet lên thử, không có cảnh báo nào từ trình biên dịch.
+ *
+ * Mục điều hướng là phần tử bị bấm nhiều nhất trên tablet, và bấm trượt sang
+ * mục bên cạnh nghĩa là mở nhầm hẳn một màn hình khác.
+ */
+@media (pointer: coarse) {
+  .sf-nav-item {
+    height: 44px;
+    padding-block: 12px;
+    font-size: 16px;
+    line-height: 20px;
+  }
+
+  .sf-nav-list {
+    gap: 4px;
+  }
 }
 
 /* ===========================================================================
@@ -392,8 +427,16 @@ body {
   border-color: var(--sf-teal-900) !important;
 }
 
-/* Header bảng dính khi cuộn dọc — docs/16 mục 11.10. */
+/*
+ * Header bảng — docs/16 mục 11.10: cao `40px`, padding `12px 24px`.
+ *
+ * `cellPaddingBlock: 16` trong theme áp cho CẢ header lẫn ô dữ liệu, nên nếu
+ * không đặt lại ở đây thì header thành 16 + 16 + 16 = 48px. Ô dữ liệu vẫn giữ
+ * 16px vì chúng chứa avatar hai dòng và cần khoảng thở đó; header chỉ có một
+ * dòng chữ 12px nên 12px là đủ.
+ */
 .ant-table-thead > tr > th {
+  padding-block: 12px !important;
   font-weight: 700;
   font-size: 12px;
   line-height: 16px;

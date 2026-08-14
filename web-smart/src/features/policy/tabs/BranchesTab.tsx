@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, Button, Input, InputNumber, Modal, Select, Slider } from 'antd';
+import { Alert, Button, Input, InputNumber, Modal, Select, Slider } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
 import { Icon } from '@/components/Icon';
 import { useCan } from '@/lib/rbac/Can';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useBranches, type Branch } from '@/features/shared/org.api';
 import { useUpsertBranch } from '../policy.api';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Chi nhánh & geofence — `FR-WEB-POL-09`, docs/04 mục 11.1.
@@ -121,7 +122,7 @@ export function BranchesTab() {
         emptyDescription="Khai ít nhất một chi nhánh kèm toạ độ để hệ thống biết nhân viên đang ở đâu khi chấm công."
         emptyAction={
           canEdit ? (
-            <Button type="primary" size="large" onClick={() => setEditing({ radiusMeters: 100 })}>
+            <Button type="primary" onClick={() => setEditing({ radiusMeters: 100 })}>
               Thêm chi nhánh
             </Button>
           ) : undefined
@@ -134,7 +135,8 @@ export function BranchesTab() {
 }
 
 function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; onClose: () => void }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const upsert = useUpsertBranch();
   const [draft, setDraft] = useState<Partial<Branch>>({});
 
@@ -149,7 +151,7 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
       open={Boolean(branch)}
       onCancel={onClose}
       title={branch?.id ? `Sửa chi nhánh · ${branch.name}` : 'Thêm chi nhánh'}
-      okText="Lưu chi nhánh"
+      okText="Lưu"
       cancelText="Huỷ bỏ"
       okButtonProps={{ size: 'large', loading: upsert.isPending, disabled: !value.name }}
       cancelButtonProps={{ size: 'large' }}
@@ -161,21 +163,20 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
       onOk={async () => {
         try {
           await upsert.mutateAsync(value);
-          message.success('Đã lưu chi nhánh.');
+          toast.success('Đã lưu chi nhánh');
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-label-md" htmlFor="b-name" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="b-name" style={{ display: 'block', marginBottom: 4 }}>
             Tên chi nhánh
           </label>
           <Input
             id="b-name"
-            size="large"
             value={value.name ?? ''}
             onChange={(event) => patch({ name: event.target.value })}
             placeholder="Văn phòng Hà Nội"
@@ -183,12 +184,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="b-addr" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="b-addr" style={{ display: 'block', marginBottom: 4 }}>
             Địa chỉ
           </label>
           <Input
             id="b-addr"
-            size="large"
             value={value.address ?? ''}
             onChange={(event) => patch({ address: event.target.value })}
             placeholder="123 Trần Duy Hưng, Cầu Giấy"
@@ -197,12 +197,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <div>
-            <label className="sf-label-md" htmlFor="b-lat" style={{ display: 'block', marginBottom: 4 }}>
+            <label className="sf-field__label" htmlFor="b-lat" style={{ display: 'block', marginBottom: 4 }}>
               Vĩ độ
             </label>
             <InputNumber
               id="b-lat"
-              size="large"
               style={{ width: '100%' }}
               step={0.000001}
               value={value.latitude ?? undefined}
@@ -211,12 +210,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
             />
           </div>
           <div>
-            <label className="sf-label-md" htmlFor="b-lng" style={{ display: 'block', marginBottom: 4 }}>
+            <label className="sf-field__label" htmlFor="b-lng" style={{ display: 'block', marginBottom: 4 }}>
               Kinh độ
             </label>
             <InputNumber
               id="b-lng"
-              size="large"
               style={{ width: '100%' }}
               step={0.000001}
               value={value.longitude ?? undefined}
@@ -227,7 +225,7 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
         </div>
 
         <div>
-          <label className="sf-label-md" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" style={{ display: 'block', marginBottom: 4 }}>
             Bán kính cho phép: {value.radiusMeters ?? 100}m
           </label>
           <Slider
@@ -245,12 +243,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="b-bssid" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="b-bssid" style={{ display: 'block', marginBottom: 4 }}>
             Địa chỉ MAC bộ phát WiFi (BSSID)
           </label>
           <Select
             id="b-bssid"
-            size="large"
             mode="tags"
             style={{ width: '100%' }}
             value={value.wifiBssids ?? []}
@@ -265,12 +262,11 @@ function BranchFormModal({ branch, onClose }: { branch: Partial<Branch> | null; 
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="b-ip" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="b-ip" style={{ display: 'block', marginBottom: 4 }}>
             Dải IP công cộng của văn phòng (CIDR)
           </label>
           <Select
             id="b-ip"
-            size="large"
             mode="tags"
             style={{ width: '100%' }}
             value={value.allowedIpCidrs ?? []}

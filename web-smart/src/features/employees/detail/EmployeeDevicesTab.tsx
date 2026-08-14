@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, Button } from 'antd';
+import { Alert, Button } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -7,8 +7,9 @@ import { ReasonDialog } from '@/components/ReasonDialog';
 import { Can } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatDateTime, formatRelativeDay } from '@/lib/utils/date';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useEmployeeDevices, useRevokeDevice, type DeviceBinding } from '../employees.api';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Thiết bị đã liên kết — docs/04 mục 11.2 (`FR-WEB-INV-06`).
@@ -30,7 +31,8 @@ export function EmployeeDevicesTab({
   employeeName: string;
 }) {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
 
   const devices = useEmployeeDevices(employeeId);
   const revoke = useRevokeDevice();
@@ -160,10 +162,10 @@ export function EmployeeDevicesTab({
           if (!target) return;
           try {
             await revoke.mutateAsync({ employeeId, bindingId: target.id, reason });
-            message.success('Đã thu hồi liên kết thiết bị.');
+            toast.success('Đã thu hồi liên kết thiết bị');
             setTarget(null);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />

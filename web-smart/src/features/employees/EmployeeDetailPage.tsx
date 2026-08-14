@@ -1,22 +1,24 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Alert, App as AntApp, Breadcrumb, Button, Tabs } from 'antd';
+import { Alert, Breadcrumb, Button, Tabs } from 'antd';
 import { PageHeader } from '@/components/PageHeader';
 import { DetailField, DetailGrid, DetailSection } from '@/components/DetailField';
 import { StatusBadge, employeeStatusTone } from '@/components/StatusBadge';
 import { ReasonDialog } from '@/components/ReasonDialog';
-import { EmptyState, ErrorState } from '@/components/ui';
+import { EmptyState } from '@/components/ui';
 import { CardSkeleton } from '@/components/Skeleton';
 import { Icon } from '@/components/Icon';
 import { Can, useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { EMPLOYEE_STATUS_LABEL, ROLE_LABEL } from '@/config/constants';
 import { formatDateTime, formatDay, formatRelativeDay } from '@/lib/utils/date';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { EmployeeFormDrawer } from './EmployeeFormDrawer';
 import { EmployeeDevicesTab } from './detail/EmployeeDevicesTab';
 import { EmployeeHistoryTab } from './detail/EmployeeHistoryTab';
 import { useEmployee, useResetBiometric } from './employees.api';
+import { ApiErrorState } from '@/components/ApiErrorState';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Hồ sơ nhân viên — docs/04 mục 8 (`FR-WEB-HR-01`, `FR-WEB-HR-02`).
@@ -32,7 +34,8 @@ export function EmployeeDetailPage() {
   const { id = '' } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canEdit = useCan('employee.edit');
 
   const [searchParams, setSearchParams] = useSearchParams();
@@ -54,9 +57,10 @@ export function EmployeeDetailPage() {
 
   if (employee.error) {
     return (
-      <ErrorState
-        description={toUserMessage(employee.error)}
+      <ApiErrorState
+        error={employee.error}
         onRetry={() => void employee.refetch()}
+        fallbackDescription="Không đọc được hồ sơ nhân viên này."
       />
     );
   }
@@ -102,7 +106,6 @@ export function EmployeeDetailPage() {
           <>
             <Can do="biometric.reset">
               <Button
-                size="large"
                 icon={<Icon name="face_retouching_off" size={20} />}
                 onClick={() => setResetOpen(true)}
                 disabled={faceCount === 0 && !hasFingerprint}
@@ -113,7 +116,6 @@ export function EmployeeDetailPage() {
             {canEdit ? (
               <Button
                 type="primary"
-                size="large"
                 icon={<Icon name="edit" size={20} />}
                 onClick={() => setEditOpen(true)}
               >
@@ -261,10 +263,13 @@ export function EmployeeDetailPage() {
         onConfirm={async (reason) => {
           try {
             await resetBiometric.mutateAsync({ id, reason });
-            message.success(`Đã đặt lại sinh trắc học. ${data.fullName} nhận được thông báo đăng ký lại.`);
+            toast.success(
+              'Đã đặt lại sinh trắc học',
+              `${data.fullName} nhận được thông báo và cần đăng ký lại khuôn mặt trước ca làm tiếp theo.`,
+            );
             setResetOpen(false);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />

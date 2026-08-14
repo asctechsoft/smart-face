@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Alert, App as AntApp, Button, DatePicker, Drawer, Select, Switch, Tag } from 'antd';
-import { TextInput } from '@/components/ui';
+import { useNavigate } from 'react-router-dom';
+import { Alert, Button, DatePicker, Drawer, Select, Switch, Tag } from 'antd';
 import { Controller, useForm } from 'react-hook-form';
 import { Icon } from '@/components/Icon';
 import { ROLE_LABEL, SystemRole } from '@/config/constants';
@@ -15,6 +15,8 @@ import {
   type CreateEmployeePayload,
   type Employee,
 } from './employees.api';
+import { Field, TextInput, useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 interface FormValues {
   fullName: string;
@@ -53,7 +55,9 @@ export function EmployeeFormDrawer({
   employee?: Employee;
   onClose: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const navigate = useNavigate();
+  const toast = useToast();
+  const showError = useErrorToast();
   const departments = useDepartments();
   const branches = useBranches();
 
@@ -115,14 +119,14 @@ export function EmployeeFormDrawer({
 
   async function generateCode() {
     if (!fullName.trim()) {
-      message.warning('Nhập họ tên trước khi sinh mã.');
+      toast.warning('Nhập họ tên trước khi sinh mã');
       return;
     }
     try {
       const result = await previewCode.mutateAsync(fullName.trim());
       setValue('employeeCode', result.employeeCode, { shouldDirty: true });
     } catch (caught) {
-      message.error(toUserMessage(caught));
+      showError(caught);
     }
   }
 
@@ -147,15 +151,19 @@ export function EmployeeFormDrawer({
 
     try {
       if (mode === 'create') {
-        await create.mutateAsync({ ...payload, sendInvite: values.sendInvite });
-        message.success(
+        const created = await create.mutateAsync({ ...payload, sendInvite: values.sendInvite });
+        toast.success(
+          `Đã tạo hồ sơ ${values.fullName.trim()}`,
           values.sendInvite
-            ? `Đã tạo hồ sơ và gửi tin nhắn mời tới ${values.phone}.`
-            : 'Đã tạo hồ sơ. Nhớ gửi lời mời khi nhân viên sẵn sàng.',
+            ? `Tin nhắn mời đã gửi tới ${values.phone}. Nhân viên tự hoàn tất đăng ký khuôn mặt trên ứng dụng.`
+            : 'Chưa gửi lời mời — nhân viên chưa đăng nhập được cho tới khi bạn gửi.',
+          // Vừa tạo xong thường là lúc cần xếp ca hoặc gán quyền cho người đó,
+          // mà cả hai đều bắt đầu từ hồ sơ chi tiết.
+          { label: 'Mở hồ sơ', onClick: () => navigate(`/employees/${created.id}`) },
         );
       } else if (employee) {
         await update.mutateAsync({ id: employee.id, ...payload });
-        message.success('Đã cập nhật hồ sơ.');
+        toast.success('Đã cập nhật hồ sơ');
       }
       onClose();
     } catch (caught) {
@@ -229,7 +237,6 @@ export function EmployeeFormDrawer({
             />
             {!codeLocked ? (
               <Button
-                size="large"
                 onClick={() => void generateCode()}
                 loading={previewCode.isPending}
                 icon={<Icon name="auto_awesome" size={18} />}
@@ -266,7 +273,6 @@ export function EmployeeFormDrawer({
                 <Select
                   {...field}
                   id="emp-dept"
-                  size="large"
                   allowClear
                   loading={departments.isLoading}
                   placeholder="Chọn phòng ban"
@@ -288,7 +294,6 @@ export function EmployeeFormDrawer({
                 <Select
                   {...field}
                   id="emp-branch"
-                  size="large"
                   allowClear
                   loading={branches.isLoading}
                   placeholder="Chọn chi nhánh"
@@ -316,7 +321,6 @@ export function EmployeeFormDrawer({
                 <Select
                   {...field}
                   id="emp-contract"
-                  size="large"
                   style={{ width: '100%' }}
                   options={CONTRACT_TYPES.map((value) => ({ value, label: value }))}
                 />
@@ -332,7 +336,6 @@ export function EmployeeFormDrawer({
             render={({ field }) => (
               <DatePicker
                 id="emp-joined"
-                size="large"
                 format="DD/MM/YYYY"
                 style={{ width: '100%' }}
                 value={toDayjs(field.value)}
@@ -350,7 +353,6 @@ export function EmployeeFormDrawer({
               <Select
                 {...field}
                 id="emp-roles"
-                size="large"
                 mode="multiple"
                 style={{ width: '100%' }}
                 options={[
@@ -374,7 +376,6 @@ export function EmployeeFormDrawer({
                 <Select
                   {...field}
                   id="emp-scope"
-                  size="large"
                   mode="multiple"
                   style={{ width: '100%' }}
                   placeholder="Chọn các phòng ban người này quản lý"
@@ -436,35 +437,3 @@ export function EmployeeFormDrawer({
   );
 }
 
-function Field({
-  label,
-  htmlFor,
-  error,
-  required,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  error?: string;
-  required?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="sf-label-md" htmlFor={htmlFor} style={{ display: 'block', marginBottom: 4 }}>
-        {label}
-        {required ? <span style={{ color: 'var(--sf-error-600)' }}> *</span> : null}
-      </label>
-      {children}
-      {error ? (
-        <p
-          role="alert"
-          className="sf-body-sm"
-          style={{ color: 'var(--sf-error-700)', margin: '4px 0 0' }}
-        >
-          {error}
-        </p>
-      ) : null}
-    </div>
-  );
-}

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { App as AntApp, Button, DatePicker, Modal, Radio, Input, Select } from 'antd';
+import { Button, DatePicker, Modal, Radio, Input, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
@@ -20,9 +20,10 @@ import {
 import { formatDateTime, firstDayOfMonth, todayWorkDate, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatNumber } from '@/lib/utils/format';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { AttendanceDetailDrawer } from '@/features/attendance/AttendanceDetailDrawer';
 import { useFraudFlags, useFraudStats, useReviewFlag, type FraudFlag, type FraudQuery } from './fraud.api';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { useToast } from '@/components/ui';
 
 const { RangePicker } = DatePicker;
 
@@ -38,7 +39,8 @@ type Decision = 'KEEP' | 'VOID' | 'ESCALATE';
  */
 export function FraudPage() {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canReview = useCan('fraud.review');
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -301,14 +303,15 @@ export function FraudPage() {
           if (!reviewTarget) return;
           try {
             await review.mutateAsync({ id: reviewTarget.id, decision, reason });
-            message.success(
+            toast.success(
+              decision === 'VOID' ? 'Đã huỷ công của lượt này' : 'Đã ghi nhận quyết định',
               decision === 'VOID'
-                ? 'Đã huỷ công của lượt chấm công này và tính lại bảng công.'
-                : 'Đã ghi nhận quyết định.',
+                ? 'Bảng công của ngày đó đang được tính lại.'
+                : undefined,
             );
             setReviewTarget(null);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />
@@ -363,7 +366,7 @@ function ReviewFlagModal({
           </div>
 
           <div>
-            <label className="sf-label-md" style={{ display: 'block', marginBottom: 8 }}>
+            <label className="sf-field__label" style={{ display: 'block', marginBottom: 8 }}>
               Quyết định
             </label>
             <Radio.Group
@@ -393,7 +396,7 @@ function ReviewFlagModal({
           </div>
 
           <div>
-            <label className="sf-label-md" htmlFor="fr-reason" style={{ display: 'block', marginBottom: 4 }}>
+            <label className="sf-field__label" htmlFor="fr-reason" style={{ display: 'block', marginBottom: 4 }}>
               Lý do (bắt buộc)
             </label>
             <Input.TextArea

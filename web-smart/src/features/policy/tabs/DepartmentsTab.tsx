@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { App as AntApp, Button, Input, Modal, Select } from 'antd';
+import { Button, Input, Modal, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
 import { Icon } from '@/components/Icon';
 import { useCan } from '@/lib/rbac/Can';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useBranches, useDepartments, type Department } from '@/features/shared/org.api';
 import { useUpsertDepartment } from '../policy.api';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /**
  * Phòng ban.
@@ -95,7 +96,7 @@ export function DepartmentsTab() {
         emptyDescription="Phòng ban là đơn vị phân quyền của hệ thống: vai trò Quản lý chỉ xem được dữ liệu của các phòng ban được giao."
         emptyAction={
           canEdit ? (
-            <Button type="primary" size="large" onClick={() => setEditing({})}>
+            <Button type="primary" onClick={() => setEditing({})}>
               Thêm phòng ban
             </Button>
           ) : undefined
@@ -120,7 +121,8 @@ function DepartmentFormModal({
   allDepartments: Department[];
   onClose: () => void;
 }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const branches = useBranches();
   const upsert = useUpsertDepartment();
   const [draft, setDraft] = useState<Partial<Department>>({});
@@ -132,7 +134,7 @@ function DepartmentFormModal({
       open={Boolean(department)}
       onCancel={onClose}
       title={department?.id ? `Sửa phòng ban · ${department.name}` : 'Thêm phòng ban'}
-      okText="Lưu phòng ban"
+      okText="Lưu"
       cancelText="Huỷ bỏ"
       okButtonProps={{ size: 'large', loading: upsert.isPending, disabled: !value.name }}
       cancelButtonProps={{ size: 'large' }}
@@ -143,21 +145,20 @@ function DepartmentFormModal({
       onOk={async () => {
         try {
           await upsert.mutateAsync(value);
-          message.success('Đã lưu phòng ban.');
+          toast.success('Đã lưu phòng ban');
           onClose();
         } catch (caught) {
-          message.error(toUserMessage(caught));
+          showError(caught);
         }
       }}
     >
       <div style={{ display: 'grid', gap: 16 }}>
         <div>
-          <label className="sf-label-md" htmlFor="d-name" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="d-name" style={{ display: 'block', marginBottom: 4 }}>
             Tên phòng ban
           </label>
           <Input
             id="d-name"
-            size="large"
             value={value.name ?? ''}
             onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))}
             placeholder="Kỹ thuật"
@@ -165,12 +166,11 @@ function DepartmentFormModal({
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="d-branch" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="d-branch" style={{ display: 'block', marginBottom: 4 }}>
             Thuộc chi nhánh
           </label>
           <Select
             id="d-branch"
-            size="large"
             allowClear
             style={{ width: '100%' }}
             value={value.branchId ?? undefined}
@@ -184,12 +184,11 @@ function DepartmentFormModal({
         </div>
 
         <div>
-          <label className="sf-label-md" htmlFor="d-parent" style={{ display: 'block', marginBottom: 4 }}>
+          <label className="sf-field__label" htmlFor="d-parent" style={{ display: 'block', marginBottom: 4 }}>
             Phòng ban cha
           </label>
           <Select
             id="d-parent"
-            size="large"
             allowClear
             style={{ width: '100%' }}
             value={value.parentId ?? undefined}

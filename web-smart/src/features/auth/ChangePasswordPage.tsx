@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, App as AntApp } from 'antd';
+import { Alert } from 'antd';
 import { useForm } from 'react-hook-form';
 import { AuthShell } from './AuthShell';
-import { Button, Field, PasswordInput } from '@/components/ui';
+import { Button, Field, PasswordInput, useToast } from '@/components/ui';
 import { authApi } from '@/lib/auth/auth.api';
 import {
   changeFirebasePassword,
@@ -37,7 +37,7 @@ interface FormValues {
  */
 export function ChangePasswordPage() {
   const navigate = useNavigate();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
   const { mustChangePassword, applyTokens } = useAuth();
 
   const [error, setError] = useState<string | null>(null);
@@ -66,10 +66,11 @@ export function ChangePasswordPage() {
       });
 
       await applyTokens(result);
-      message.success(
+      toast.success(
+        'Đã đổi mật khẩu',
         result.revokedSessions > 0
-          ? `Đã đổi mật khẩu và thu hồi ${result.revokedSessions} phiên đăng nhập khác.`
-          : 'Đã đổi mật khẩu.',
+          ? `Đã thu hồi ${result.revokedSessions} phiên đăng nhập khác trên các thiết bị cũ.`
+          : undefined,
       );
       navigate('/dashboard', { replace: true });
     } catch (caught) {

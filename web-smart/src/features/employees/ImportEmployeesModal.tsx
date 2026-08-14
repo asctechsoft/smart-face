@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, App as AntApp, Button, Modal, Steps, Switch, Table, Upload } from 'antd';
+import { Alert, Button, Modal, Steps, Switch, Table, Upload } from 'antd';
 import type { UploadFile } from 'antd';
 import { Icon } from '@/components/Icon';
 import { StatusBadge } from '@/components/StatusBadge';
@@ -11,6 +11,7 @@ import {
   type ImportRow,
   type ImportValidationResult,
 } from './employees.api';
+import { useToast } from '@/components/ui';
 
 /**
  * Import nhân viên hàng loạt — docs/04 mục 8.2 (`FR-WEB-HR-10`).
@@ -26,7 +27,7 @@ import {
  * hợp lệ" mà không biết dòng nào sai.
  */
 export function ImportEmployeesModal({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { message } = AntApp.useApp();
+  const toast = useToast();
   const validate = useValidateImport();
   const execute = useExecuteImport();
 
@@ -73,7 +74,7 @@ export function ImportEmployeesModal({ open, onClose }: { open: boolean; onClose
     try {
       const result = await execute.mutateAsync({ rows: validRows, sendInvite });
       setStep(2);
-      message.success(`Đã tạo ${result.createdCount} nhân viên.`);
+      toast.success(`Đã tạo ${result.createdCount} nhân viên`);
 
       if (result.failedCount > 0) {
         downloadCsv(

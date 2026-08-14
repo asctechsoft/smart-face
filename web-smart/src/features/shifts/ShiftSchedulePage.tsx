@@ -1,20 +1,27 @@
 import { useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { App as AntApp, Button, DatePicker, Input, Pagination, Select, Tooltip } from 'antd';
+import { Button, DatePicker, Input, Pagination, Popover, Select, Tooltip } from 'antd';
 import { PageHeader } from '@/components/PageHeader';
 import { FilterBar, FilterField } from '@/components/FilterBar';
-import { EmptyState, ErrorState } from '@/components/ui';
+import { EmptyState } from '@/components/ui';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Icon } from '@/components/Icon';
-import { Can } from '@/lib/rbac/Can';
+import { Can, useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { firstDayOfMonth, lastDayOfMonth, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { useDepartments, toSelectOptions } from '@/features/shared/org.api';
 import { useShifts, type Shift } from '@/features/policy/policy.api';
 import { BulkAssignDrawer } from './BulkAssignDrawer';
-import { useShiftBoard, type ShiftBoardEmployee } from './shifts.api';
+import {
+  useBulkAssignShifts,
+  useClearShiftAssignments,
+  useShiftBoard,
+  type ShiftBoardEmployee,
+} from './shifts.api';
+import { ApiErrorState } from '@/components/ApiErrorState';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /** Trần khoảng ngày do Backend đặt (`MAX_BOARD_DAYS`) — chặn sớm ở đây để báo lỗi tử tế hơn 422. */
 const MAX_DAYS = 62;
@@ -35,14 +42,19 @@ const MAX_DAYS = 62;
  */
 export function ShiftSchedulePage() {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [assignOpen, setAssignOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
+  const canAssign = useCan('shift.assign');
+
   const departments = useDepartments();
   const shifts = useShifts();
+  const assignShifts = useBulkAssignShifts();
+  const clearShifts = useClearShiftAssignments();
 
   const query = useMemo(
     () => ({
@@ -91,7 +103,10 @@ export function ShiftSchedulePage() {
     const nextFrom = from ?? query.from;
     const nextTo = to ?? query.to;
     if (eachDay(nextFrom, nextTo).length > MAX_DAYS) {
-      message.warning(`Khoảng ngày tối đa ${MAX_DAYS} ngày. Chọn lại khoảng ngắn hơn.`);
+      toast.warning(
+        `Khoảng ngày tối đa ${MAX_DAYS} ngày`,
+        'Chọn khoảng ngắn hơn — lịch dài hơn hai tháng thì bảng quá rộng để đọc.',
+      );
       return;
     }
     patchQuery({ from: nextFrom, to: nextTo });
@@ -99,6 +114,39 @@ export function ShiftSchedulePage() {
 
   const employees = board.data?.employees ?? [];
   const allSelected = employees.length > 0 && selectedIds.length === employees.length;
+
+  /**
+   * Đổi ca của một người trong một ngày.
+   *
+   * Dùng lại chính endpoint phân ca hàng loạt với `from = to = ngày đó` và đúng
+   * một nhân viên — không cần endpoint riêng, và quan trọng hơn là đi qua cùng
+   * một đường ghi nên cùng chịu kiểm tra phạm vi phòng ban và cùng ghi audit log.
+   */
+  async function assignOne(employee: ShiftBoardEmployee, date: string, shiftId: string) {
+    try {
+      await assignShifts.mutateAsync({
+        employeeIds: [employee.id],
+        shiftId,
+        from: date,
+        to: date,
+      });
+      toast.success(`Đã đổi ca của ${employee.fullName}`, `Ngày ${date}.`);
+    } catch (caught) {
+      showError(caught);
+    }
+  }
+
+  async function clearOne(employee: ShiftBoardEmployee, date: string) {
+    try {
+      await clearShifts.mutateAsync({ employeeIds: [employee.id], from: date, to: date });
+      toast.success(
+        `Đã xoá phân ca ngày ${date}`,
+        `${employee.fullName} quay về ca mặc định của công ty trong ngày này.`,
+      );
+    } catch (caught) {
+      showError(caught);
+    }
+  }
 
   const activeFilters = ['departmentId', 'q'].filter((key) => searchParams.get(key)).length;
 
@@ -111,7 +159,6 @@ export function ShiftSchedulePage() {
           <Can do="shift.assign">
             <Button
               type="primary"
-              size="large"
               icon={<Icon name="event_repeat" size={20} />}
               onClick={() => setAssignOpen(true)}
             >
@@ -172,7 +219,7 @@ export function ShiftSchedulePage() {
       {board.isLoading && !board.data ? (
         <TableSkeleton columns={8} />
       ) : board.error ? (
-        <ErrorState description={toUserMessage(board.error)} onRetry={() => void board.refetch()} />
+        <ApiErrorState error={board.error} onRetry={() => void board.refetch()} />
       ) : employees.length === 0 ? (
         <EmptyState
           icon="event_busy"
@@ -306,7 +353,16 @@ export function ShiftSchedulePage() {
                                 : undefined,
                           }}
                         >
-                          <ShiftMark shift={shift} employee={employee} date={day.date} />
+                          <ShiftCell
+                            shift={shift}
+                            employee={employee}
+                            date={day.date}
+                            shifts={shifts.data ?? []}
+                            editable={canAssign}
+                            onAssign={(nextShiftId) => void assignOne(employee, day.date, nextShiftId)}
+                            onClear={() => void clearOne(employee, day.date)}
+                            busy={assignShifts.isPending || clearShifts.isPending}
+                          />
                         </td>
                       );
                     })}
@@ -355,48 +411,141 @@ export function ShiftSchedulePage() {
   );
 }
 
-/** Ô lịch: viết tắt tên ca, hover ra tên đầy đủ và giờ làm. */
-function ShiftMark({
+/**
+ * Một ô lịch — bấm được để đổi ca của ĐÚNG người đó, ĐÚNG ngày đó.
+ *
+ * Trên một lưới lịch, phản xạ đầu tiên của người dùng là bấm vào ô. Trước đây ô
+ * chỉ là chữ tĩnh, và cách duy nhất để sửa lịch một người trong một ngày là mở
+ * drawer phân ca hàng loạt rồi khai lại cả ba chiều (ai, ca nào, ngày nào) —
+ * cho một thao tác mà toàn bộ ngữ cảnh đã nằm sẵn dưới con trỏ.
+ *
+ * Người không có quyền xếp ca thấy ô tĩnh như cũ, không phải một nút bấm vào
+ * rồi nhận 403.
+ */
+function ShiftCell({
   shift,
   employee,
   date,
+  shifts,
+  editable,
+  busy,
+  onAssign,
+  onClear,
 }: {
   shift: Shift | undefined;
   employee: ShiftBoardEmployee;
   date: string;
+  shifts: Shift[];
+  editable: boolean;
+  busy: boolean;
+  onAssign: (shiftId: string) => void;
+  onClear: () => void;
 }) {
-  if (!shift) {
+  const [open, setOpen] = useState(false);
+
+  const description = shift
+    ? `${shift.name} · ${shiftHours(shift)}`
+    : 'Chưa phân ca — tính công theo ca mặc định của công ty';
+  const cellLabel = `${employee.fullName}, ngày ${date}: ${description}`;
+
+  const mark = shift ? (
+    <span
+      style={{
+        display: 'inline-block',
+        minWidth: 28,
+        paddingInline: 6,
+        borderRadius: 6,
+        fontSize: 12,
+        lineHeight: '20px',
+        fontWeight: 600,
+        background: shift.crossesMidnight ? 'var(--sf-teal-900, #0F3D33)' : 'var(--sf-teal-700)',
+        color: '#FFFFFF',
+      }}
+    >
+      {abbreviate(shift.name)}
+    </span>
+  ) : (
+    // Dấu "—" thay cho dấu chấm giữa: chấm giữa vừa mờ vừa không mang nghĩa gì,
+    // người dùng đọc thành nhiễu chứ không thành "ô này còn trống".
+    <span className="sf-text-muted">—</span>
+  );
+
+  if (!editable) {
     return (
-      <span className="sf-text-muted" aria-label={`${employee.fullName} ngày ${date}: chưa phân ca`}>
-        ·
-      </span>
+      <Tooltip title={description}>
+        <span aria-label={cellLabel}>{mark}</span>
+      </Tooltip>
     );
   }
 
-  const label =
-    shift.type === 'FLEXIBLE'
-      ? 'Linh hoạt'
-      : `${shift.startTime ?? '—'}–${shift.endTime ?? '—'}${shift.crossesMidnight ? ' (qua đêm)' : ''}`;
-
   return (
-    <Tooltip title={`${shift.name} · ${label}`}>
-      <span
+    <Popover
+      open={open}
+      onOpenChange={setOpen}
+      trigger="click"
+      placement="bottom"
+      title={`${employee.fullName} · ${date}`}
+      content={
+        <div style={{ display: 'grid', gap: 4, minWidth: 220 }}>
+          {shifts.map((option) => (
+            <Button
+              key={option.id}
+              size="small"
+              type={option.id === shift?.id ? 'primary' : 'text'}
+              disabled={busy}
+              style={{ justifyContent: 'flex-start', textAlign: 'left' }}
+              onClick={() => {
+                setOpen(false);
+                onAssign(option.id);
+              }}
+            >
+              {option.name} · {shiftHours(option)}
+            </Button>
+          ))}
+
+          {shift ? (
+            <>
+              <div style={{ height: 1, background: 'var(--sf-outline-variant)', margin: '4px 0' }} />
+              <Button
+                size="small"
+                type="text"
+                danger
+                disabled={busy}
+                style={{ justifyContent: 'flex-start' }}
+                onClick={() => {
+                  setOpen(false);
+                  onClear();
+                }}
+              >
+                Xoá phân ca ngày này
+              </Button>
+            </>
+          ) : null}
+        </div>
+      }
+    >
+      <button
+        type="button"
+        aria-label={`${cellLabel}. Bấm để đổi ca.`}
         style={{
-          display: 'inline-block',
-          minWidth: 28,
-          paddingInline: 6,
+          border: 'none',
+          background: 'none',
+          padding: 4,
           borderRadius: 6,
-          fontSize: 12,
-          lineHeight: '20px',
-          fontWeight: 600,
-          background: shift.crossesMidnight ? 'var(--sf-teal-900, #0F3D33)' : 'var(--sf-teal-700)',
-          color: '#FFFFFF',
+          cursor: busy ? 'progress' : 'pointer',
+          font: 'inherit',
         }}
       >
-        {abbreviate(shift.name)}
-      </span>
-    </Tooltip>
+        {mark}
+      </button>
+    </Popover>
   );
+}
+
+/** "08:00–17:30", "22:00–06:00 (qua đêm)", "Linh hoạt". */
+function shiftHours(shift: Shift): string {
+  if (shift.type === 'FLEXIBLE') return 'linh hoạt';
+  return `${shift.startTime ?? '—'}–${shift.endTime ?? '—'}${shift.crossesMidnight ? ' (qua đêm)' : ''}`;
 }
 
 function ShiftLegend({ shifts }: { shifts: Shift[] }) {

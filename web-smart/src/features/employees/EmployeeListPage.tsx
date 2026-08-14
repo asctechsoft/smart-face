@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { App as AntApp, Button, Dropdown, Input, Select } from 'antd';
+import { Button, Dropdown, Input, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
@@ -13,7 +13,6 @@ import { Can, useCan } from '@/lib/rbac/Can';
 import { EMPLOYEE_STATUS_LABEL, ROLE_LABEL, DEFAULT_PAGE_SIZE } from '@/config/constants';
 import { formatDay } from '@/lib/utils/date';
 import { useAuth } from '@/lib/auth/auth-context';
-import { toUserMessage } from '@/lib/errors/api-error';
 import { useDepartments, useBranches, toSelectOptions } from '@/features/shared/org.api';
 import {
   useEmployeeList,
@@ -26,6 +25,8 @@ import {
 } from './employees.api';
 import { EmployeeFormDrawer } from './EmployeeFormDrawer';
 import { ImportEmployeesModal } from './ImportEmployeesModal';
+import { useToast } from '@/components/ui';
+import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 type LifecycleAction = 'suspend' | 'reactivate' | 'terminate';
 
@@ -43,7 +44,8 @@ type LifecycleAction = 'suspend' | 'reactivate' | 'terminate';
  */
 export function EmployeeListPage() {
   const { timezone } = useAuth();
-  const { message } = AntApp.useApp();
+  const toast = useToast();
+  const showError = useErrorToast();
   const canEdit = useCan('employee.edit');
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -210,9 +212,9 @@ export function EmployeeListPage() {
                 if (key === 'resend') {
                   try {
                     await resendInvite.mutateAsync(row.id);
-                    message.success(`Đã gửi lại tin nhắn mời tới ${row.phone}.`);
+                    toast.success(`Đã gửi lại tin nhắn mời tới ${row.phone}`);
                   } catch (caught) {
-                    message.error(toUserMessage(caught));
+                    showError(caught);
                   }
                 }
                 if (key === 'suspend' || key === 'reactivate' || key === 'terminate') {
@@ -263,7 +265,6 @@ export function EmployeeListPage() {
           <>
             <Can do="employee.import">
               <Button
-                size="large"
                 icon={<Icon name="upload_file" size={20} />}
                 onClick={() => setImportOpen(true)}
               >
@@ -273,7 +274,6 @@ export function EmployeeListPage() {
             <Can do="employee.edit">
               <Button
                 type="primary"
-                size="large"
                 icon={<Icon name="person_add" size={20} />}
                 onClick={() => setFormTarget({ mode: 'create' })}
               >
@@ -347,7 +347,7 @@ export function EmployeeListPage() {
         emptyDescription="Thêm từng người bằng nút Thêm nhân viên, hoặc tải lên file Excel để tạo hàng loạt."
         emptyAction={
           <Can do="employee.edit">
-            <Button type="primary" size="large" onClick={() => setFormTarget({ mode: 'create' })}>
+            <Button type="primary" onClick={() => setFormTarget({ mode: 'create' })}>
               Thêm nhân viên
             </Button>
           </Can>
@@ -382,10 +382,10 @@ export function EmployeeListPage() {
             if (lifecycle.action === 'suspend') await suspend.mutateAsync(payload);
             if (lifecycle.action === 'reactivate') await reactivate.mutateAsync(payload);
             if (lifecycle.action === 'terminate') await terminate.mutateAsync(payload);
-            message.success(`Đã cập nhật trạng thái của ${lifecycle.employee.fullName}.`);
+            toast.success(`Đã cập nhật trạng thái của ${lifecycle.employee.fullName}`);
             setLifecycle(null);
           } catch (caught) {
-            message.error(toUserMessage(caught));
+            showError(caught);
           }
         }}
       />
