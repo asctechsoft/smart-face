@@ -75,6 +75,38 @@ export class CreateRequestDto {
 }
 
 /**
+ * HR / Quản lý tạo đơn THAY MẶT nhân viên (`FR-WEB-REQ-09`).
+ *
+ * Cố ý là DTO RIÊNG, không phải thêm `employeeId?` tuỳ chọn vào
+ * `CreateRequestDto`. Endpoint tự phục vụ (`POST /v1/requests`) mở cho mọi tài
+ * khoản; chỉ cần thêm một trường tuỳ chọn ở đó là bất kỳ nhân viên nào cũng gửi
+ * kèm `employeeId` của người khác để tạo đơn nghỉ phép cho họ. Tách DTO thì
+ * đường tạo hộ chỉ tồn tại ở endpoint có `@Roles` và `@DepartmentScoped()`.
+ */
+export class CreateRequestOnBehalfDto extends CreateRequestDto {
+  @ApiProperty({ description: 'Nhân viên được tạo đơn hộ' })
+  @IsString()
+  @IsNotEmpty()
+  employeeId!: string;
+
+  /**
+   * Vì sao HR nhập hộ, KHÔNG phải lý do nghỉ.
+   *
+   * `reason` là lời khai của nhân viên ("Việc gia đình"). Trường này trả lời câu
+   * hỏi khác hẳn mà người đọc audit sáu tháng sau sẽ hỏi: vì sao đơn này không
+   * do chính nhân viên gửi? ("Nộp đơn giấy ngày 12/08", "Nhân viên nằm viện").
+   */
+  @ApiProperty({
+    example: 'Nhân viên nộp đơn giấy ngày 12/08, chưa cài ứng dụng.',
+    minLength: 10,
+    maxLength: 500,
+  })
+  @IsString()
+  @Length(10, 500)
+  onBehalfReason!: string;
+}
+
+/**
  * Sửa đơn — CHỈ sửa được khi đơn còn ở trạng thái nháp hoặc chờ duyệt.
  *
  * Không có `requestTypeCode` ở đây một cách có chủ đích: đổi loại đơn giữa chừng

@@ -1047,6 +1047,43 @@ curl -X POST http://localhost:3000/v1/requests \
 
 ---
 
+### `POST /v1/admin/requests` — Tạo đơn THAY MẶT nhân viên 🔒 📝audit
+
+**Vai trò:** `MANAGER`, `HR_PAYROLL`, `COMPANY_ADMIN` · `@DepartmentScoped()`
+
+**Làm gì:** `FR-WEB-REQ-09` — nhập đơn cho nhân viên nộp đơn giấy, nghỉ ốm đột xuất, hoặc chưa cài ứng dụng.
+
+Chạy **đúng bốn chốt** như `POST /v1/requests` ở trên, chỉ khác ở người được ghi tên trên đơn.
+
+| Trường thêm | Ghi chú |
+|---|---|
+| `employeeId` | nhân viên được tạo đơn hộ |
+| `onBehalfReason` | **bắt buộc**, 10–500 ký tự |
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/requests \
+  -H "Authorization: Bearer $HR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "employeeId": "emp_01J...",
+    "requestTypeCode": "SICK_LEAVE",
+    "startAt": "2026-08-10T00:00:00+07:00",
+    "endAt":   "2026-08-11T23:59:59+07:00",
+    "reason": "Sốt cao, có giấy khám bệnh",
+    "onBehalfReason": "Nhân viên nộp đơn giấy ngày 12/08, chưa cài ứng dụng."
+  }'
+```
+
+> **Đây là endpoint RIÊNG, không phải thêm `employeeId?` tuỳ chọn vào `POST /v1/requests`.** Endpoint tự phục vụ mở cho mọi tài khoản; chỉ cần thêm một trường tuỳ chọn ở đó là bất kỳ nhân viên nào cũng gửi kèm `employeeId` của người khác để tạo đơn nghỉ phép cho họ. Tách endpoint thì đường tạo hộ chỉ tồn tại ở chỗ có `@Roles` và `@DepartmentScoped()`.
+>
+> **`onBehalfReason` khác `reason`.** `reason` là lời khai của nhân viên ("Sốt cao"). `onBehalfReason` trả lời câu hỏi mà người đọc audit sáu tháng sau sẽ hỏi: vì sao đơn này không do chính nhân viên gửi? Gộp làm một thì thông tin mất đi luôn là cái thứ hai — cái duy nhất giải thích được vì sao có một đơn không ai ký.
+>
+> Đơn vào trạng thái `PENDING` và **đi qua đúng luồng duyệt** — người nhập hộ không duyệt hộ. Ghi audit `REQUEST_CREATE_ON_BEHALF`, và `GET /v1/requests/:id` trả kèm `createdOnBehalf` để màn duyệt hiện cảnh báo.
+
+**Lỗi:** `EMP_NOT_FOUND`, `AUTH_FORBIDDEN`, `REQ_TYPE_NOT_FOUND`, `REQ_INSUFFICIENT_LEAVE`, `REQ_OVERLAP`, `REQ_ATTACHMENT_REQUIRED`, `REQ_PERIOD_LOCKED`
+
+---
+
 ### `GET /v1/requests/:id` — Chi tiết đơn 🔒
 
 **Làm gì:** chi tiết đơn + **lịch sử duyệt** đầy đủ (FR-WEB-REQ-06): ai duyệt, lúc nào, ghi chú gì.
@@ -2562,6 +2599,7 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | GET | `/v1/requests/pending-approval` | 🔒 | Đơn tôi cần duyệt |
 | GET | `/v1/requests` | 🔒 | Danh sách đơn |
 | POST | `/v1/requests` | 🔒 | Tạo đơn |
+| POST | `/v1/admin/requests` | MGR/HR/ADMIN 📝 | Tạo đơn thay mặt nhân viên |
 | GET | `/v1/requests/:id` | 🔒 | Chi tiết + lịch sử duyệt |
 | PATCH | `/v1/requests/:id` | 🔒 | Sửa đơn nháp |
 | POST | `/v1/requests/:id/submit` | 🔒 | Gửi đơn nháp |

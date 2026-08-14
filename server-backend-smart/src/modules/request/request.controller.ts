@@ -13,7 +13,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Audit, CurrentTenant, DepartmentScoped } from 'src/common/decorators';
+import { SystemRole } from '@prisma/client';
+import { Audit, CurrentTenant, DepartmentScoped, Roles } from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
 import { AppException } from 'src/common/errors';
 import { resolveDepartmentScope } from 'src/common/guards/scope.guard';
@@ -23,6 +24,7 @@ import {
   BulkApproveDto,
   CancelRequestDto,
   CreateRequestDto,
+  CreateRequestOnBehalfDto,
   RejectRequestDto,
   RequestQueryDto,
   UpdateRequestDto,
@@ -111,6 +113,27 @@ export class RequestController {
     // cùng lúc đều thấy "còn 1 ngày phép" và cùng được duyệt — nhân viên nghỉ 2
     // ngày trong khi chỉ còn 1. Loại lỗi này chỉ xuất hiện khi có tải thật.
     return this.requests.create(ctx, dto);
+  }
+
+  @Post('admin/requests')
+  @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Tạo đơn THAY MẶT nhân viên (FR-WEB-REQ-09)',
+    description:
+      'Dành cho nhân viên nộp đơn giấy, nghỉ ốm đột xuất hoặc chưa cài ứng dụng. Đơn vào trạng thái CHỜ DUYỆT và đi qua đúng luồng duyệt của loại đơn — người tạo hộ không tự duyệt thay được. Bắt buộc `onBehalfReason` và ghi audit `REQUEST_CREATE_ON_BEHALF`. MANAGER chỉ tạo được cho nhân viên thuộc phòng ban mình quản lý.',
+  })
+  @ApiErrors(
+    'EMP_NOT_FOUND',
+    'AUTH_FORBIDDEN',
+    'REQ_TYPE_NOT_FOUND',
+    'REQ_INSUFFICIENT_LEAVE',
+    'REQ_OVERLAP',
+    'REQ_ATTACHMENT_REQUIRED',
+    'REQ_PERIOD_LOCKED',
+  )
+  createOnBehalf(@CurrentTenant() ctx: TenantContext, @Body() dto: CreateRequestOnBehalfDto) {
+    return this.requests.createOnBehalf(ctx, dto, resolveDepartmentScope(ctx));
   }
 
   @Get('requests/:id')

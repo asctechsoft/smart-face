@@ -53,6 +53,29 @@ export interface LeaveRequest {
   createdAt: string;
   approvalSteps?: ApprovalStep[];
   attachments?: RequestAttachment[];
+  /**
+   * Có giá trị khi đơn do HR/Quản lý nhập hộ, `null` khi nhân viên tự gửi.
+   *
+   * Backend đọc từ nhật ký kiểm toán, không phải một cột trên bảng đơn — nên
+   * không ai sửa lại được dấu vết này.
+   */
+  createdOnBehalf?: {
+    actorName: string | null;
+    actorUserId: string | null;
+    reason: string | null;
+    createdAt: string;
+  } | null;
+}
+
+export interface CreateOnBehalfPayload {
+  employeeId: string;
+  requestTypeCode: string;
+  startAt: string;
+  endAt: string;
+  isHalfDay?: boolean;
+  reason: string;
+  onBehalfReason: string;
+  expectedReturnAt?: string;
 }
 
 export interface RequestQuery extends PageQuery {
@@ -126,6 +149,22 @@ function useInvalidateAfterDecision() {
     void queryClient.invalidateQueries({ queryKey: qk.attendance });
     void queryClient.invalidateQueries({ queryKey: qk.dashboard() });
   };
+}
+
+/**
+ * Tạo đơn thay mặt nhân viên — `FR-WEB-REQ-09`.
+ *
+ * Đơn vào trạng thái CHỜ DUYỆT và đi qua đúng luồng duyệt của loại đơn đó, nên
+ * phải xoá cache y như một quyết định duyệt: đơn mới xuất hiện ở hàng chờ của
+ * người duyệt, và số phép khả dụng của nhân viên bị giữ chỗ ngay khi gửi.
+ */
+export function useCreateRequestOnBehalf() {
+  const invalidate = useInvalidateAfterDecision();
+  return useMutation({
+    mutationFn: (payload: CreateOnBehalfPayload) =>
+      api.post<LeaveRequest>('/admin/requests', payload),
+    onSuccess: invalidate,
+  });
 }
 
 export function useApproveRequest() {

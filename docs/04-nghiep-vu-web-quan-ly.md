@@ -192,6 +192,23 @@ Bộ lọc: [Phòng ban ▾] [Khoảng ngày] [Trạng thái ▾] [Có cờ nghi
 | `FR-WEB-REQ-06` | Lịch sử duyệt đơn (audit trail): ai duyệt, khi nào, thay đổi gì | Must |
 | `FR-WEB-REQ-07` | Xem file đính kèm minh chứng | Must |
 | `FR-WEB-REQ-08` | Thông báo realtime khi có đơn mới cần duyệt | Should |
+| `FR-WEB-REQ-09` | Tạo đơn **thay mặt** nhân viên (nộp đơn giấy, nghỉ ốm đột xuất, chưa cài ứng dụng) | Must |
+
+#### Về `FR-WEB-REQ-09` — tạo đơn thay mặt
+
+Bình thường **tạo đơn là việc của App nhân viên** (`FR-APP-REQ-01`), vì đơn là lời khai của chính người xin nghỉ. Web Quản lý chỉ duyệt.
+
+Nhưng có ba tình huống đơn không bao giờ vào được hệ thống: nhân viên nghỉ ốm đột xuất, nộp đơn giấy theo quy trình cũ, hoặc chưa cài ứng dụng. Trước đây HR chữa bằng **Hiệu chỉnh công** — và đó là chỗ sai: hiệu chỉnh công sửa **bảng công**, nó **không trừ ngày phép**. Cuối năm số dư phép lệch khỏi thực tế mà không truy ra được từ đâu.
+
+Ba ràng buộc bắt buộc:
+
+1. **Đơn vẫn đi qua luồng duyệt**, vào trạng thái `PENDING` như mọi đơn khác. Người nhập hộ **không** duyệt hộ — đó là hai vai trò phải tách: người khai và người chuẩn y.
+2. **Bắt buộc `onBehalfReason`** (≥ 10 ký tự) — trả lời "vì sao đơn này không do nhân viên tự gửi", khác hẳn `reason` là lý do nghỉ. Ghi vào audit `REQUEST_CREATE_ON_BEHALF`.
+3. **Hiện rõ trên màn chi tiết** để người duyệt biết đơn này do ai nhập. Duyệt một đơn tưởng do nhân viên tự khai, trong khi thật ra là HR nhập theo giấy tờ, là hai quyết định khác nhau.
+
+> **Cố ý KHÔNG chặn người tạo hộ tự duyệt ở bước sau.** Công ty nhỏ thường chỉ có đúng một người vừa làm HR vừa là cấp duyệt — chặn cứng sẽ khoá chết mọi đơn họ nhập. Kiểm soát ở đây là **minh bạch** (audit + cảnh báo trên màn duyệt), không phải cấm đoán. `BR-APV-03` vẫn giữ nguyên: không ai duyệt được đơn mà **chính mình là người xin nghỉ**.
+>
+> `MANAGER` bị giới hạn hai chiều như mọi nơi khác: chỉ tạo được đơn cho nhân viên **thuộc phòng ban mình quản lý** (`BR-09`).
 
 ### 4.1. Cấu hình luồng duyệt
 

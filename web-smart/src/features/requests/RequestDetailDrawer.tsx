@@ -1,4 +1,4 @@
-import { Button, Drawer, Steps } from 'antd';
+import { Alert, Button, Drawer, Steps } from 'antd';
 import { DetailField, DetailGrid, DetailSection } from '@/components/DetailField';
 import { StatusBadge, requestStatusTone } from '@/components/StatusBadge';
 import { EmployeeCell } from '@/components/EmployeeCell';
@@ -100,6 +100,29 @@ export function RequestDetailDrawer({
               {REQUEST_STATUS_LABEL[request.status] ?? request.status}
             </StatusBadge>
           </div>
+
+          {/*
+            Đặt NGAY DƯỚI tên nhân viên, trước cả nội dung đơn.
+            Duyệt một đơn tưởng do nhân viên tự khai, trong khi thật ra là HR nhập
+            theo giấy tờ, là hai quyết định khác nhau — người duyệt phải biết điều
+            này trước khi đọc bất cứ thứ gì khác.
+          */}
+          {request.createdOnBehalf ? (
+            <Alert
+              type="warning"
+              showIcon
+              message={`Đơn này do ${request.createdOnBehalf.actorName ?? 'người khác'} nhập hộ, không phải nhân viên tự gửi`}
+              description={
+                <>
+                  <div>{request.createdOnBehalf.reason}</div>
+                  <div className="sf-body-sm sf-text-variant" style={{ marginTop: 4 }}>
+                    Nhập lúc {formatDateTime(request.createdOnBehalf.createdAt, timezone)}. Đối
+                    chiếu với chứng từ gốc trước khi duyệt.
+                  </div>
+                </>
+              }
+            />
+          ) : null}
 
           <DetailSection title="Nội dung đơn">
             <DetailGrid>

@@ -13,6 +13,8 @@ import { buildMeta, eachWorkDate, toWorkDate } from 'src/common/utils';
 import { TransactionManager } from 'src/infra/prisma/transaction.manager';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { AttendanceService } from '../attendance/attendance.service';
+import { AuditRepository } from '../audit/audit.repository';
+import { AuditService } from '../audit/audit.service';
 import { NotificationService } from '../notification/notification.service';
 import { RealtimeGateway } from '../notification/realtime.gateway';
 import { PolicyKeys } from '../policy/policy.constants';
@@ -22,6 +24,7 @@ import type {
   ApproveRequestDto,
   BulkApproveDto,
   CreateRequestDto,
+  CreateRequestOnBehalfDto,
   RequestQueryDto,
   UpdateRequestDto,
 } from './dto/request.dto';
@@ -46,6 +49,8 @@ export class RequestService {
     private readonly notifications: NotificationService,
     private readonly realtime: RealtimeGateway,
     private readonly attendance: AttendanceService,
+    private readonly audit: AuditService,
+    private readonly audits: AuditRepository,
   ) {}
 
   // ===========================================================================
@@ -93,8 +98,74 @@ export class RequestService {
   //  Tạo & sửa đơn
   // ===========================================================================
 
+  /** Nhân viên tự gửi đơn của mình (FR-APP-REQ-01). */
   async create(ctx: TenantContext, dto: CreateRequestDto) {
-    const employee = await this.requireEmployee(ctx);
+    return this.createForEmployee(ctx, await this.requireEmployee(ctx), dto);
+  }
+
+  /**
+   * HR / Quản lý tạo đơn THAY MẶT nhân viên (`FR-WEB-REQ-09`).
+   *
+   * ## Vì sao cần
+   *
+   * Nhân viên nghỉ ốm đột xuất, nộp đơn giấy, hoặc chưa cài ứng dụng thì đơn
+   * không bao giờ vào hệ thống. Cách chữa trước đây là Hiệu chỉnh công — nhưng
+   * hiệu chỉnh công sửa BẢNG CÔNG, nó KHÔNG trừ ngày phép. Cuối năm số dư phép
+   * lệch khỏi thực tế mà không ai truy ra được từ đâu.
+   *
+   * ## Vì sao vẫn đi qua luồng duyệt
+   *
+   * Đơn tạo hộ vào trạng thái CHỜ DUYỆT như mọi đơn khác. Cho phép người tạo tự
+   * duyệt luôn là gộp hai vai trò vốn phải tách: người khai và người chuẩn y.
+   *
+   * ⚠ Cố ý KHÔNG chặn người tạo hộ tự duyệt ở bước sau. Công ty nhỏ thường chỉ
+   * có đúng một người vừa làm HR vừa là cấp duyệt — chặn cứng ở đây sẽ khoá chết
+   * mọi đơn họ nhập. Thay vào đó, việc tạo hộ được ghi audit và HIỆN RÕ trên màn
+   * chi tiết để người duyệt biết đơn này không do nhân viên tự khai.
+   *
+   * @param departmentScope kết quả `resolveDepartmentScope(ctx)` — null = toàn công ty.
+   */
+  async createOnBehalf(
+    ctx: TenantContext,
+    dto: CreateRequestOnBehalfDto,
+    departmentScope: string[] | null,
+  ) {
+    const employee = await this.requests.findEmployee(ctx.companyId, dto.employeeId);
+    if (!employee) {
+      throw new AppException('EMP_NOT_FOUND');
+    }
+
+    // MANAGER bị giới hạn HAI CHIỀU (docs/04 mục 1): vai trò nói được làm gì,
+    // phạm vi phòng ban nói được làm trên ai. Thiếu chốt này thì một trưởng
+    // phòng tạo được đơn nghỉ phép cho nhân viên phòng khác (BR-09).
+    if (departmentScope && !departmentScope.includes(employee.departmentId ?? '')) {
+      throw new AppException('AUTH_FORBIDDEN', {
+        reason: 'Bạn chỉ tạo đơn được cho nhân viên thuộc phòng ban mình quản lý.',
+      });
+    }
+
+    const detail = await this.createForEmployee(ctx, employee, dto);
+
+    // Ghi audit Ở ĐÂY chứ không dùng `@Audit()`: interceptor lấy `targetId` từ
+    // `params.id` hoặc `body.id`, mà đơn vừa tạo thì chưa có id nào để lấy.
+    await this.audit.record(ctx, {
+      action: 'REQUEST_CREATE_ON_BEHALF',
+      targetType: 'REQUEST',
+      targetId: detail.id,
+      reason: dto.onBehalfReason,
+      after: {
+        employeeId: employee.id,
+        employeeName: employee.fullName,
+        requestTypeCode: dto.requestTypeCode,
+        startAt: dto.startAt,
+        endAt: dto.endAt,
+      },
+    });
+
+    return detail;
+  }
+
+  private async createForEmployee(ctx: TenantContext, employee: Employee, dto: CreateRequestDto) {
     const requestType = await this.requireRequestType(ctx.companyId, dto.requestTypeCode);
 
     const startAt = new Date(dto.startAt);
@@ -516,6 +587,19 @@ export class RequestService {
 
     return {
       ...request,
+      /**
+       * Đơn này do người khác nhập hộ hay do chính nhân viên gửi?
+       *
+       * Đọc từ `audit_log` chứ không thêm cột vào `leave_request`: "ai làm việc
+       * gì" đã là chức năng của nhật ký kiểm toán (BR-08), và bảng đó là
+       * append-only nên không ai sửa lại được dấu vết. Thêm cột thứ hai chỉ tạo
+       * ra hai nguồn sự thật cho cùng một câu hỏi.
+       *
+       * Người duyệt PHẢI thấy thông tin này. Duyệt một đơn tưởng do nhân viên
+       * tự khai, trong khi thật ra là HR nhập theo giấy tờ, là hai quyết định
+       * khác nhau.
+       */
+      createdOnBehalf: await this.findOnBehalfRecord(companyId, requestId),
       approvalSteps: request.approvalSteps.map((step) => ({
         ...step,
         approverName: step.approverId ? (approverMap.get(step.approverId) ?? null) : null,
@@ -907,6 +991,20 @@ export class RequestService {
       decision,
       comment,
     });
+  }
+
+  /** Bản ghi audit `REQUEST_CREATE_ON_BEHALF` của đơn, nếu có. */
+  private async findOnBehalfRecord(companyId: string, requestId: string) {
+    const entries = await this.audits.findForTarget(companyId, 'REQUEST', requestId, 20);
+    const record = entries.find((entry) => entry.action === 'REQUEST_CREATE_ON_BEHALF');
+    if (!record) return null;
+
+    return {
+      actorName: record.actorName,
+      actorUserId: record.actorUserId,
+      reason: record.reason,
+      createdAt: record.createdAt,
+    };
   }
 
   private async requireEmployee(ctx: RequestContext): Promise<Employee> {

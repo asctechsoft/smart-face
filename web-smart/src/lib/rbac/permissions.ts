@@ -19,6 +19,7 @@ export type Permission =
   | 'attendance.export'
   | 'request.view'
   | 'request.approve'
+  | 'request.create_on_behalf'
   | 'policy.view'
   | 'policy.edit'
   | 'payroll.view'
@@ -53,6 +54,9 @@ const MATRIX: Record<Permission, SystemRole[]> = {
 
   'request.view': [SYSTEM_ADMIN, COMPANY_ADMIN, MANAGER, HR_PAYROLL],
   'request.approve': [SYSTEM_ADMIN, COMPANY_ADMIN, MANAGER, HR_PAYROLL],
+  // MANAGER có mặt ở đây nhưng `ScopeGuard` phía Backend giới hạn họ trong phòng
+  // ban mình quản lý — vai trò nói được LÀM GÌ, phạm vi nói được làm TRÊN AI.
+  'request.create_on_behalf': [SYSTEM_ADMIN, COMPANY_ADMIN, MANAGER, HR_PAYROLL],
 
   'policy.view': [SYSTEM_ADMIN, COMPANY_ADMIN, HR_PAYROLL],
   'policy.edit': [SYSTEM_ADMIN, COMPANY_ADMIN],

@@ -26,6 +26,8 @@ import {
   type RequestQuery,
 } from './requests.api';
 import { RequestDetailDrawer } from './RequestDetailDrawer';
+import { CreateRequestOnBehalfModal } from './CreateRequestOnBehalfModal';
+import { Can } from '@/lib/rbac/Can';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
 
@@ -49,6 +51,7 @@ export function RequestListPage() {
 
   const tab = searchParams.get('tab') ?? (canApprove ? 'pending' : 'all');
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [rejectTarget, setRejectTarget] = useState<LeaveRequest | null>(null);
   const [bulkResult, setBulkResult] = useState<{
@@ -222,6 +225,17 @@ export function RequestListPage() {
       <PageHeader
         title="Đơn từ"
         description="Duyệt đơn nghỉ phép, xin ra ngoài, bổ sung công. Đơn được duyệt sẽ tự động kích hoạt tính lại công cho khoảng thời gian liên quan."
+        actions={
+          <Can do="request.create_on_behalf">
+            <Button
+              type="primary"
+              icon={<Icon name="post_add" size={20} />}
+              onClick={() => setCreateOpen(true)}
+            >
+              Tạo đơn hộ
+            </Button>
+          </Can>
+        }
       />
 
       <Tabs
@@ -454,6 +468,8 @@ export function RequestListPage() {
           </div>
         ) : null}
       </Modal>
+
+      <CreateRequestOnBehalfModal open={createOpen} onClose={() => setCreateOpen(false)} />
     </>
   );
 }
