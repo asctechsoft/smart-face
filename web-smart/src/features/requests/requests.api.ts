@@ -67,6 +67,28 @@ export interface LeaveRequest {
   } | null;
 }
 
+export interface ApproverCandidate {
+  id: string;
+  fullName: string;
+  employeeCode: string;
+}
+
+export interface ApprovalPreviewStep {
+  order: number;
+  approverRole: string;
+  approverRoleLabel: string;
+  /** Người hệ thống tự suy. `null` = bất kỳ ai giữ vai trò tương ứng. */
+  suggestedApproverId: string | null;
+  suggestedApproverName: string | null;
+  candidates: ApproverCandidate[];
+}
+
+export interface ApprovalPreview {
+  quantity: number;
+  unit: string;
+  steps: ApprovalPreviewStep[];
+}
+
 export interface CreateOnBehalfPayload {
   employeeId: string;
   requestTypeCode: string;
@@ -76,6 +98,37 @@ export interface CreateOnBehalfPayload {
   reason: string;
   onBehalfReason: string;
   expectedReturnAt?: string;
+  /** Chỉ đổi AI đứng ở mỗi bước, không đổi có những bước nào. */
+  approvers?: { order: number; approverId: string }[];
+}
+
+/**
+ * Xem trước luồng duyệt trước khi tạo đơn hộ.
+ *
+ * Hỏi lại mỗi khi đổi nhân viên, loại đơn hoặc khoảng ngày: số bước duyệt phụ
+ * thuộc ĐỘ DÀI đơn (nghỉ 1 ngày chỉ cần trưởng phòng, từ 3 ngày mới thêm bước
+ * HR), nên không cache được theo loại đơn.
+ */
+export function useApprovalPreview(params: {
+  employeeId?: string;
+  requestTypeCode?: string;
+  startAt?: string;
+  endAt?: string;
+  isHalfDay?: boolean;
+}) {
+  const ready = Boolean(
+    params.employeeId && params.requestTypeCode && params.startAt && params.endAt,
+  );
+
+  return useQuery({
+    queryKey: qk.approvalPreview(params),
+    queryFn: () => api.get<ApprovalPreview>('/admin/requests/approval-preview', { ...params }),
+    enabled: ready,
+    // Luồng duyệt là cấu hình, đổi rất ít. Giữ 5 phút để gõ lại ngày không bắn
+    // thêm request cho cùng một tổ hợp.
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
 }
 
 export interface RequestQuery extends PageQuery {

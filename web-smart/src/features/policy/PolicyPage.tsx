@@ -43,7 +43,7 @@ export function PolicyPage() {
         destroyInactiveTabPane
         items={[
           { key: 'values', label: 'Quy tắc tính công', children: <PolicyValuesTab /> },
-          { key: 'shifts', label: 'Ca làm việc', children: <ShiftsTab /> },
+          { key: 'shifts', label: 'Danh mục ca', children: <ShiftsTab /> },
           { key: 'holidays', label: 'Ngày nghỉ lễ', children: <HolidaysTab /> },
           { key: 'leave', label: 'Phép năm', children: <LeavePolicyTab /> },
           { key: 'branches', label: 'Chi nhánh & Geofence', children: <BranchesTab /> },

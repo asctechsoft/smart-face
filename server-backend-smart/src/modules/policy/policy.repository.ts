@@ -7,6 +7,7 @@ import {
   Holiday,
   LeaveBalance,
   LeavePolicy,
+  PayrollPeriodStatus,
   Prisma,
   ShiftType,
 } from '@prisma/client';
@@ -14,6 +15,22 @@ import { BaseRepository } from 'src/infra/prisma/base.repository';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
 export type ShiftWithSegments = Prisma.ShiftGetPayload<{ include: { segments: true } }>;
+
+/**
+ * Ca kèm hệ số riêng của từng ngày lễ — chỉ dùng cho màn danh mục.
+ *
+ * Cố tình KHÔNG gộp vào `ShiftWithSegments`: máy tính công đọc ca cho từng nhân
+ * viên từng ngày, nối thêm một bảng nữa vào mỗi lượt đọc chỉ để lấy dữ liệu nó
+ * không dùng là trả giá ở đúng chỗ nóng nhất của hệ thống.
+ */
+export type ShiftCatalogRow = Prisma.ShiftGetPayload<{
+  include: { segments: true; holidayFactors: true };
+}>;
+
+/** Bảng phân ca kèm hai con số mà danh sách luôn cần: bao nhiêu người, đã xếp bao nhiêu lượt. */
+export type ShiftScheduleRow = Prisma.ShiftScheduleGetPayload<{
+  include: { _count: { select: { members: true; assignments: true } } };
+}>;
 
 /** Một dòng của bảng phân ca — nhân viên kèm phòng ban để nhóm trên giao diện. */
 export interface ShiftBoardEmployee {
@@ -53,8 +70,32 @@ export interface ShiftSegmentInput {
   endTime: string;
 }
 
+/**
+ * Phần danh mục — chung cho cả tạo mới lẫn sửa tại chỗ.
+ *
+ * Tách riêng vì đây là các trường MÔ TẢ ca, không tham gia vào công thức tính
+ * giờ công. Đổi chúng không cần tạo phiên bản ca mới theo D6.
+ */
+interface ShiftCatalogFields {
+  code: string;
+  symbol: string | null;
+  departmentIds: string[];
+  requireCheckIn: boolean;
+  checkInFrom: string | null;
+  checkInTo: string | null;
+  requireCheckOut: boolean;
+  checkOutFrom: string | null;
+  checkOutTo: string | null;
+  breakStart: string | null;
+  breakEnd: string | null;
+  workDayCredit: number;
+  normalDayFactor: number;
+  weeklyRestFactor: number;
+  holidayFactor: number;
+}
+
 /** Giá trị đã được service giải xong (đã áp mặc định) — repository chỉ ghi. */
-export interface ShiftWriteInput {
+export interface ShiftWriteInput extends ShiftCatalogFields {
   name: string;
   type?: ShiftType;
   startTime?: string | null;
@@ -72,7 +113,7 @@ export interface ShiftWriteInput {
 }
 
 /** Sửa tại chỗ: field `undefined` nghĩa là GIỮ NGUYÊN, không phải xoá. */
-export interface ShiftPatchInput {
+export interface ShiftPatchInput extends Partial<ShiftCatalogFields> {
   name?: string;
   type?: ShiftType;
   startTime?: string;
@@ -238,26 +279,45 @@ export class PolicyRepository extends BaseRepository {
     });
   }
 
-  async listShifts(companyId: string): Promise<ShiftWithSegments[]> {
+  async listShifts(companyId: string): Promise<ShiftCatalogRow[]> {
     return this.db().shift.findMany({
       where: { companyId, deletedAt: null },
-      include: { segments: { orderBy: { order: 'asc' } } },
-      orderBy: [{ isDefault: 'desc' }, { effectiveFrom: 'desc' }],
+      include: { segments: { orderBy: { order: 'asc' } }, holidayFactors: true },
+      orderBy: [{ isDefault: 'desc' }, { code: 'asc' }],
     });
   }
 
-  async findShift(companyId: string, shiftId: string): Promise<ShiftWithSegments | null> {
+  async findShift(companyId: string, shiftId: string): Promise<ShiftCatalogRow | null> {
     return this.db().shift.findFirst({
       where: { id: shiftId, companyId, deletedAt: null },
-      include: { segments: { orderBy: { order: 'asc' } } },
+      include: { segments: { orderBy: { order: 'asc' } }, holidayFactors: true },
     });
+  }
+
+  /**
+   * Ca nào đang GIỮ mã này — soi đúng tập hợp mà partial unique index bảo vệ.
+   *
+   * Điều kiện `effectiveTo: null` phải khớp chính xác với `WHERE` của index
+   * (xem `20260815130000_shift_code_partial_unique`). Lệch nhau thì hoặc người
+   * dùng bị chặn ở một mã thật ra dùng được, hoặc đi hết cả cái form rồi mới
+   * nhận lỗi ràng buộc thô từ Postgres.
+   *
+   * KHÔNG lọc `deletedAt`: ca xoá mềm vẫn giữ mã của nó, vì mã đó đã nằm trên
+   * bảng công đã in ra.
+   */
+  async findShiftIdByCode(companyId: string, code: string): Promise<string | null> {
+    const row = await this.db().shift.findFirst({
+      where: { companyId, code, effectiveTo: null },
+      select: { id: true },
+    });
+    return row?.id ?? null;
   }
 
   async createShift(
     companyId: string,
     data: ShiftWriteInput,
     tx?: Prisma.TransactionClient,
-  ): Promise<ShiftWithSegments> {
+  ): Promise<ShiftCatalogRow> {
     const { segments, ...shift } = data;
     return this.db(tx).shift.create({
       data: {
@@ -265,8 +325,29 @@ export class PolicyRepository extends BaseRepository {
         ...shift,
         segments: segments ? { create: segments } : undefined,
       },
-      include: { segments: { orderBy: { order: 'asc' } } },
+      include: { segments: { orderBy: { order: 'asc' } }, holidayFactors: true },
     });
+  }
+
+  /**
+   * Thay TOÀN BỘ danh sách hệ số ngoại lệ của một ca.
+   *
+   * Xoá rồi ghi lại thay vì so từng dòng: danh sách này nhiều nhất bằng số ngày
+   * lễ trong năm, và "thay cả cụm" là đúng ý nghĩa của thao tác người dùng vừa
+   * làm — họ nộp lên bảng ngoại lệ mới, không nộp lên một danh sách thay đổi.
+   */
+  async replaceShiftHolidayFactors(
+    shiftId: string,
+    factors: { holidayId: string; factor: number }[],
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    const client = this.db(tx);
+    await client.shiftHolidayFactor.deleteMany({ where: { shiftId } });
+    if (factors.length > 0) {
+      await client.shiftHolidayFactor.createMany({
+        data: factors.map((row) => ({ shiftId, holidayId: row.holidayId, factor: row.factor })),
+      });
+    }
   }
 
   /**
@@ -279,7 +360,7 @@ export class PolicyRepository extends BaseRepository {
     shiftId: string,
     data: ShiftPatchInput,
     tx?: Prisma.TransactionClient,
-  ): Promise<ShiftWithSegments | null> {
+  ): Promise<ShiftCatalogRow | null> {
     const updated = await this.db(tx).shift.updateMany({
       where: { id: shiftId, companyId, deletedAt: null },
       data,
@@ -288,7 +369,7 @@ export class PolicyRepository extends BaseRepository {
 
     return this.db(tx).shift.findFirst({
       where: { id: shiftId, companyId },
-      include: { segments: { orderBy: { order: 'asc' } } },
+      include: { segments: { orderBy: { order: 'asc' } }, holidayFactors: true },
     });
   }
 
@@ -332,21 +413,246 @@ export class PolicyRepository extends BaseRepository {
 
   async upsertShiftAssignment(
     companyId: string,
-    data: { employeeId: string; shiftId: string; workDate: Date; createdBy: string },
+    data: {
+      employeeId: string;
+      shiftId: string;
+      workDate: Date;
+      createdBy: string;
+      scheduleId?: string | null;
+    },
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
-    const { employeeId, shiftId, workDate, createdBy } = data;
+    const { employeeId, shiftId, workDate, createdBy, scheduleId = null } = data;
     await this.db(tx).shiftAssignment.upsert({
       where: { employeeId_workDate: { employeeId, workDate } },
-      create: { companyId, employeeId, shiftId, workDate, createdBy },
-      update: { shiftId, createdBy },
+      create: { companyId, employeeId, shiftId, workDate, createdBy, scheduleId },
+      update: { shiftId, createdBy, scheduleId },
     });
   }
 
-  /** Lọc ra id thực sự thuộc công ty — dùng trước khi phân ca hàng loạt (BR-09). */
-  async findEmployeeIdsInCompany(companyId: string, employeeIds: string[]): Promise<string[]> {
+  // ===========================================================================
+  //  Bảng phân ca (FR-WEB-HR-13)
+  // ===========================================================================
+
+  async listShiftSchedules(
+    companyId: string,
+    filter: { month?: Date; departmentId?: string; skip: number; take: number },
+  ): Promise<{ items: ShiftScheduleRow[]; total: number }> {
+    const where: Prisma.ShiftScheduleWhereInput = { companyId, deletedAt: null };
+    if (filter.month) where.periodMonth = filter.month;
+    if (filter.departmentId) where.departmentIds = { has: filter.departmentId };
+
+    const [items, total] = await Promise.all([
+      this.db().shiftSchedule.findMany({
+        where,
+        include: { _count: { select: { members: true, assignments: true } } },
+        orderBy: [{ periodMonth: 'desc' }, { createdAt: 'desc' }],
+        skip: filter.skip,
+        take: filter.take,
+      }),
+      this.db().shiftSchedule.count({ where }),
+    ]);
+    return { items, total };
+  }
+
+  async findShiftSchedule(companyId: string, scheduleId: string): Promise<ShiftScheduleRow | null> {
+    return this.db().shiftSchedule.findFirst({
+      where: { id: scheduleId, companyId, deletedAt: null },
+      include: { _count: { select: { members: true, assignments: true } } },
+    });
+  }
+
+  async createShiftSchedule(
+    companyId: string,
+    data: {
+      name: string;
+      periodMonth: Date;
+      departmentIds: string[];
+      shiftIds: string[];
+      createdBy: string;
+    },
+    tx?: Prisma.TransactionClient,
+  ): Promise<{ id: string }> {
+    const row = await this.db(tx).shiftSchedule.create({
+      data: { companyId, ...data },
+      select: { id: true },
+    });
+    return row;
+  }
+
+  async updateShiftSchedule(
+    companyId: string,
+    scheduleId: string,
+    data: { name?: string; departmentIds?: string[]; shiftIds?: string[] },
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const result = await this.db(tx).shiftSchedule.updateMany({
+      where: { id: scheduleId, companyId, deletedAt: null },
+      data,
+    });
+    return result.count;
+  }
+
+  /** D4 — soft delete để audit log còn tra được bảng đã bị xoá. */
+  async softDeleteShiftSchedule(
+    companyId: string,
+    scheduleId: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const result = await this.db(tx).shiftSchedule.updateMany({
+      where: { id: scheduleId, companyId, deletedAt: null },
+      data: { deletedAt: new Date() },
+    });
+    return result.count;
+  }
+
+  /**
+   * Thành viên bị XOÁ HẲN, không phải xoá mềm.
+   *
+   * Ràng buộc `(employeeId, periodMonth)` không lọc `deletedAt` — giữ lại dòng
+   * thành viên của một bảng đã xoá nghĩa là những người đó vĩnh viễn không lập
+   * được bảng mới cho tháng đó.
+   */
+  async deleteScheduleMembers(
+    scheduleId: string,
+    employeeIds?: string[],
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const result = await this.db(tx).shiftScheduleMember.deleteMany({
+      where: { scheduleId, ...(employeeIds ? { employeeId: { in: employeeIds } } : {}) },
+    });
+    return result.count;
+  }
+
+  async addScheduleMembers(
+    scheduleId: string,
+    periodMonth: Date,
+    employeeIds: string[],
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    if (employeeIds.length === 0) return 0;
+    const result = await this.db(tx).shiftScheduleMember.createMany({
+      data: employeeIds.map((employeeId) => ({ scheduleId, employeeId, periodMonth })),
+      // Thêm lại người đã có trong bảng là thao tác vô hại, không phải lỗi.
+      skipDuplicates: true,
+    });
+    return result.count;
+  }
+
+  async findScheduleMemberIds(scheduleId: string): Promise<string[]> {
+    const rows = await this.db().shiftScheduleMember.findMany({
+      where: { scheduleId },
+      select: { employeeId: true },
+    });
+    return rows.map((row) => row.employeeId);
+  }
+
+  /**
+   * Ai trong danh sách này đã thuộc một bảng khác của cùng tháng.
+   *
+   * Dùng để báo lỗi có tên người thay vì ném lại lỗi ràng buộc thô của Postgres.
+   */
+  async findMembersTakenInMonth(
+    periodMonth: Date,
+    employeeIds: string[],
+    excludeScheduleId?: string,
+  ): Promise<{ employeeId: string; fullName: string; scheduleName: string }[]> {
+    if (employeeIds.length === 0) return [];
+    const rows = await this.db().shiftScheduleMember.findMany({
+      where: {
+        periodMonth,
+        employeeId: { in: employeeIds },
+        ...(excludeScheduleId ? { scheduleId: { not: excludeScheduleId } } : {}),
+      },
+      select: {
+        employeeId: true,
+        employee: { select: { fullName: true } },
+        schedule: { select: { name: true } },
+      },
+    });
+    return rows.map((row) => ({
+      employeeId: row.employeeId,
+      fullName: row.employee.fullName,
+      scheduleName: row.schedule.name,
+    }));
+  }
+
+  /** Nhân viên đang làm việc của các phòng ban — nguồn thành viên lúc lập bảng. */
+  async findAssignableEmployeeIdsInDepartments(
+    companyId: string,
+    departmentIds: string[],
+    departmentScope: string[] | null,
+  ): Promise<string[]> {
+    const allowed = departmentScope
+      ? departmentIds.filter((id) => departmentScope.includes(id))
+      : departmentIds;
+    if (allowed.length === 0) return [];
+
     const rows = await this.db().employee.findMany({
-      where: { id: { in: employeeIds }, companyId, deletedAt: null },
+      where: {
+        companyId,
+        deletedAt: null,
+        departmentId: { in: allowed },
+        status: { in: [EmployeeStatus.ACTIVE, EmployeeStatus.PENDING_ACTIVATION] },
+      },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
+  /** Xoá lịch ca do một bảng sinh ra — chỉ những lượt mang đúng `scheduleId`. */
+  async deleteAssignmentsOfSchedule(
+    companyId: string,
+    scheduleId: string,
+    employeeIds?: string[],
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const result = await this.db(tx).shiftAssignment.deleteMany({
+      where: {
+        companyId,
+        scheduleId,
+        ...(employeeIds ? { employeeId: { in: employeeIds } } : {}),
+      },
+    });
+    return result.count;
+  }
+
+  /** BR-07 — kỳ lương đã chốt phủ lên tháng của bảng phân ca. */
+  async findClosedPeriodOverlapping(
+    companyId: string,
+    from: Date,
+    to: Date,
+  ): Promise<{ name: string } | null> {
+    return this.db().payrollPeriod.findFirst({
+      where: {
+        companyId,
+        status: PayrollPeriodStatus.CLOSED,
+        startDate: { lte: to },
+        endDate: { gte: from },
+      },
+      select: { name: true },
+    });
+  }
+
+  /**
+   * Lọc ra id thực sự thuộc công ty — dùng trước khi phân ca hàng loạt (BR-09).
+   *
+   * `departmentScope` là phạm vi của MANAGER: chỉ thu hẹp, không bao giờ mở
+   * rộng. Bỏ qua nó ở đây thì một MANAGER đoán đúng id là thêm được người phòng
+   * khác vào bảng của mình.
+   */
+  async findEmployeeIdsInCompany(
+    companyId: string,
+    employeeIds: string[],
+    departmentScope?: string[] | null,
+  ): Promise<string[]> {
+    const rows = await this.db().employee.findMany({
+      where: {
+        id: { in: employeeIds },
+        companyId,
+        deletedAt: null,
+        ...(departmentScope ? { departmentId: { in: departmentScope } } : {}),
+      },
       select: { id: true },
     });
     return rows.map((row) => row.id);
@@ -363,6 +669,11 @@ export class PolicyRepository extends BaseRepository {
     filter: {
       departmentId?: string;
       departmentScope: string[] | null;
+      /**
+       * Thành viên của bảng phân ca. `[]` nghĩa là bảng RỖNG và phải trả về
+       * không dòng nào — khác hẳn `undefined` là "không lọc theo bảng".
+       */
+      memberIds?: string[];
       q?: string;
       skip: number;
       take: number;
@@ -377,6 +688,8 @@ export class PolicyRepository extends BaseRepository {
     if (filter.departmentId) where.departmentId = filter.departmentId;
     // Phạm vi của MANAGER thu hẹp, không mở rộng — ghi đè bộ lọc client gửi lên.
     if (filter.departmentScope) where.departmentId = { in: filter.departmentScope };
+    // `in: []` khớp không dòng nào — đúng ý nghĩa của một bảng chưa có ai.
+    if (filter.memberIds !== undefined) where.id = { in: filter.memberIds };
     if (filter.q) {
       where.OR = [
         { fullName: { contains: filter.q, mode: 'insensitive' } },

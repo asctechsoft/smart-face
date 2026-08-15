@@ -1,33 +1,35 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { Button, DatePicker, Input, Pagination, Popover, Select, Tooltip } from 'antd';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Button, DatePicker, Input, Pagination, Popover, Tooltip } from 'antd';
 import { PageHeader } from '@/components/PageHeader';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { EmptyState } from '@/components/ui';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Icon } from '@/components/Icon';
+import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { Can, useCan } from '@/lib/rbac/Can';
-import { useAuth } from '@/lib/auth/auth-context';
-import { firstDayOfMonth, lastDayOfMonth, toWorkDate } from '@/lib/utils/date';
-import { toDayjs } from '@/lib/utils/dayjs';
-import { useDepartments, toSelectOptions } from '@/features/shared/org.api';
+import { toWorkDate } from '@/lib/utils/date';
+import { dayjs, toDayjs } from '@/lib/utils/dayjs';
 import { useShifts, type Shift } from '@/features/policy/policy.api';
 import { BulkAssignDrawer } from './BulkAssignDrawer';
+import { AddMembersModal } from './AddMembersModal';
 import {
   useBulkAssignShifts,
   useClearShiftAssignments,
+  useRemoveScheduleMembers,
   useShiftBoard,
+  useShiftSchedule,
   type ShiftBoardEmployee,
 } from './shifts.api';
 import { ApiErrorState } from '@/components/ApiErrorState';
-import { useToast } from '@/components/ui';
+import { ConfirmDialog, useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
 
 /** Trần khoảng ngày do Backend đặt (`MAX_BOARD_DAYS`) — chặn sớm ở đây để báo lỗi tử tế hơn 422. */
 const MAX_DAYS = 62;
 
 /**
- * Lịch phân ca — docs/04 mục 8 (`FR-WEB-HR-03`, `FR-WEB-HR-04`).
+ * Chi tiết một bảng phân ca — docs/04 mục 8 (`FR-WEB-HR-03`, `FR-WEB-HR-04`).
  *
  * Bảng đọc theo DÒNG: mỗi dòng một người, mỗi cột một ngày. Đây là cách người
  * xếp ca thật sự nhìn vấn đề ("tuần này ai trực đêm"), khác hẳn danh sách bản
@@ -36,36 +38,53 @@ const MAX_DAYS = 62;
  * Vì vậy phân trang theo NGƯỜI chứ không theo bản ghi — cắt trang giữa chừng
  * một người sẽ tách lịch của họ thành hai dòng rời rạc ở hai trang.
  *
+ * Dòng của bảng là **thành viên đã chốt** của bảng phân ca, không phải "ai đang
+ * thuộc phòng ban này". Hai thứ đó lệch nhau ngay khi có người chuyển phòng
+ * giữa tháng, và lấy theo phòng ban thì họ lặng lẽ biến mất khỏi bảng đang xếp dở.
+ *
  * Ngày lễ được tô nền riêng: xếp ca vào ngày lễ không sai về kỹ thuật (vẫn có
  * người trực Tết) nhưng luôn phải là quyết định có ý thức, vì hệ số OT ngày đó
  * là 300%.
  */
 export function ShiftSchedulePage() {
-  const { timezone } = useAuth();
+  const { id: scheduleId = '' } = useParams<{ id: string }>();
   const toast = useToast();
   const showError = useErrorToast();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [assignOpen, setAssignOpen] = useState(false);
+  const [addMembersOpen, setAddMembersOpen] = useState(false);
+  const [removeOpen, setRemoveOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const canAssign = useCan('shift.assign');
 
-  const departments = useDepartments();
+  const schedule = useShiftSchedule(scheduleId);
   const shifts = useShifts();
   const assignShifts = useBulkAssignShifts();
   const clearShifts = useClearShiftAssignments();
+  const removeMembers = useRemoveScheduleMembers();
+
+  /** Kỳ của bảng — mọi bộ lọc ngày phải nằm trong đây, Backend cũng từ chối nếu ra ngoài. */
+  const period = useMemo(() => {
+    const month = schedule.data ? dayjs(schedule.data.periodMonth) : dayjs();
+    return {
+      from: month.startOf('month').format('YYYY-MM-DD'),
+      to: month.endOf('month').format('YYYY-MM-DD'),
+    };
+  }, [schedule.data]);
 
   const query = useMemo(
     () => ({
-      from: searchParams.get('from') ?? firstDayOfMonth(timezone),
-      to: searchParams.get('to') ?? lastDayOfMonth(timezone),
+      scheduleId,
+      from: clampToPeriod(searchParams.get('from') ?? period.from, period),
+      to: clampToPeriod(searchParams.get('to') ?? period.to, period),
       departmentId: searchParams.get('departmentId') ?? undefined,
       q: searchParams.get('q') ?? undefined,
       page: Number(searchParams.get('page') ?? 1),
       pageSize: Number(searchParams.get('pageSize') ?? 25),
     }),
-    [searchParams, timezone],
+    [searchParams, scheduleId, period],
   );
 
   const board = useShiftBoard(query);
@@ -79,6 +98,19 @@ export function ShiftSchedulePage() {
     () => new Map((shifts.data ?? []).map((shift) => [shift.id, shift])),
     [shifts.data],
   );
+
+  /**
+   * Ca được phép dùng trong bảng này — chốt lúc lập bảng.
+   *
+   * Dùng cho popover đổi ca của từng ô và cho chú thích bên dưới. Hiện đủ mọi ca
+   * của công ty rồi để Backend từ chối là bắt người dùng đoán luật; và trong một
+   * lưới có 25 × 31 ô, họ sẽ đoán sai nhiều lần trước khi hiểu.
+   */
+  const allowedShifts = useMemo(() => {
+    const allowed = schedule.data?.shiftIds;
+    const all = shifts.data ?? [];
+    return allowed ? all.filter((shift) => allowed.includes(shift.id)) : all;
+  }, [shifts.data, schedule.data]);
 
   /** `employeeId|workDate` → shiftId. Tra ô trong bảng phải là O(1), không phải quét mảng. */
   const cellIndex = useMemo(() => {
@@ -110,6 +142,25 @@ export function ShiftSchedulePage() {
       return;
     }
     patchQuery({ from: nextFrom, to: nextTo });
+  }
+
+  async function removeSelectedMembers() {
+    try {
+      const result = await removeMembers.mutateAsync({
+        id: scheduleId,
+        employeeIds: selectedIds,
+      });
+      toast.success(
+        `Đã bỏ ${result.removed} nhân viên khỏi bảng`,
+        result.removedAssignments > 0
+          ? `Kèm ${result.removedAssignments} lượt phân ca của họ trong bảng này.`
+          : undefined,
+      );
+      setSelectedIds([]);
+      setRemoveOpen(false);
+    } catch (caught) {
+      showError(caught);
+    }
   }
 
   const employees = board.data?.employees ?? [];
@@ -153,18 +204,45 @@ export function ShiftSchedulePage() {
   return (
     <>
       <PageHeader
-        title="Phân ca"
-        description="Lịch ca theo người và theo ngày. Nhân viên không được phân ca cụ thể sẽ tính công theo ca mặc định của công ty."
+        title={schedule.data?.name ?? 'Bảng phân ca'}
+        description={
+          schedule.data
+            ? `Kỳ ${dayjs(schedule.data.periodMonth).format('MM/YYYY')} · ${schedule.data.memberCount} CBNV. Người chưa được xếp ca sẽ tính công theo ca mặc định của công ty.`
+            : 'Đang tải bảng phân ca…'
+        }
         actions={
-          <Can do="shift.assign">
-            <Button
-              type="primary"
-              icon={<Icon name="event_repeat" size={20} />}
-              onClick={() => setAssignOpen(true)}
-            >
-              Phân ca hàng loạt
-            </Button>
-          </Can>
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+            <Link to="/shifts">
+              <Button icon={<Icon name="arrow_back" size={20} />}>Danh sách bảng</Button>
+            </Link>
+            <Can do="shift.assign">
+              <Button
+                icon={<Icon name="person_add" size={20} />}
+                onClick={() => setAddMembersOpen(true)}
+              >
+                Thêm CBNV
+              </Button>
+            </Can>
+            <Can do="shift.assign">
+              <Button
+                danger
+                disabled={selectedIds.length === 0}
+                icon={<Icon name="person_remove" size={20} />}
+                onClick={() => setRemoveOpen(true)}
+              >
+                Bỏ khỏi bảng{selectedIds.length > 0 ? ` (${selectedIds.length})` : ''}
+              </Button>
+            </Can>
+            <Can do="shift.assign">
+              <Button
+                type="primary"
+                icon={<Icon name="event_repeat" size={20} />}
+                onClick={() => setAssignOpen(true)}
+              >
+                Phân ca hàng loạt
+              </Button>
+            </Can>
+          </div>
         }
       />
 
@@ -179,6 +257,12 @@ export function ShiftSchedulePage() {
             format="DD/MM/YYYY"
             style={{ width: '100%' }}
             value={toDayjs(query.from)}
+            // Ngoài kỳ lập bảng thì Backend từ chối — chặn ngay trên lịch để
+            // người dùng không phải thử rồi mới biết luật.
+            disabledDate={(date) => {
+              const value = date.format('YYYY-MM-DD');
+              return value < period.from || value > period.to;
+            }}
             onChange={(date) => changeRange(toWorkDate(date?.toDate()), undefined)}
           />
         </FilterField>
@@ -190,18 +274,23 @@ export function ShiftSchedulePage() {
             format="DD/MM/YYYY"
             style={{ width: '100%' }}
             value={toDayjs(query.to)}
+            disabledDate={(date) => {
+              const value = date.format('YYYY-MM-DD');
+              return value < period.from || value > period.to;
+            }}
             onChange={(date) => changeRange(undefined, toWorkDate(date?.toDate()))}
           />
         </FilterField>
 
-        <FilterField label="Phòng ban" htmlFor="sb-dept" width={200}>
-          <Select
+        <FilterField label="Phòng ban" htmlFor="sb-dept" width={220}>
+          <DepartmentTreeSelect
             id="sb-dept"
-            value={query.departmentId ?? ''}
-            loading={departments.isLoading}
-            options={toSelectOptions(departments.data, 'Tất cả phòng ban')}
+            value={query.departmentId}
             onChange={(value) => patchQuery({ departmentId: value })}
-            style={{ width: '100%' }}
+            // Chỉ các phòng ban đã chọn lúc lập bảng — lọc sang phòng khác chỉ
+            // ra bảng trống, vì thành viên của bảng không có ai ở đó.
+            limitTo={schedule.data?.departmentIds}
+            placeholder="Tất cả phòng ban trong bảng"
           />
         </FilterField>
 
@@ -223,8 +312,15 @@ export function ShiftSchedulePage() {
       ) : employees.length === 0 ? (
         <EmptyState
           icon="event_busy"
-          title="Không có nhân viên nào khớp bộ lọc"
-          description="Chỉ nhân viên đang làm việc hoặc chờ kích hoạt mới xếp ca được. Thử bỏ bớt bộ lọc phòng ban."
+          title="Bảng này chưa có CBNV nào khớp bộ lọc"
+          description="Bảng chỉ chứa những người được đưa vào lúc lập. Bỏ bớt bộ lọc, hoặc dùng Thêm CBNV để đưa thêm người vào bảng."
+          action={
+            canAssign ? (
+              <Button type="primary" onClick={() => setAddMembersOpen(true)}>
+                Thêm CBNV
+              </Button>
+            ) : undefined
+          }
         />
       ) : (
         <>
@@ -357,7 +453,7 @@ export function ShiftSchedulePage() {
                             shift={shift}
                             employee={employee}
                             date={day.date}
-                            shifts={shifts.data ?? []}
+                            shifts={allowedShifts}
                             editable={canAssign}
                             onAssign={(nextShiftId) =>
                               void assignOne(employee, day.date, nextShiftId)
@@ -384,7 +480,7 @@ export function ShiftSchedulePage() {
               flexWrap: 'wrap',
             }}
           >
-            <ShiftLegend shifts={shifts.data ?? []} />
+            <ShiftLegend shifts={allowedShifts} />
 
             <Pagination
               current={board.data?.meta.page ?? 1}
@@ -408,9 +504,38 @@ export function ShiftSchedulePage() {
         preselectedIds={selectedIds}
         employees={employees}
         onDone={() => setSelectedIds([])}
+        scheduleId={scheduleId}
+        allowedDepartmentIds={schedule.data?.departmentIds}
+        allowedShiftIds={schedule.data?.shiftIds}
+        periodBounds={period}
+      />
+
+      <AddMembersModal
+        open={addMembersOpen}
+        scheduleId={scheduleId}
+        existingIds={employees.map((employee) => employee.id)}
+        onClose={() => setAddMembersOpen(false)}
+      />
+
+      <ConfirmDialog
+        open={removeOpen}
+        title={`Bỏ ${selectedIds.length} CBNV khỏi bảng?`}
+        message="Lịch ca của họ TRONG bảng này cũng bị xoá — nếu không, bảng công cuối tháng vẫn tính theo ca cũ dù họ không còn nằm trong bảng nào. Bảng công đã tính không tự đổi theo."
+        confirmText="Bỏ khỏi bảng"
+        danger
+        loading={removeMembers.isPending}
+        onCancel={() => setRemoveOpen(false)}
+        onConfirm={() => void removeSelectedMembers()}
       />
     </>
   );
+}
+
+/** Giữ mốc ngày trong kỳ của bảng — URL cũ hoặc kỳ khác đều không kéo bảng ra ngoài tháng. */
+function clampToPeriod(value: string, period: { from: string; to: string }): string {
+  if (value < period.from) return period.from;
+  if (value > period.to) return period.to;
+  return value;
 }
 
 /**

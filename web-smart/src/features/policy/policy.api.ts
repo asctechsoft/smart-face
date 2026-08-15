@@ -3,14 +3,44 @@ import { api } from '@/lib/api/client';
 import { qk } from '@/lib/api/query-client';
 import type { Branch, Department } from '@/features/shared/org.api';
 
+/** Hệ số ngày công đặt riêng cho một ngày lễ — chỉ liệt kê ngoại lệ. */
+export interface ShiftHolidayFactor {
+  holidayId: string;
+  factor: number;
+}
+
 export interface Shift {
   id: string;
   name: string;
+  /** Mã ca, duy nhất trong công ty. */
+  code: string;
+  /** Ký hiệu in trên bảng chấm công. */
+  symbol: string | null;
+  /** Phòng ban áp dụng. Rỗng = mọi phòng ban. */
+  departmentIds: string[];
   type: 'FIXED' | 'ROTATING' | 'FLEXIBLE' | string;
   startTime: string | null;
   endTime: string | null;
   crossesMidnight: boolean;
   breakMinutes: number;
+  breakStart: string | null;
+  breakEnd: string | null;
+  requireCheckIn: boolean;
+  checkInFrom: string | null;
+  checkInTo: string | null;
+  requireCheckOut: boolean;
+  checkOutFrom: string | null;
+  checkOutTo: string | null;
+  /**
+   * Số phút công — Backend TÍNH RA từ giờ ca, không lưu và không nhận từ client.
+   * Gửi trường này lên cũng bị bỏ qua.
+   */
+  workMinutes: number;
+  workDayCredit: number;
+  normalDayFactor: number;
+  weeklyRestFactor: number;
+  holidayFactor: number;
+  holidayFactors: ShiftHolidayFactor[];
   requiredMinutes: number | null;
   lateToleranceMinutes: number;
   earlyLeaveToleranceMinutes: number;

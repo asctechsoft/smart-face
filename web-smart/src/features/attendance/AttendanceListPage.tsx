@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
+import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmployeeCell } from '@/components/EmployeeCell';
 import { StatusBadge, dailyStatusTone } from '@/components/StatusBadge';
 import { Icon } from '@/components/Icon';
@@ -21,7 +22,7 @@ import {
 } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatStandardDays } from '@/lib/utils/format';
-import { useDepartments, useBranches, toSelectOptions } from '@/features/shared/org.api';
+import { useBranches, toSelectOptions } from '@/features/shared/org.api';
 import { useAttendanceList, type AttendanceDaily, type AttendanceQuery } from './attendance.api';
 import { AttendanceDetailDrawer } from './AttendanceDetailDrawer';
 import { ExportAttendanceModal } from './ExportAttendanceModal';
@@ -63,7 +64,6 @@ export function AttendanceListPage() {
     [searchParams, timezone],
   );
 
-  const departments = useDepartments();
   const branches = useBranches();
   const list = useAttendanceList(query);
 
@@ -237,13 +237,11 @@ export function AttendanceListPage() {
         </FilterField>
 
         <FilterField label="Phòng ban" htmlFor="f-dept" width={200}>
-          <Select
+          <DepartmentTreeSelect
             id="f-dept"
-            value={query.departmentId ?? ''}
-            options={toSelectOptions(departments.data, 'Tất cả phòng ban')}
-            loading={departments.isLoading}
+            value={query.departmentId}
             onChange={(value) => patchQuery({ departmentId: value })}
-            style={{ width: '100%' }}
+            placeholder="Tất cả phòng ban"
           />
         </FilterField>
 

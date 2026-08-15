@@ -51,6 +51,8 @@ describe('MakeupService', () => {
     markExpired: jest.Mock;
     totals: jest.Mock;
     countCompletedSiblings: jest.Mock;
+    findEngineDebts: jest.Mock;
+    findOutstandingDebts: jest.Mock;
   };
   let policy: { getNumber: jest.Mock; getBoolean: jest.Mock; get: jest.Mock; getTimezone: jest.Mock };
 
@@ -86,6 +88,8 @@ describe('MakeupService', () => {
         employeesWithDebt: 0,
       }),
       countCompletedSiblings: jest.fn().mockResolvedValue(0),
+      findEngineDebts: jest.fn().mockResolvedValue([]),
+      findOutstandingDebts: jest.fn().mockResolvedValue([]),
     };
 
     policy = {
@@ -327,5 +331,209 @@ describe('MakeupService', () => {
     const [, createData] = records.create.mock.calls[0] as [string, Record<string, unknown>];
     // Mặc định `makeup.dueDays` = 30 → 05/08 + 30 ngày = 04/09.
     expect(createData.dueDate).toEqual(parseWorkDate('2026-09-04'));
+  });
+
+  // =========================================================================
+  //  Engine tự sinh nợ — docs/04 mục 5.1
+  //
+  //  Nhóm test quan trọng nhất của file này. `calculateAndPersist` là hàm
+  //  IDEMPOTENT bị gọi lại rất nhiều lần cho cùng một ngày (mỗi lần hiệu chỉnh
+  //  công, mỗi lần duyệt đơn ngược quá khứ, và mỗi đêm khi cron quét). Một lỗi
+  //  nhân bản ở đây đi thẳng vào bảng lương và không ai phát hiện cho tới lúc
+  //  đối soát cuối tháng.
+  // =========================================================================
+
+  const DEBT_DAY = parseWorkDate('2026-08-05');
+
+  /** Dòng nợ do engine sinh, chưa được bù lần nào. */
+  function engineDebt(overrides: Partial<typeof openDebt> & { id: string }) {
+    return { ...openDebt, source: 'ENGINE', ...overrides };
+  }
+
+  it('chạy lại khi không có gì đổi thì KHÔNG phát sinh lệnh ghi nào', async () => {
+    records.findEngineDebts.mockResolvedValue([
+      engineDebt({ id: 'mk_e1', debtMinutes: 120, remainingMinutes: 120 }),
+    ]);
+
+    await service.reconcileEngineDebt(COMPANY, EMPLOYEE, DEBT_DAY, 120);
+
+    expect(records.create).not.toHaveBeenCalled();
+    expect(records.update).not.toHaveBeenCalled();
+    expect(records.delete).not.toHaveBeenCalled();
+  });
+
+  it('chạy 3 lần liên tiếp trên cùng dữ liệu chỉ tạo ĐÚNG MỘT dòng nợ', async () => {
+    // Lần đầu chưa có gì; các lần sau thấy đúng dòng vừa tạo.
+    records.findEngineDebts
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([engineDebt({ id: 'mk_e1', debtMinutes: 90, remainingMinutes: 90 })]);
+
+    await service.reconcileEngineDebt(COMPANY, EMPLOYEE, DEBT_DAY, 90);
+    await service.reconcileEngineDebt(COMPANY, EMPLOYEE, DEBT_DAY, 90);
+    await service.reconcileEngineDebt(COMPANY, EMPLOYEE, DEBT_DAY, 90);
+
+    expect(records.create).toHaveBeenCalledTimes(1);
+    const [, data] = records.create.mock.calls[0] as [string, Record<string, unknown>];
+    expect(data.debtMinutes).toBe(90);
+    expect(data.source).toBe('ENGINE');
+    // Hạn đếm từ ngày phát sinh nợ (05/08 + 30) chứ không phải hôm nay.
+    expect(data.dueDate).toEqual(parseWorkDate('2026-09-04'));
+  });
+
+  it('nợ tăng thì dồn vào dòng CHƯA BÙ thay vì mở thêm dòng mới', async () => {
+    records.findEngineDebts.mockResolvedValue([
+      engineDebt({ id: 'mk_e1', debtMinutes: 60, remainingMinutes: 60 }),
+    ]);
+
+    await service.reconcileEngineDebt(COMPANY, EMPLOYEE, DEBT_DAY, 100);
+
+    expect(records.create).not.toHaveBeenCalled();
+    expect(records.update).toHaveBeenCalledWith(COMPANY, 'mk_e1', {
+      debtMinutes: 100,
+      remainingMinutes: 100,
+    });
+  });
+
+  it('ngày được hiệu chỉnh cho đủ giờ thì khoản nợ biến mất, không để lại nợ ma', async () => {
+    records.findEngineDebts.mockResolvedValue([
+      engineDebt({ id: 'mk_e1', debtMinutes: 120, remainingMinutes: 120 }),
+    ]);
+
+    await service.reconcileEngineDebt(COMPANY, EMPLOYEE, DEBT_DAY, 0);
+
+    expect(records.delete).toHaveBeenCalledWith(COMPANY, 'mk_e1');
+  });
+
+  it('nợ giảm một phần thì cắt bớt dòng, không xoá cả dòng', async () => {
+    records.findEngineDebts.mockResolvedValue([
+      engineDebt({ id: 'mk_e1', debtMinutes: 120, remainingMinutes: 120 }),
+    ]);
+
+    await service.reconcileEngineDebt(COMPANY, EMPLOYEE, DEBT_DAY, 45);
+
+    expect(records.delete).not.toHaveBeenCalled();
+    expect(records.update).toHaveBeenCalledWith(COMPANY, 'mk_e1', {
+      debtMinutes: 45,
+      remainingMinutes: 45,
+    });
+  });
+
+  it('KHÔNG BAO GIỜ đụng vào dòng đã có giờ làm bù — đó là công nhân viên đã làm thật', async () => {
+    records.findEngineDebts.mockResolvedValue([
+      // Mới nhất trước, đúng thứ tự repository trả về.
+      engineDebt({ id: 'mk_unpaid', debtMinutes: 80, remainingMinutes: 80 }),
+      engineDebt({
+        id: 'mk_paid',
+        debtMinutes: 120,
+        makeupMinutes: 120,
+        remainingMinutes: 0,
+        status: 'COMPLETED',
+      }),
+    ]);
+
+    // Nợ thật giờ chỉ còn 0 → phải cắt 200, nhưng chỉ được phép cắt 80.
+    await service.reconcileEngineDebt(COMPANY, EMPLOYEE, DEBT_DAY, 0);
+
+    expect(records.delete).toHaveBeenCalledTimes(1);
+    expect(records.delete).toHaveBeenCalledWith(COMPANY, 'mk_unpaid');
+    expect(records.update).not.toHaveBeenCalled();
+  });
+
+  // =========================================================================
+  //  Duyệt đơn làm bù → ghi vào sổ
+  // =========================================================================
+
+  it('giờ làm bù trả khoản CŨ NHẤT trước — khoản cũ cũng là khoản sắp hết hạn', async () => {
+    const older = engineDebt({
+      id: 'mk_old',
+      debtWorkDate: parseWorkDate('2026-08-01'),
+      debtMinutes: 60,
+      remainingMinutes: 60,
+    });
+    const newer = engineDebt({
+      id: 'mk_new',
+      debtWorkDate: parseWorkDate('2026-08-10'),
+      debtMinutes: 60,
+      remainingMinutes: 60,
+    });
+
+    records.findOutstandingDebts.mockResolvedValue([older, newer]);
+    records.findById.mockImplementation((_companyId: string, id: string) =>
+      Promise.resolve(id === 'mk_old' ? older : newer),
+    );
+
+    await service.applyFromApprovedRequest(ctx, {
+      employeeId: EMPLOYEE,
+      minutes: 60,
+      makeupWorkDate: parseWorkDate('2026-08-20'),
+      requestId: 'req_1',
+    });
+
+    // Đúng một khoản được ghi nhận, và đó là khoản cũ hơn.
+    const touchedIds = records.update.mock.calls.map((call) => call[1] as string);
+    expect(touchedIds).toContain('mk_old');
+    expect(touchedIds).not.toContain('mk_new');
+  });
+
+  it('một đơn trải được qua NHIỀU khoản nợ', async () => {
+    const first = engineDebt({
+      id: 'mk_a',
+      debtWorkDate: parseWorkDate('2026-08-01'),
+      debtMinutes: 60,
+      remainingMinutes: 60,
+    });
+    const second = engineDebt({
+      id: 'mk_b',
+      debtWorkDate: parseWorkDate('2026-08-02'),
+      debtMinutes: 90,
+      remainingMinutes: 90,
+    });
+
+    records.findOutstandingDebts.mockResolvedValue([first, second]);
+    records.findById.mockImplementation((_companyId: string, id: string) =>
+      Promise.resolve(id === 'mk_a' ? first : second),
+    );
+
+    const result = await service.applyFromApprovedRequest(ctx, {
+      employeeId: EMPLOYEE,
+      minutes: 100,
+      makeupWorkDate: parseWorkDate('2026-08-20'),
+      requestId: 'req_2',
+    });
+
+    expect(result.appliedMinutes).toBe(100);
+    expect(result.touchedRecordIds).toEqual(['mk_a', 'mk_b']);
+  });
+
+  it('đơn khai nhiều giờ hơn số nợ thật thì BỊ TỪ CHỐI, không cắt bớt âm thầm', async () => {
+    records.findOutstandingDebts.mockResolvedValue([
+      engineDebt({ id: 'mk_e1', debtMinutes: 60, remainingMinutes: 60 }),
+    ]);
+
+    // Phần dôi ra là tăng ca với hệ số lương khác hẳn — nuốt hoặc cộng nhầm vào
+    // đây đều là trả sai lương theo hướng không ai phát hiện ra.
+    await expect(
+      service.applyFromApprovedRequest(ctx, {
+        employeeId: EMPLOYEE,
+        minutes: 180,
+        makeupWorkDate: parseWorkDate('2026-08-20'),
+        requestId: 'req_3',
+      }),
+    ).rejects.toBeInstanceOf(AppException);
+
+    expect(records.update).not.toHaveBeenCalled();
+  });
+
+  it('nhân viên không còn nợ thì đơn làm bù bị từ chối kèm lời giải thích', async () => {
+    records.findOutstandingDebts.mockResolvedValue([]);
+
+    await expect(
+      service.applyFromApprovedRequest(ctx, {
+        employeeId: EMPLOYEE,
+        minutes: 60,
+        makeupWorkDate: parseWorkDate('2026-08-20'),
+        requestId: 'req_4',
+      }),
+    ).rejects.toBeInstanceOf(AppException);
   });
 });

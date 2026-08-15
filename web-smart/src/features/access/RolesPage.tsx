@@ -5,12 +5,13 @@ import type { ColumnsType } from 'antd/es/table';
 import { PageHeader, SectionTitle } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
+import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmployeeCell } from '@/components/EmployeeCell';
 import { StatusBadge } from '@/components/StatusBadge';
 import { Icon } from '@/components/Icon';
-import { ROLE_LABEL, SystemRole } from '@/config/constants';
+import { EMPLOYABLE_STATUSES, ROLE_LABEL, SystemRole } from '@/config/constants';
 import { rolesFor, type Permission } from '@/lib/rbac/permissions';
-import { useDepartments, toSelectOptions } from '@/features/shared/org.api';
+import { useDepartments } from '@/features/shared/org.api';
 import {
   useEmployeeList,
   useUpdateEmployee,
@@ -57,7 +58,10 @@ export function RolesPage() {
       pageSize: Number(searchParams.get('pageSize') ?? 50),
       departmentId: searchParams.get('departmentId') ?? undefined,
       q: searchParams.get('q') ?? undefined,
-      status: 'ACTIVE',
+      // Gồm cả `PENDING_ACTIVATION`: quyền được gán lúc tạo hồ sơ, TRƯỚC khi
+      // người đó đăng nhập lần đầu. Lọc `ACTIVE` thì màn phân quyền không nhìn
+      // thấy chính những tài khoản quản trị vừa được cấp.
+      status: EMPLOYABLE_STATUSES,
     }),
     [searchParams],
   );
@@ -159,13 +163,11 @@ export function RolesPage() {
 
       <FilterBar activeCount={activeFilters} onClear={() => setSearchParams({}, { replace: true })}>
         <FilterField label="Phòng ban" htmlFor="rl-dept" width={220}>
-          <Select
+          <DepartmentTreeSelect
             id="rl-dept"
-            value={query.departmentId ?? ''}
-            loading={departments.isLoading}
-            options={toSelectOptions(departments.data, 'Tất cả phòng ban')}
+            value={query.departmentId}
             onChange={(value) => patchQuery({ departmentId: value })}
-            style={{ width: '100%' }}
+            placeholder="Tất cả phòng ban"
           />
         </FilterField>
 

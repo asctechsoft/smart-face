@@ -6,7 +6,7 @@ import { AuthShell } from './AuthShell';
 import { authApi, isTwoFactorChallenge, type SessionTokens } from '@/lib/auth/auth.api';
 import { firebaseErrorMessage, signInAndGetIdToken, firebaseSignOut } from '@/lib/auth/firebase';
 import { useAuth } from '@/lib/auth/auth-context';
-import { toUserMessage } from '@/lib/errors/api-error';
+import { NetworkError, toUserMessage, type NetworkFailureKind } from '@/lib/errors/api-error';
 import { isFirebaseConfigured, missingFirebaseKeys } from '@/config/env';
 import { TwoFactorStep } from './TwoFactorStep';
 import { Button, Field, PasswordInput, TextInput } from '@/components/ui';
@@ -15,6 +15,20 @@ interface LoginForm {
   email: string;
   password: string;
 }
+
+/**
+ * Câu cho trường hợp gọi Backend mà không nhận được phản hồi nào.
+ *
+ * Không dùng chung câu của `toUserError`: lời khuyên "tải lại trang để xem kết
+ * quả" hợp lý ở mọi màn khác, nhưng ở đây thì vô nghĩa — chưa vào được thì chưa
+ * có gì để xem. Điều người dùng cần biết là bấm lại có phải gõ lại gì không.
+ */
+const LOGIN_NO_ANSWER: Record<NetworkFailureKind, string> = {
+  TIMEOUT:
+    'Máy chủ đã nhận yêu cầu nhưng trả lời quá chậm. Bấm Đăng nhập lần nữa — mật khẩu vẫn còn trong ô.',
+  UNREACHABLE: 'Không kết nối được máy chủ. Kiểm tra đường truyền rồi thử lại.',
+  BAD_RESPONSE: 'Máy chủ trả về phản hồi không đọc được. Bấm Đăng nhập lần nữa.',
+};
 
 /**
  * Đăng nhập — docs/08 mục 2, docs/13.
@@ -77,15 +91,27 @@ export function LoginPage() {
 
       await finishLogin(result);
     } catch (caught) {
-      // Firebase đã đăng nhập thành công nhưng Backend từ chối (tài khoản chưa
+      const noAnswer = caught instanceof NetworkError;
+
+      // Firebase đã xác nhận danh tính nhưng Backend TỪ CHỐI (tài khoản chưa
       // được cấp hồ sơ, công ty bị tạm ngưng) → phải huỷ luôn phiên Firebase.
       // Để lại thì lần sau `currentUser` vẫn tồn tại và luồng xác thực lại hiểu
       // nhầm là người dùng đang đăng nhập hợp lệ.
-      await firebaseSignOut();
+      //
+      // Nhưng KHÔNG huỷ khi chỉ là không nhận được câu trả lời. Backend chưa từ
+      // chối ai cả — nó còn có thể đã tạo phiên xong. Đăng xuất Firebase ở đây
+      // là tự tay vứt bỏ một danh tính vẫn còn hiệu lực, để rồi bắt người dùng
+      // gõ lại mật khẩu cho một việc họ vừa làm đúng.
+      if (!noAnswer) {
+        await firebaseSignOut();
+      }
+
       setError(
         (caught as { code?: string })?.code?.startsWith('auth/')
           ? firebaseErrorMessage(caught)
-          : toUserMessage(caught),
+          : noAnswer
+            ? LOGIN_NO_ANSWER[(caught as NetworkError).kind]
+            : toUserMessage(caught),
       );
     } finally {
       setSubmitting(false);

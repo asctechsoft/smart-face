@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Alert, Button, DatePicker, Drawer, Select } from 'antd';
+import { Alert, Button, DatePicker, Drawer, Radio, Select } from 'antd';
 import { toUserMessage } from '@/lib/errors/api-error';
 import { toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
+import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { useShifts } from '@/features/policy/policy.api';
 import {
   useBulkAssignShifts,
@@ -31,16 +32,23 @@ const ORDINAL_WEEKDAYS = [
   { value: 7, label: 'CN' },
 ] as const;
 
+type Coverage = 'ALL' | 'PICK';
+
 /**
  * Phân ca hàng loạt — `FR-WEB-HR-04`.
  *
- * Thao tác thật của người dùng là "xếp ca tháng 8 cho cả phòng 40 người", nên
- * cả ba chiều (ai, ca nào, những ngày nào) nằm trên cùng một form và gửi đi
- * trong MỘT request: 40 × 31 lời gọi đơn lẻ vừa chậm vừa có thể hỏng giữa
- * chừng, để lại lịch đúng một nửa mà không ai biết nửa nào.
+ * Các trường xếp theo đúng thứ tự người dùng quyết định: **phòng nào → ca nào →
+ * những ngày nào → cho ai**. Trước đây "cho ai" đứng đầu, buộc người dùng chọn
+ * tên trước khi biết mình đang xếp ca gì.
  *
- * Có luôn nhánh XOÁ ở đây vì "xếp lại lịch" trong thực tế luôn bắt đầu bằng dọn
- * lịch cũ. Tách sang màn khác thì người dùng phải nhớ hai đường dẫn cho một việc.
+ * Phòng ban và ca **giới hạn trong phạm vi của bảng phân ca**: bảng đã chốt
+ * những thứ đó lúc lập, và Backend cũng từ chối nếu đi ra ngoài. Hiện đầy đủ ở
+ * giao diện rồi mới báo lỗi khi bấm Lưu là bắt người dùng đoán luật.
+ *
+ * "Toàn bộ CBNV" là một LỰA CHỌN riêng chứ không phải nút "chọn tất cả": nó có
+ * nghĩa "mọi người thuộc phòng ban đã chọn", kể cả người ở trang sau của lưới.
+ * Nút chọn-tất-cả kiểu cũ chỉ chọn được những người đang hiển thị, và đó chính
+ * là chỗ người dùng tưởng đã xếp cho cả phòng mà thực ra chỉ 25 người đầu.
  */
 export function BulkAssignDrawer({
   open,
@@ -49,6 +57,10 @@ export function BulkAssignDrawer({
   preselectedIds,
   employees,
   onDone,
+  scheduleId,
+  allowedDepartmentIds,
+  allowedShiftIds,
+  periodBounds,
 }: {
   open: boolean;
   onClose: () => void;
@@ -56,6 +68,12 @@ export function BulkAssignDrawer({
   preselectedIds: string[];
   employees: ShiftBoardEmployee[];
   onDone: () => void;
+  /** Xếp trong một bảng phân ca — Backend kiểm tra ca, kỳ và thành viên theo bảng. */
+  scheduleId?: string;
+  allowedDepartmentIds?: string[];
+  allowedShiftIds?: string[];
+  /** Khoảng ngày hợp lệ của kỳ. Ngoài khoảng này Backend từ chối. */
+  periodBounds?: { from: string; to: string };
 }) {
   const navigate = useNavigate();
   const toast = useToast();
@@ -64,10 +82,12 @@ export function BulkAssignDrawer({
   const assign = useBulkAssignShifts();
   const clear = useClearShiftAssignments();
 
-  const [employeeIds, setEmployeeIds] = useState<string[]>([]);
+  const [departmentId, setDepartmentId] = useState<string | undefined>();
   const [shiftId, setShiftId] = useState<string | undefined>();
   const [from, setFrom] = useState(defaultRange.from);
   const [to, setTo] = useState(defaultRange.to);
+  const [coverage, setCoverage] = useState<Coverage>('ALL');
+  const [employeeIds, setEmployeeIds] = useState<string[]>([]);
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
   const [error, setError] = useState<string | null>(null);
   const [clearOpen, setClearOpen] = useState(false);
@@ -75,12 +95,26 @@ export function BulkAssignDrawer({
   useEffect(() => {
     if (!open) return;
     setError(null);
-    setEmployeeIds(preselectedIds);
     setFrom(defaultRange.from);
     setTo(defaultRange.to);
-  }, [open, preselectedIds, defaultRange.from, defaultRange.to]);
+    setDepartmentId(allowedDepartmentIds?.length === 1 ? allowedDepartmentIds[0] : undefined);
+    // Có người được tích sẵn trên lưới thì rõ ràng ý định là xếp cho đúng những
+    // người đó, không phải cả phòng.
+    setCoverage(preselectedIds.length > 0 ? 'PICK' : 'ALL');
+    setEmployeeIds(preselectedIds);
+  }, [open, preselectedIds, defaultRange.from, defaultRange.to, allowedDepartmentIds]);
 
-  const canSubmit = employeeIds.length > 0 && Boolean(shiftId);
+  /** Nhân viên thuộc phòng ban đang chọn — nguồn cho cả hai nhánh "toàn bộ" và "từng người". */
+  const scoped = departmentId
+    ? employees.filter((employee) => employee.department?.id === departmentId)
+    : employees;
+
+  const shiftOptions = (shifts.data ?? []).filter(
+    (shift) => !allowedShiftIds || allowedShiftIds.includes(shift.id),
+  );
+
+  const targetIds = coverage === 'ALL' ? scoped.map((employee) => employee.id) : employeeIds;
+  const canSubmit = targetIds.length > 0 && Boolean(shiftId);
 
   async function submit() {
     if (!shiftId) return;
@@ -88,13 +122,14 @@ export function BulkAssignDrawer({
 
     try {
       const result = await assign.mutateAsync({
-        employeeIds,
+        employeeIds: targetIds,
         shiftId,
         from,
         to,
         // Gửi `undefined` thay vì mảng rỗng: Backend hiểu "bỏ trống = mọi ngày",
         // còn mảng rỗng đi qua bộ lọc sẽ khớp KHÔNG ngày nào và không phân ca gì cả.
         weekdays: weekdays.length > 0 ? weekdays : undefined,
+        scheduleId,
       });
 
       toast.success(
@@ -106,7 +141,7 @@ export function BulkAssignDrawer({
       if (result.skippedEmployeeIds.length > 0) {
         toast.warning(
           `Bỏ qua ${result.skippedEmployeeIds.length} nhân viên`,
-          'Những người này không còn thuộc phạm vi phòng ban bạn quản lý.',
+          'Những người này không thuộc bảng, hoặc ngoài phạm vi phòng ban bạn quản lý.',
         );
       }
       onDone();
@@ -118,7 +153,7 @@ export function BulkAssignDrawer({
 
   async function clearAssignments() {
     try {
-      const result = await clear.mutateAsync({ employeeIds, from, to });
+      const result = await clear.mutateAsync({ employeeIds: targetIds, from, to });
       toast.success(
         `Đã xoá ${result.deleted} lượt phân ca`,
         'Những người này quay về ca mặc định của công ty cho tới khi được xếp ca mới.',
@@ -131,6 +166,10 @@ export function BulkAssignDrawer({
     }
   }
 
+  /** Ngày ngoài kỳ lập bảng thì Backend từ chối — chặn ngay ở lịch cho khỏi mất công. */
+  const outOfPeriod = (value: string) =>
+    Boolean(periodBounds) && (value < periodBounds!.from || value > periodBounds!.to);
+
   return (
     <Drawer
       open={open}
@@ -142,7 +181,7 @@ export function BulkAssignDrawer({
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
           <Button
             danger
-            disabled={employeeIds.length === 0}
+            disabled={targetIds.length === 0}
             loading={clear.isPending}
             onClick={() => setClearOpen(true)}
           >
@@ -165,32 +204,17 @@ export function BulkAssignDrawer({
       <div style={{ display: 'grid', gap: 16 }}>
         {error ? <Alert type="error" showIcon message={error} role="alert" /> : null}
 
-        <Field label="Nhân viên" htmlFor="ba-emp" required>
-          <Select
-            id="ba-emp"
-            mode="multiple"
-            style={{ width: '100%' }}
-            placeholder="Chọn nhân viên"
-            value={employeeIds}
-            onChange={setEmployeeIds}
-            optionFilterProp="label"
-            options={employees.map((employee) => ({
-              value: employee.id,
-              label: `${employee.fullName} · ${employee.employeeCode}`,
-            }))}
+        <Field label="Phòng ban" htmlFor="ba-dept">
+          <DepartmentTreeSelect
+            id="ba-dept"
+            value={departmentId}
+            onChange={(value) => {
+              setDepartmentId(value);
+              setEmployeeIds([]);
+            }}
+            limitTo={allowedDepartmentIds}
+            placeholder="Tất cả phòng ban trong bảng"
           />
-          <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <Button size="small" onClick={() => setEmployeeIds(employees.map((item) => item.id))}>
-              Chọn tất cả đang hiển thị
-            </Button>
-            <Button size="small" type="text" onClick={() => setEmployeeIds([])}>
-              Bỏ chọn
-            </Button>
-          </div>
-          <p className="sf-body-sm sf-text-variant" style={{ margin: '4px 0 0' }}>
-            Danh sách chỉ gồm nhân viên đang hiển thị trên lịch. Cần người ở trang khác thì chuyển
-            trang rồi chọn thêm.
-          </p>
         </Field>
 
         <Field label="Ca làm việc" htmlFor="ba-shift" required>
@@ -201,14 +225,16 @@ export function BulkAssignDrawer({
             loading={shifts.isLoading}
             value={shiftId}
             onChange={setShiftId}
-            options={(shifts.data ?? []).map((shift) => ({
+            optionFilterProp="label"
+            options={shiftOptions.map((shift) => ({
               value: shift.id,
               label:
                 shift.type === 'FLEXIBLE'
-                  ? `${shift.name} · linh hoạt`
-                  : `${shift.name} · ${shift.startTime ?? '—'}–${shift.endTime ?? '—'}${shift.crossesMidnight ? ' (qua đêm)' : ''}`,
+                  ? `${shift.code} · ${shift.name} · linh hoạt`
+                  : `${shift.code} · ${shift.name} · ${shift.startTime ?? '—'}–${shift.endTime ?? '—'}${shift.crossesMidnight ? ' (qua đêm)' : ''}`,
             }))}
           />
+          {allowedShiftIds ? <Hint>Chỉ các ca đã chọn khi lập bảng phân ca này.</Hint> : null}
         </Field>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
@@ -219,6 +245,7 @@ export function BulkAssignDrawer({
               format="DD/MM/YYYY"
               style={{ width: '100%' }}
               value={toDayjs(from)}
+              disabledDate={(date) => outOfPeriod(date.format('YYYY-MM-DD'))}
               onChange={(date) => setFrom(toWorkDate(date?.toDate()) ?? from)}
             />
           </Field>
@@ -229,10 +256,44 @@ export function BulkAssignDrawer({
               format="DD/MM/YYYY"
               style={{ width: '100%' }}
               value={toDayjs(to)}
+              disabledDate={(date) => outOfPeriod(date.format('YYYY-MM-DD'))}
               onChange={(date) => setTo(toWorkDate(date?.toDate()) ?? to)}
             />
           </Field>
         </div>
+
+        <Field label="Áp dụng cho">
+          <Radio.Group
+            value={coverage}
+            onChange={(event) => setCoverage(event.target.value as Coverage)}
+            style={{ display: 'grid', gap: 8 }}
+          >
+            <Radio value="ALL">
+              Toàn bộ CBNV
+              <span className="sf-body-sm sf-text-variant" style={{ marginLeft: 8 }}>
+                ({scoped.length} người
+                {departmentId ? ' trong phòng ban đã chọn' : ' trong bảng'})
+              </span>
+            </Radio>
+            <Radio value="PICK">Từng CBNV</Radio>
+          </Radio.Group>
+
+          {coverage === 'PICK' ? (
+            <Select
+              mode="multiple"
+              style={{ width: '100%', marginTop: 8 }}
+              placeholder="Chọn nhân viên"
+              value={employeeIds}
+              onChange={setEmployeeIds}
+              optionFilterProp="label"
+              options={scoped.map((employee) => ({
+                value: employee.id,
+                label: `${employee.fullName} · ${employee.employeeCode}`,
+              }))}
+              aria-label="Danh sách nhân viên được phân ca"
+            />
+          ) : null}
+        </Field>
 
         <Field label="Chỉ áp dụng cho các thứ">
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -266,9 +327,9 @@ export function BulkAssignDrawer({
               );
             })}
           </div>
-          <p className="sf-body-sm sf-text-variant" style={{ margin: '4px 0 0' }}>
+          <Hint>
             Không chọn thứ nào = phân ca cho mọi ngày trong khoảng, kể cả cuối tuần và ngày lễ.
-          </p>
+          </Hint>
         </Field>
 
         <Alert
@@ -282,7 +343,7 @@ export function BulkAssignDrawer({
       <ConfirmDialog
         open={clearOpen}
         title="Xoá phân ca trong khoảng đã chọn?"
-        message={`${employeeIds.length} nhân viên sẽ mất phân ca từ ${from} đến ${to} và quay về ca mặc định của công ty. Bảng công đã tính của những ngày đó không thay đổi.`}
+        message={`${targetIds.length} nhân viên sẽ mất phân ca từ ${from} đến ${to} và quay về ca mặc định của công ty. Bảng công đã tính của những ngày đó không thay đổi.`}
         confirmText="Xoá phân ca"
         danger
         loading={clear.isPending}
@@ -290,5 +351,13 @@ export function BulkAssignDrawer({
         onConfirm={() => void clearAssignments()}
       />
     </Drawer>
+  );
+}
+
+function Hint({ children }: { children: React.ReactNode }) {
+  return (
+    <p className="sf-body-sm sf-text-variant" style={{ margin: '4px 0 0' }}>
+      {children}
+    </p>
   );
 }

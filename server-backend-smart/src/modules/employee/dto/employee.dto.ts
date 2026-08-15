@@ -10,14 +10,39 @@ import {
   Length,
   Matches,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { EmployeeStatus, SystemRole } from '@prisma/client';
 import { PaginationQueryDto } from 'src/common/dto';
 
 export class EmployeeQueryDto extends PaginationQueryDto {
-  @ApiPropertyOptional({ enum: EmployeeStatus })
+  /**
+   * Một hoặc NHIỀU trạng thái, ngăn bằng dấu phẩy: `?status=ACTIVE,PENDING_ACTIVATION`.
+   *
+   * Trước đây chỉ nhận đúng một giá trị, và điều đó âm thầm làm hỏng mọi ô chọn
+   * nhân viên: chúng lọc `status=ACTIVE`, trong khi nhân viên vừa được HR tạo
+   * nằm ở `PENDING_ACTIVATION` cho tới lần đăng nhập đầu tiên. Công ty mới triển
+   * khai — chưa ai kịp cài ứng dụng — có toàn bộ nhân sự ở trạng thái đó, nên ô
+   * chọn rỗng trơn mà không có lỗi nào báo.
+   *
+   * Vẫn tương thích ngược: `?status=ACTIVE` cho ra mảng một phần tử.
+   */
+  @ApiPropertyOptional({
+    enum: EmployeeStatus,
+    isArray: true,
+    description: 'Một hoặc nhiều trạng thái, ngăn bằng dấu phẩy.',
+    example: 'ACTIVE,PENDING_ACTIVATION',
+  })
   @IsOptional()
-  @IsEnum(EmployeeStatus)
-  status?: EmployeeStatus;
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string'
+      ? value
+          .split(',')
+          .map((part) => part.trim())
+          .filter(Boolean)
+      : value,
+  )
+  @IsEnum(EmployeeStatus, { each: true })
+  status?: EmployeeStatus[];
 
   @ApiPropertyOptional()
   @IsOptional()

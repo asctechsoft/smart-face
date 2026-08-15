@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
+import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmployeeCell } from '@/components/EmployeeCell';
 import { StatusBadge, requestStatusTone } from '@/components/StatusBadge';
 import { ReasonDialog } from '@/components/ReasonDialog';
@@ -14,7 +15,6 @@ import { useCan } from '@/lib/rbac/Can';
 import { REQUEST_STATUS_LABEL, DEFAULT_PAGE_SIZE } from '@/config/constants';
 import { formatDateTime, formatDay, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
-import { useDepartments, toSelectOptions } from '@/features/shared/org.api';
 import {
   useApproveRequest,
   useBulkApprove,
@@ -63,7 +63,6 @@ export function RequestListPage() {
   const reject = useRejectRequest();
   const bulkApprove = useBulkApprove();
 
-  const departments = useDepartments();
   const requestTypes = useRequestTypes();
 
   const query: RequestQuery = useMemo(
@@ -291,13 +290,11 @@ export function RequestListPage() {
           </FilterField>
 
           <FilterField label="Phòng ban" htmlFor="r-dept" width={200}>
-            <Select
+            <DepartmentTreeSelect
               id="r-dept"
-              value={query.departmentId ?? ''}
-              loading={departments.isLoading}
-              options={toSelectOptions(departments.data, 'Tất cả phòng ban')}
+              value={query.departmentId}
               onChange={(value) => patchQuery({ departmentId: value })}
-              style={{ width: '100%' }}
+              placeholder="Tất cả phòng ban"
             />
           </FilterField>
 

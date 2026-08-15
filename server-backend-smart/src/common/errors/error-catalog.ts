@@ -844,6 +844,65 @@ export const ERROR_CATALOG = {
     hint: 'Dùng định dạng HH:mm, ví dụ 08:00.',
     retryable: true,
   },
+  POL_SHIFT_CODE_TAKEN: {
+    status: HttpStatus.CONFLICT,
+    message: 'Mã ca này đã được dùng.',
+    messageEn: 'This shift code is already in use.',
+    hint: 'Mã ca đã xuất hiện trên bảng công đã in nên không dùng lại được, kể cả khi ca cũ đã xoá. Đặt mã khác.',
+    retryable: true,
+  },
+  /**
+   * BR-ATT-02 — không có giờ vào thì không có gì để tính giờ công, và ngày đó
+   * rơi vào "thiếu bản ghi" trên bảng công chứ không phải "đi làm đủ".
+   */
+  POL_SHIFT_CHECKIN_REQUIRED: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Ca làm việc bắt buộc phải chấm vào.',
+    messageEn: 'A shift must require check-in.',
+    hint: 'Không có giờ vào thì không tính được giờ công. Chỉ chấm ra có thể tắt.',
+    retryable: true,
+  },
+  POL_SHIFT_INVALID_WINDOW: {
+    status: HttpStatus.BAD_REQUEST,
+    message: 'Khung giờ không hợp lệ.',
+    messageEn: 'Invalid time window.',
+    hint: 'Giờ bắt đầu phải trước giờ kết thúc, và khoảng nghỉ phải nằm trong giờ ca.',
+    retryable: true,
+  },
+
+  // --- Bảng phân ca (FR-WEB-HR-13) ------------------------------------------
+  POL_SCHEDULE_NOT_FOUND: {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Không tìm thấy bảng phân ca.',
+    messageEn: 'Shift schedule not found.',
+    retryable: false,
+  },
+  /**
+   * Dữ liệu chỉ cho phép MỘT ca mỗi người mỗi ngày, nên hai bảng cùng tháng sẽ
+   * tranh nhau ghi vào cùng một ô. Chặn ngay lúc lập bảng thay vì để phát hiện
+   * sau khi lịch đã bị đè.
+   */
+  POL_SCHEDULE_EMPLOYEE_TAKEN: {
+    status: HttpStatus.CONFLICT,
+    message: 'Có nhân viên đã nằm trong một bảng phân ca khác của tháng này.',
+    messageEn: 'Some employees already belong to another schedule for this month.',
+    hint: 'Mỗi người mỗi tháng chỉ thuộc một bảng. Bỏ họ khỏi bảng cũ, hoặc chọn phòng ban khác.',
+    retryable: true,
+  },
+  POL_SCHEDULE_OUT_OF_PERIOD: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Khoảng ngày nằm ngoài kỳ của bảng phân ca.',
+    messageEn: 'The date range falls outside the schedule period.',
+    hint: 'Chỉ xếp được ca trong đúng tháng lập bảng.',
+    retryable: true,
+  },
+  POL_SCHEDULE_OUT_OF_SCOPE: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Phòng ban hoặc ca làm việc nằm ngoài phạm vi của bảng phân ca.',
+    messageEn: 'Department or shift is outside the schedule scope.',
+    hint: 'Phạm vi được chốt lúc lập bảng. Sửa bảng trước nếu cần mở rộng.',
+    retryable: true,
+  },
   /** NFR-LEGAL-05 — cảnh báo khi cấu hình vi phạm Bộ luật Lao động */
   POL_VIOLATES_LABOR_LAW: {
     status: HttpStatus.UNPROCESSABLE_ENTITY,

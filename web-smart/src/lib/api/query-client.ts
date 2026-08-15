@@ -52,6 +52,7 @@ export const qk = {
   requestPending: (params: unknown) => ['requests', 'pending', params] as const,
   requestDetail: (id: string) => ['requests', 'detail', id] as const,
   requestTypes: () => ['requests', 'types'] as const,
+  approvalPreview: (params: unknown) => ['requests', 'approval-preview', params] as const,
 
   employees: ['employees'] as const,
   employeeList: (params: unknown) => ['employees', 'list', params] as const,
@@ -70,6 +71,8 @@ export const qk = {
   // Bảng phân ca nằm dưới `policy` để lưu ca hoặc phân ca hàng loạt xong là cả
   // hai cùng được làm mới bằng một lệnh `invalidate(['policy'])`.
   shiftBoard: (params: unknown) => ['policy', 'shift-board', params] as const,
+  shiftSchedules: (params: unknown) => ['policy', 'shift-schedules', params] as const,
+  shiftSchedule: (id: string) => ['policy', 'shift-schedule', id] as const,
 
   makeup: ['makeup'] as const,
   makeupList: (params: unknown) => ['makeup', 'list', params] as const,

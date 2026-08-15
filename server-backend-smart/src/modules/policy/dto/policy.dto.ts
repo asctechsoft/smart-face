@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -95,6 +96,26 @@ export class ShiftSegmentDto {
 }
 
 /**
+ * Hệ số ngày công của MỘT ca trong MỘT ngày lễ cụ thể.
+ *
+ * Dùng `holidayId` chứ không dùng ngày: ngày lễ có thể được dời (nghỉ bù khi lễ
+ * rơi vào cuối tuần), và khi dời thì ngoại lệ phải đi theo ngày lễ đó chứ không
+ * ở lại ô lịch cũ.
+ */
+export class ShiftHolidayFactorDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  holidayId!: string;
+
+  @ApiProperty({ example: 3.5 })
+  @IsNumber()
+  @Min(0)
+  @Max(10)
+  factor!: number;
+}
+
+/**
  * Tạo/sửa ca làm việc.
  *
  * Gần như mọi trường đều `optional` vì một DTO phải phục vụ nhiều loại ca:
@@ -107,6 +128,35 @@ export class UpsertShiftDto {
   @IsString()
   @Length(1, 100)
   name!: string;
+
+  /**
+   * Mã ca — duy nhất trong công ty, KHÔNG đổi được sau khi ca đã được phân.
+   *
+   * Chuẩn hoá về chữ hoa ngay tại DTO. Không làm thì "hc" và "HC" cùng lọt qua
+   * ràng buộc duy nhất và trở thành hai ca mà mắt người đọc là một.
+   */
+  @ApiProperty({ example: 'HC', description: 'Mã ca, duy nhất trong công ty' })
+  @IsString()
+  @Length(1, 20)
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim().toUpperCase() : value))
+  code!: string;
+
+  @ApiPropertyOptional({ example: 'X', description: 'Ký hiệu in trên bảng chấm công' })
+  @IsOptional()
+  @IsString()
+  @Length(1, 10)
+  symbol?: string;
+
+  /**
+   * Phòng ban áp dụng. Rỗng = mọi phòng ban.
+   *
+   * Chỉ lọc gợi ý ở màn phân ca, không chặn — xem chú thích trong `schema.prisma`.
+   */
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  departmentIds?: string[];
 
   @ApiPropertyOptional({ enum: ShiftType, default: ShiftType.FIXED })
   @IsOptional()
@@ -138,11 +188,119 @@ export class UpsertShiftDto {
   @IsBoolean()
   crossesMidnight?: boolean;
 
+  /**
+   * Phút nghỉ giữa ca — nguồn DUY NHẤT mà máy tính công đọc.
+   *
+   * Gửi kèm `breakStart`/`breakEnd` thì trường này bị BỎ QUA và tính lại từ hai
+   * mốc giờ đó. Ưu tiên như vậy để không bao giờ tồn tại một ca khai nghỉ
+   * 12:00–13:00 mà `breakMinutes` lại là 30 — hai con số cùng mô tả một việc thì
+   * phải có một cái làm chủ, và cái mô tả cụ thể hơn thắng.
+   */
   @ApiPropertyOptional({ example: 60, description: 'Phút nghỉ giữa ca (nghỉ trưa)' })
   @IsOptional()
   @IsInt()
   @Min(0)
   breakMinutes?: number;
+
+  @ApiPropertyOptional({ example: '12:00', description: 'Giờ bắt đầu nghỉ giữa ca' })
+  @IsOptional()
+  @IsString()
+  breakStart?: string;
+
+  @ApiPropertyOptional({ example: '13:00', description: 'Giờ kết thúc nghỉ giữa ca' })
+  @IsOptional()
+  @IsString()
+  breakEnd?: string;
+
+  // ---------------------------------------------------------------------------
+  //  Yêu cầu chấm công
+  // ---------------------------------------------------------------------------
+
+  /**
+   * BR-ATT-02 — service từ chối `false`. Trường vẫn nhận vào để thông báo lỗi
+   * nói đúng chuyện gì bị từ chối, thay vì âm thầm ghi đè thành `true`.
+   */
+  @ApiPropertyOptional({ default: true, description: 'Luôn phải là true' })
+  @IsOptional()
+  @IsBoolean()
+  requireCheckIn?: boolean;
+
+  @ApiPropertyOptional({ example: '07:00', description: 'Chấm vào sớm nhất được chấp nhận' })
+  @IsOptional()
+  @IsString()
+  checkInFrom?: string;
+
+  @ApiPropertyOptional({ example: '09:00', description: 'Chấm vào muộn nhất được chấp nhận' })
+  @IsOptional()
+  @IsString()
+  checkInTo?: string;
+
+  @ApiPropertyOptional({ default: true, description: 'Tắt cho ca chỉ điểm danh đầu giờ' })
+  @IsOptional()
+  @IsBoolean()
+  requireCheckOut?: boolean;
+
+  @ApiPropertyOptional({ example: '17:00' })
+  @IsOptional()
+  @IsString()
+  checkOutFrom?: string;
+
+  @ApiPropertyOptional({ example: '20:00' })
+  @IsOptional()
+  @IsString()
+  checkOutTo?: string;
+
+  // ---------------------------------------------------------------------------
+  //  Ngày công & hệ số
+  // ---------------------------------------------------------------------------
+
+  @ApiPropertyOptional({ example: 1, description: 'Số ngày công ca này được tính. Nửa buổi = 0.5' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(10)
+  workDayCredit?: number;
+
+  /**
+   * Hệ số ngày công theo tính chất của ngày.
+   *
+   * ⚠ CHƯA nối vào máy tính công — lưu và hiển thị, chưa tác động tới bảng công.
+   * `@Max(10)` chỉ để chặn số vô lý do gõ nhầm (nhập 300 thay vì 3.0).
+   */
+  @ApiPropertyOptional({ example: 1, description: 'Hệ số ngày thường' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(10)
+  normalDayFactor?: number;
+
+  @ApiPropertyOptional({ example: 2, description: 'Hệ số ngày nghỉ tuần' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(10)
+  weeklyRestFactor?: number;
+
+  @ApiPropertyOptional({ example: 3, description: 'Hệ số ngày lễ (mặc định chung)' })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(10)
+  holidayFactor?: number;
+
+  /**
+   * Hệ số đặt riêng cho từng ngày lễ — chỉ liệt kê NGOẠI LỆ.
+   *
+   * Gửi mảng lên là thay thế toàn bộ danh sách ngoại lệ hiện có: gửi `[]` nghĩa
+   * là mọi ngày lễ quay về dùng `holidayFactor` chung. Bỏ trống (không gửi
+   * trường) thì giữ nguyên danh sách cũ.
+   */
+  @ApiPropertyOptional({ type: [ShiftHolidayFactorDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ShiftHolidayFactorDto)
+  holidayFactors?: ShiftHolidayFactorDto[];
 
   @ApiPropertyOptional({ description: 'Ca linh hoạt: tổng phút phải làm trong ngày' })
   @IsOptional()
@@ -218,6 +376,18 @@ export class UpsertShiftDto {
  * lịch phân ca chỉ đúng một nửa.
  */
 export class BulkShiftAssignmentDto {
+  /**
+   * Gắn lượt phân ca vào một bảng.
+   *
+   * Có `scheduleId` thì service kiểm tra thêm ba điều mà bảng đã chốt: ca phải
+   * nằm trong danh sách ca của bảng, khoảng ngày phải nằm trong kỳ, và nhân
+   * viên phải là thành viên. Không có thì đây là phân ca tự do như trước.
+   */
+  @ApiPropertyOptional({ description: 'Bảng phân ca chứa lượt xếp này' })
+  @IsOptional()
+  @IsString()
+  scheduleId?: string;
+
   @ApiProperty({ type: [String] })
   @IsArray()
   @IsString({ each: true })
@@ -266,6 +436,18 @@ export class ShiftAssignmentQueryDto {
   @ApiProperty({ example: '2026-08-31' })
   @IsDateString()
   to!: string;
+
+  /**
+   * Giới hạn bảng vào ĐÚNG danh sách thành viên của một bảng phân ca.
+   *
+   * Khác hẳn lọc theo `departmentId`: thành viên được chốt lúc lập bảng, còn
+   * phòng ban thì đổi được bất cứ lúc nào. Không có tham số này thì một lần
+   * chuyển phòng của nhân viên sẽ làm họ biến mất khỏi bảng đang xếp dở.
+   */
+  @ApiPropertyOptional({ description: 'Chỉ lấy thành viên của bảng phân ca này' })
+  @IsOptional()
+  @IsString()
+  scheduleId?: string;
 
   @ApiPropertyOptional({ description: 'Lọc theo phòng ban. MANAGER bị ScopeGuard thu hẹp thêm.' })
   @IsOptional()
@@ -316,6 +498,107 @@ export class ClearShiftAssignmentDto {
   @ApiProperty({ example: '2026-08-31' })
   @IsDateString()
   to!: string;
+}
+
+// =============================================================================
+//  Bảng phân ca — FR-WEB-HR-13
+// =============================================================================
+
+/**
+ * Tham số lập bảng phân ca.
+ *
+ * Ba trường đầu là PHẠM VI của bảng và được chốt lại tại đây: mọi thao tác bên
+ * trong màn chi tiết (lọc, phân ca hàng loạt) chỉ chạy trong phạm vi này. Nhờ
+ * vậy người xếp lịch không vô tình xếp ca của phòng khác vào bảng của mình.
+ */
+export class CreateShiftScheduleDto {
+  @ApiProperty({ type: [String], description: 'Phòng ban áp dụng — lấy toàn bộ CBNV đang làm việc' })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  departmentIds!: string[];
+
+  @ApiProperty({ type: [String], description: 'Các ca được phép dùng trong bảng này' })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  shiftIds!: string[];
+
+  /**
+   * Kỳ lập bảng. Nhận ngày bất kỳ trong tháng, service chuẩn hoá về ngày 01 —
+   * client gửi `2026-08-15` hay `2026-08-01` đều ra cùng một kỳ.
+   */
+  @ApiProperty({ example: '2026-08-01', description: 'Tháng lập bảng' })
+  @IsDateString()
+  periodMonth!: string;
+
+  @ApiPropertyOptional({
+    example: 'Bảng phân ca Tháng 08/2026',
+    description: 'Bỏ trống = tự sinh theo kỳ',
+  })
+  @IsOptional()
+  @IsString()
+  @Length(1, 200)
+  name?: string;
+}
+
+/** Sửa bảng: đổi tên, mở rộng/thu hẹp phạm vi. Kỳ lập bảng KHÔNG đổi được. */
+export class UpdateShiftScheduleDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @Length(1, 200)
+  name?: string;
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  departmentIds?: string[];
+
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  shiftIds?: string[];
+}
+
+export class ShiftScheduleQueryDto {
+  @ApiPropertyOptional({ example: '2026-08-01', description: 'Lọc theo tháng lập bảng' })
+  @IsOptional()
+  @IsDateString()
+  month?: string;
+
+  @ApiPropertyOptional({ description: 'Bảng có áp dụng cho phòng ban này' })
+  @IsOptional()
+  @IsString()
+  departmentId?: string;
+
+  @ApiPropertyOptional({ default: 1, minimum: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page = 1;
+
+  @ApiPropertyOptional({ default: 20, minimum: 1, maximum: 100 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  pageSize = 20;
+}
+
+/** Thêm / bớt CBNV khỏi bảng đã lập. */
+export class ShiftScheduleMemberDto {
+  @ApiProperty({ type: [String] })
+  @IsArray()
+  @ArrayNotEmpty()
+  @IsString({ each: true })
+  employeeIds!: string[];
 }
 
 /**

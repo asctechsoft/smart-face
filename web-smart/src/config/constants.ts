@@ -25,6 +25,22 @@ export const EMPLOYEE_STATUS_LABEL: Record<string, string> = {
   TERMINATED: 'Đã nghỉ việc',
 };
 
+/**
+ * Nhân viên CÒN TRONG BIÊN CHẾ — dùng cho mọi ô chọn nhân viên.
+ *
+ * ⚠ Đừng lọc `status: 'ACTIVE'` ở ô chọn. `PENDING_ACTIVATION` là hồ sơ HR đã
+ * tạo nhưng người đó chưa đăng nhập lần nào — vẫn là nhân viên thật, vẫn đi làm,
+ * vẫn có thể xin nghỉ. Công ty mới triển khai thì TOÀN BỘ nhân sự nằm ở trạng
+ * thái này, nên lọc `ACTIVE` cho ra một ô chọn rỗng trơn mà không có lỗi nào báo.
+ *
+ * Và đó chính là nhóm cần "tạo đơn hộ" nhất: người chưa cài ứng dụng thì không
+ * tự gửi đơn được.
+ *
+ * `SUSPENDED` và `TERMINATED` cố ý nằm ngoài: tạm ngưng thì không phát sinh công,
+ * đã nghỉ việc thì không tạo chứng từ mới.
+ */
+export const EMPLOYABLE_STATUSES = 'ACTIVE,PENDING_ACTIVATION';
+
 /** `enum DailyStatus` — trạng thái một ngày công. */
 export const DAILY_STATUS_LABEL: Record<string, string> = {
   ON_TIME: 'Đúng giờ',

@@ -1,14 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
   IsDateString,
   IsEnum,
+  IsInt,
   IsNotEmpty,
   IsOptional,
   IsString,
   Length,
+  Min,
+  ValidateNested,
 } from 'class-validator';
 import { RequestStatus } from '@prisma/client';
 import { PaginationQueryDto } from 'src/common/dto';
@@ -104,6 +107,68 @@ export class CreateRequestOnBehalfDto extends CreateRequestDto {
   @IsString()
   @Length(10, 500)
   onBehalfReason!: string;
+
+  /**
+   * Chỉ định NGƯỜI đứng ở từng bước duyệt. Bỏ trống = để hệ thống tự suy.
+   *
+   * ⚠ Chỉ đổi được AI đứng ở bước, KHÔNG đổi được CÓ NHỮNG BƯỚC NÀO. `order`
+   * phải khớp một bước có thật trong luồng đã cấu hình cho loại đơn này ở đúng
+   * độ dài đơn đó — gửi `order` lạ sẽ bị từ chối chứ không tạo thêm bước.
+   *
+   * Cho phép thêm/bớt bước ở đây là vô hiệu hoá `FR-WEB-REQ-05`: công ty cấu
+   * hình "nghỉ trên 3 ngày phải qua HR" rồi người nhập đơn tự bỏ bước đó đi.
+   *
+   * Xem trước các bước hợp lệ qua `GET /v1/admin/requests/approval-preview`.
+   */
+  @ApiPropertyOptional({
+    type: () => [ApproverAssignmentDto],
+    description: 'Người duyệt chỉ định theo từng bước. Bỏ trống = hệ thống tự suy.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ApproverAssignmentDto)
+  approvers?: ApproverAssignmentDto[];
+}
+
+export class ApproverAssignmentDto {
+  @ApiProperty({ description: 'Thứ tự bước duyệt, khớp với luồng đã cấu hình' })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  order!: number;
+
+  @ApiProperty({ description: 'Nhân viên được chỉ định duyệt bước này' })
+  @IsString()
+  @IsNotEmpty()
+  approverId!: string;
+}
+
+/** Tham số xem trước luồng duyệt trước khi tạo đơn hộ. */
+export class ApprovalPreviewQueryDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  employeeId!: string;
+
+  @ApiProperty({ example: 'ANNUAL_LEAVE' })
+  @IsString()
+  @IsNotEmpty()
+  requestTypeCode!: string;
+
+  @ApiProperty({ example: '2026-08-10T00:00:00+07:00' })
+  @IsDateString()
+  startAt!: string;
+
+  @ApiProperty({ example: '2026-08-12T23:59:59+07:00' })
+  @IsDateString()
+  endAt!: string;
+
+  @ApiPropertyOptional({ default: false })
+  @IsOptional()
+  @Transform(({ value }: { value: unknown }) => value === true || value === 'true')
+  @IsBoolean()
+  isHalfDay?: boolean;
 }
 
 /**

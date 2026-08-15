@@ -22,6 +22,19 @@ export function toDayjs(value: string | null | undefined): Dayjs | null {
   return parsed.isValid() ? parsed : dayjs(value);
 }
 
+/**
+ * Chuỗi `HH:mm` → `Dayjs` cho `TimePicker` của antd.
+ *
+ * Tách riêng khỏi `toDayjs` vì `dayjs('08:30')` KHÔNG parse được giờ trần — nó
+ * cần format tường minh, và thiếu nó thì ô giờ hiện trống dù state đang có giá
+ * trị. Ngày nền lấy hôm nay và bị bỏ đi ở phía gọi; chỉ phần giờ có ý nghĩa.
+ */
+export function toDayjsTime(value: string | null | undefined): Dayjs | null {
+  if (!value) return null;
+  const parsed = dayjs(value, 'HH:mm', true);
+  return parsed.isValid() ? parsed : null;
+}
+
 /** `Dayjs` (giờ cục bộ của trình duyệt) → `YYYY-MM-DD`. */
 export function fromDayjs(value: Dayjs | null | undefined): string | undefined {
   return value ? value.format('YYYY-MM-DD') : undefined;

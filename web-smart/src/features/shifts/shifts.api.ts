@@ -31,6 +31,8 @@ export interface ShiftBoard {
 export interface ShiftBoardQuery {
   from: string;
   to: string;
+  /** Giới hạn vào thành viên đã chốt của một bảng phân ca. */
+  scheduleId?: string;
   departmentId?: string;
   q?: string;
   page?: number;
@@ -44,6 +46,108 @@ export interface BulkAssignPayload {
   to: string;
   /** ⚠ SỐ THỨ TỰ (1=T2 … 7=CN), KHÁC bitmask `weekdayMask` của cấu hình ca. */
   weekdays?: number[];
+  /** Gắn lượt xếp vào bảng — Backend kiểm tra ca, kỳ và thành viên theo bảng đó. */
+  scheduleId?: string;
+}
+
+// ---------------------------------------------------------------------------
+//  Bảng phân ca — FR-WEB-HR-13
+// ---------------------------------------------------------------------------
+
+export interface ShiftSchedule {
+  id: string;
+  name: string;
+  /** `YYYY-MM-DD`, luôn là ngày 01 của tháng lập bảng. */
+  periodMonth: string;
+  departmentIds: string[];
+  shiftIds: string[];
+  memberCount: number;
+  assignmentCount: number;
+  createdBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateSchedulePayload {
+  departmentIds: string[];
+  shiftIds: string[];
+  periodMonth: string;
+  name?: string;
+}
+
+export function useShiftSchedules(query: {
+  month?: string;
+  departmentId?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  return useQuery({
+    queryKey: qk.shiftSchedules(query),
+    queryFn: () =>
+      api.getPaginated<ShiftSchedule>('/admin/shift-schedules', { ...query }).then((page) => page),
+    placeholderData: (previous) => previous,
+  });
+}
+
+export function useShiftSchedule(scheduleId: string | undefined) {
+  return useQuery({
+    queryKey: qk.shiftSchedule(scheduleId ?? ''),
+    queryFn: () => api.get<ShiftSchedule>(`/admin/shift-schedules/${scheduleId}`),
+    enabled: Boolean(scheduleId),
+  });
+}
+
+export function useCreateShiftSchedule() {
+  const invalidate = useInvalidateBoard();
+  return useMutation({
+    mutationFn: (payload: CreateSchedulePayload) =>
+      api.post<ShiftSchedule>('/admin/shift-schedules', payload),
+    onSuccess: () => void invalidate(),
+  });
+}
+
+export function useUpdateShiftSchedule() {
+  const invalidate = useInvalidateBoard();
+  return useMutation({
+    mutationFn: ({ id, ...payload }: { id: string } & Partial<CreateSchedulePayload>) =>
+      api.patch<ShiftSchedule>(`/admin/shift-schedules/${id}`, payload),
+    onSuccess: () => void invalidate(),
+  });
+}
+
+export function useDeleteShiftSchedule() {
+  const invalidate = useInvalidateBoard();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete<{ deleted: true; removedAssignments: number; removedMembers: number }>(
+        `/admin/shift-schedules/${id}`,
+      ),
+    onSuccess: () => void invalidate(),
+  });
+}
+
+export function useAddScheduleMembers() {
+  const invalidate = useInvalidateBoard();
+  return useMutation({
+    mutationFn: ({ id, employeeIds }: { id: string; employeeIds: string[] }) =>
+      api.post<{ added: number; skipped: number }>(`/admin/shift-schedules/${id}/members`, {
+        employeeIds,
+      }),
+    onSuccess: () => void invalidate(),
+  });
+}
+
+/** `POST .../remove` chứ không `DELETE`: danh sách id đi trong body — xem `useClearShiftAssignments`. */
+export function useRemoveScheduleMembers() {
+  const invalidate = useInvalidateBoard();
+  return useMutation({
+    mutationFn: ({ id, employeeIds }: { id: string; employeeIds: string[] }) =>
+      api.post<{ removed: number; removedAssignments: number }>(
+        `/admin/shift-schedules/${id}/members/remove`,
+        { employeeIds },
+      ),
+    onSuccess: () => void invalidate(),
+  });
 }
 
 export interface BulkAssignResult {

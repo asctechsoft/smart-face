@@ -4,6 +4,7 @@ import { parseWorkDate } from 'src/common/utils';
 import { PayrollRepository } from './payroll.repository';
 import { PolicyService } from '../policy/policy.service';
 import { POLICY_DEFAULTS } from '../policy/policy.constants';
+import { MakeupService } from '../makeup/makeup.service';
 import { PayrollEngineService } from './payroll-engine.service';
 
 const VN = 'Asia/Ho_Chi_Minh';
@@ -88,11 +89,17 @@ describe('PayrollEngineService', () => {
         ),
     };
 
+    // Sổ công làm bù được kiểm tra riêng ở `makeup.service.spec.ts`. Ở đây chỉ
+    // cần một bản giả để engine dựng được — các test dưới đây kiểm tra phép tính
+    // công, không kiểm tra việc ghi nợ.
+    const makeup = { reconcileEngineDebt: jest.fn().mockResolvedValue(undefined) };
+
     const moduleRef = await Test.createTestingModule({
       providers: [
         PayrollEngineService,
         { provide: PayrollRepository, useValue: payrolls },
         { provide: PolicyService, useValue: policy },
+        { provide: MakeupService, useValue: makeup },
       ],
     }).compile();
 

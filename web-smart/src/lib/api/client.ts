@@ -22,6 +22,20 @@ const http: AxiosInstance = axios.create({
   headers: { 'X-Platform': 'web' },
 });
 
+/**
+ * Ngưỡng chờ riêng cho lời gọi ĐẦU TIÊN của một phiên làm việc.
+ *
+ * Truy vấn trên kết nối database đã mở chỉ mất khoảng 65ms, nhưng MỞ một kết
+ * nối mới tới database đặt ở xa tốn từ vài trăm mili giây tới vài chục giây tuỳ
+ * chất lượng đường truyền. Lời gọi đầu tiên là lời gọi phải trả toàn bộ chi phí
+ * đó, vì pool của Backend còn trống.
+ *
+ * 30 giây mặc định đủ cho mọi lời gọi sau đó, nhưng với lời gọi đầu tiên thì nó
+ * cắt ngang một yêu cầu đang chạy bình thường — và cắt ngang ở đúng chỗ tệ nhất:
+ * Backend đã tạo xong phiên, còn người dùng thì nhận được báo lỗi mất kết nối.
+ */
+export const COLD_START_TIMEOUT_MS = 60_000;
+
 // ---------------------------------------------------------------------------
 //  Gắn token
 // ---------------------------------------------------------------------------
@@ -68,13 +82,30 @@ async function refreshAccessToken(): Promise<string> {
   return body.data.accessToken;
 }
 
+/**
+ * Lệnh làm mới token hỏng vì KHÔNG NHẬN ĐƯỢC phản hồi, chứ không phải vì Backend
+ * từ chối.
+ *
+ * Phân biệt được hai chuyện này mới quyết định đúng số phận của phiên: Backend
+ * từ chối nghĩa là refresh token hết hiệu lực thật, phải đăng nhập lại; còn mạng
+ * chập một nhịp thì token vẫn còn nguyên giá trị, xoá đi là tự đá người dùng ra
+ * giữa lúc họ đang làm dở.
+ */
+function isTransportFailure(error: unknown): boolean {
+  return axios.isAxiosError(error) && !error.response;
+}
+
 http.interceptors.response.use(
   (response) => response,
   async (error: AxiosError<ApiResponse<unknown>>) => {
     const original = error.config as (AxiosRequestConfig & { _sfRetried?: boolean }) | undefined;
 
     if (!error.response) {
-      throw new NetworkError();
+      // `ECONNABORTED` là mã axios dùng cho hết giờ chờ; `ETIMEDOUT` do tầng
+      // socket của trình duyệt trả về. Phân biệt được hai trường hợp này thì mới
+      // nói đúng cho người dùng biết thao tác của họ đã chạy hay chưa.
+      const timedOut = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT';
+      throw new NetworkError(timedOut ? 'TIMEOUT' : 'UNREACHABLE');
     }
 
     const body = error.response.data;
@@ -94,7 +125,17 @@ http.interceptors.response.use(
         original._sfRetried = true;
         original.headers = { ...original.headers, Authorization: `Bearer ${token}` };
         return http.request(original);
-      } catch {
+      } catch (refreshError) {
+        // Mạng hỏng giữa chừng thì giữ nguyên phiên và báo lỗi mạng như mọi lời
+        // gọi khác. Người dùng bấm lại là xong; xoá token ở đây thì họ mất hết
+        // việc đang làm dở chỉ vì một nhịp mạng chập.
+        if (isTransportFailure(refreshError)) {
+          const timedOut =
+            axios.isAxiosError(refreshError) &&
+            (refreshError.code === 'ECONNABORTED' || refreshError.code === 'ETIMEDOUT');
+          throw new NetworkError(timedOut ? 'TIMEOUT' : 'UNREACHABLE');
+        }
+
         tokenStorage.clear();
         emitSessionExpired();
       }
@@ -114,7 +155,7 @@ http.interceptors.response.use(
       throw new ApiError(body.error, error.response.status);
     }
 
-    throw new NetworkError('Máy chủ trả về phản hồi không đọc được. Vui lòng thử lại.');
+    throw new NetworkError('BAD_RESPONSE');
   },
 );
 

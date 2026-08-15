@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
+import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmployeeCell } from '@/components/EmployeeCell';
 import { StatusBadge, type BadgeTone } from '@/components/StatusBadge';
 import { StatCard } from '@/components/StatCard';
@@ -17,7 +18,6 @@ import { DEFAULT_PAGE_SIZE, REASON_MIN_LENGTH } from '@/config/constants';
 import { formatDay, formatMinutes, toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { formatStandardDays } from '@/lib/utils/format';
-import { useDepartments, toSelectOptions } from '@/features/shared/org.api';
 import { CreateDebtModal } from './CreateDebtModal';
 import { RecordMakeupModal } from './RecordMakeupModal';
 import {
@@ -59,7 +59,6 @@ export function MakeupPage() {
   const [extendTarget, setExtendTarget] = useState<MakeupRecord | null>(null);
   const [cancelTarget, setCancelTarget] = useState<MakeupRecord | null>(null);
 
-  const departments = useDepartments();
   const extend = useExtendMakeup();
   const cancel = useCancelMakeup();
 
@@ -365,13 +364,11 @@ export function MakeupPage() {
         </FilterField>
 
         <FilterField label="Phòng ban" htmlFor="mk-dept" width={200}>
-          <Select
+          <DepartmentTreeSelect
             id="mk-dept"
-            value={query.departmentId ?? ''}
-            loading={departments.isLoading}
-            options={toSelectOptions(departments.data, 'Tất cả phòng ban')}
+            value={query.departmentId}
             onChange={(value) => patchQuery({ departmentId: value })}
-            style={{ width: '100%' }}
+            placeholder="Tất cả phòng ban"
           />
         </FilterField>
 

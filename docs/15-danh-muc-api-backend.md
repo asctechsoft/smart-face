@@ -1047,6 +1047,39 @@ curl -X POST http://localhost:3000/v1/requests \
 
 ---
 
+### `GET /v1/admin/requests/approval-preview` — Xem trước luồng duyệt 🔒
+
+**Vai trò:** `MANAGER`, `HR_PAYROLL`, `COMPANY_ADMIN` · `@DepartmentScoped()`
+
+**Làm gì:** trả về **đúng những bước duyệt sẽ được sinh ra** cho đơn sắp tạo, kèm người duyệt hệ thống tự suy và danh sách ứng viên thay thế cho từng bước.
+
+| Query | Ghi chú |
+|---|---|
+| `employeeId` | nhân viên sẽ đứng tên đơn |
+| `requestTypeCode` | mã loại đơn |
+| `startAt`, `endAt` | kèm offset múi giờ |
+| `isHalfDay` | mặc định `false` |
+
+```json
+{ "success": true,
+  "data": { "quantity": 3, "unit": "DAY",
+            "steps": [
+              { "order": 1, "approverRole": "DIRECT_MANAGER", "approverRoleLabel": "Quản lý trực tiếp",
+                "suggestedApproverId": null, "suggestedApproverName": null,
+                "candidates": [ { "id": "emp_01J...", "fullName": "Trần Văn Bình", "employeeCode": "binhtv" } ] },
+              { "order": 2, "approverRole": "HR_PAYROLL", "approverRoleLabel": "Kế toán / HR",
+                "suggestedApproverId": null, "suggestedApproverName": null,
+                "candidates": [ { "id": "emp_02K...", "fullName": "Lê Thị Hoa", "employeeCode": "hoalt" } ] } ] } }
+```
+
+> **Phải hỏi lại mỗi khi đổi loại đơn hoặc khoảng ngày.** Số bước duyệt phụ thuộc **độ dài đơn**: nghỉ 1 ngày chỉ cần trưởng phòng, từ 3 ngày trở lên mới thêm bước HR (`ApprovalFlowStep.condition`, docs/04 mục 4.1). Người nhập hộ không đoán được điều đó.
+>
+> `suggestedApproverId: null` **không phải lỗi** mà là "để ngỏ": ai giữ vai trò tương ứng cũng duyệt được. Đó là mặc định an toàn — chỉ định đích danh một người thì người đó nghỉ phép là mọi đơn treo lại chờ họ về.
+>
+> `candidates` gồm cả nhân viên `PENDING_ACTIVATION`. Loại họ ra sẽ cho danh sách **rỗng** ở đúng những công ty mới triển khai — nơi chưa ai kịp đăng nhập, kể cả trưởng phòng.
+
+---
+
 ### `POST /v1/admin/requests` — Tạo đơn THAY MẶT nhân viên 🔒 📝audit
 
 **Vai trò:** `MANAGER`, `HR_PAYROLL`, `COMPANY_ADMIN` · `@DepartmentScoped()`
@@ -1059,6 +1092,7 @@ Chạy **đúng bốn chốt** như `POST /v1/requests` ở trên, chỉ khác �
 |---|---|
 | `employeeId` | nhân viên được tạo đơn hộ |
 | `onBehalfReason` | **bắt buộc**, 10–500 ký tự |
+| `approvers` | tuỳ chọn — `[{ order, approverId }]`, chỉ định người đứng ở từng bước |
 
 ```bash
 curl -X POST http://localhost:3000/v1/admin/requests \
@@ -1079,6 +1113,10 @@ curl -X POST http://localhost:3000/v1/admin/requests \
 > **`onBehalfReason` khác `reason`.** `reason` là lời khai của nhân viên ("Sốt cao"). `onBehalfReason` trả lời câu hỏi mà người đọc audit sáu tháng sau sẽ hỏi: vì sao đơn này không do chính nhân viên gửi? Gộp làm một thì thông tin mất đi luôn là cái thứ hai — cái duy nhất giải thích được vì sao có một đơn không ai ký.
 >
 > Đơn vào trạng thái `PENDING` và **đi qua đúng luồng duyệt** — người nhập hộ không duyệt hộ. Ghi audit `REQUEST_CREATE_ON_BEHALF`, và `GET /v1/requests/:id` trả kèm `createdOnBehalf` để màn duyệt hiện cảnh báo.
+>
+> **`approvers` chỉ đổi được AI đứng ở mỗi bước, KHÔNG đổi được CÓ NHỮNG BƯỚC NÀO.** `order` phải khớp một bước có thật trong luồng đã cấu hình **ở đúng độ dài đơn đó**; gửi `order` lạ bị từ chối chứ không tạo thêm bước. Đây là ranh giới quan trọng nhất của tính năng: cho phép thêm/bớt bước là vô hiệu hoá `FR-WEB-REQ-05` — công ty cấu hình "nghỉ trên 3 ngày phải qua HR" rồi người nhập đơn tự bỏ bước đó đi.
+>
+> Mỗi người được chỉ định phải **thực sự giữ vai trò** hợp lệ cho bước đó, và không được là chính người xin nghỉ (`BR-APV-03`). Bỏ trống một bước = để ngỏ cho mọi người giữ vai trò tương ứng.
 
 **Lỗi:** `EMP_NOT_FOUND`, `AUTH_FORBIDDEN`, `REQ_TYPE_NOT_FOUND`, `REQ_INSUFFICIENT_LEAVE`, `REQ_OVERLAP`, `REQ_ATTACHMENT_REQUIRED`, `REQ_PERIOD_LOCKED`
 
@@ -1445,15 +1483,19 @@ Mọi thao tác ghi đều có `@Audit` — hồ sơ nhân sự quyết định 
 
 | Query | Ghi chú |
 |---|---|
-| `status` | enum `EmployeeStatus` |
+| `status` | enum `EmployeeStatus`, **nhận nhiều giá trị** ngăn bằng dấu phẩy: `?status=ACTIVE,PENDING_ACTIVATION` |
 | `departmentId`, `branchId` | lọc |
 | `q` | tìm theo tên / mã / SĐT |
 | `page`, `pageSize`, `sort` | chuẩn |
 
 ```bash
-curl "http://localhost:3000/v1/admin/employees?status=ACTIVE&departmentId=dep_01J...&q=đức&pageSize=50" \
+curl "http://localhost:3000/v1/admin/employees?status=ACTIVE,PENDING_ACTIVATION&departmentId=dep_01J...&q=đức&pageSize=50" \
   -H "Authorization: Bearer $HR_TOKEN"
 ```
+
+> ⚠ **Ô chọn nhân viên đừng lọc `status=ACTIVE`.** `PENDING_ACTIVATION` là hồ sơ HR đã tạo nhưng người đó **chưa đăng nhập lần nào** — vẫn là nhân viên thật, vẫn đi làm, vẫn xin nghỉ được. Công ty **mới triển khai** thì toàn bộ nhân sự nằm ở trạng thái này, nên lọc `ACTIVE` cho ra ô chọn **rỗng trơn mà không có lỗi nào báo** — không phải 400, không phải danh sách trống có thông báo, chỉ là một ô gõ vào không ra gì.
+>
+> Dùng `?status=ACTIVE,PENDING_ACTIVATION` (phía Web là hằng `EMPLOYABLE_STATUSES`). `SUSPENDED` và `TERMINATED` cố ý nằm ngoài: tạm ngưng thì không phát sinh công, đã nghỉ việc thì không tạo chứng từ mới.
 
 ---
 
@@ -1743,10 +1785,21 @@ Một DTO phục vụ nhiều loại ca: ca cố định cần `startTime`/`endT
 | Trường | Ghi chú |
 |---|---|
 | `name` | bắt buộc |
+| `code` | **bắt buộc**, duy nhất trong công ty. Tự chuẩn hoá về CHỮ HOA |
+| `symbol` | ký hiệu in trên bảng chấm công (`"X"`, `"Đ"`). Không cần duy nhất |
+| `departmentIds` | phòng ban áp dụng. Rỗng = mọi phòng ban. **Chỉ lọc gợi ý khi phân ca, không chặn** |
 | `type` | enum `ShiftType`, mặc định `FIXED` |
 | `startTime`, `endTime` | `'HH:mm'` theo **giờ địa phương** của công ty, không phải UTC |
 | `crossesMidnight` | **`true` nếu ca kết thúc NGÀY HÔM SAU** (ca đêm 22:00→06:00) |
-| `breakMinutes` | phút nghỉ giữa ca |
+| `breakMinutes` | phút nghỉ giữa ca. **Bị bỏ qua nếu gửi kèm `breakStart`/`breakEnd`** |
+| `breakStart`, `breakEnd` | khoảng nghỉ cụ thể. Phải nằm **trong** giờ ca |
+| `requireCheckIn` | **luôn phải là `true`** — gửi `false` trả `POL_SHIFT_CHECKIN_REQUIRED` |
+| `checkInFrom`, `checkInTo` | khung giờ chấm vào được chấp nhận. Bỏ trống = không giới hạn |
+| `requireCheckOut` | tắt cho ca chỉ điểm danh đầu giờ |
+| `checkOutFrom`, `checkOutTo` | khung giờ chấm ra |
+| `workDayCredit` | số ngày công của ca (nửa buổi = `0.5`) |
+| `normalDayFactor`, `weeklyRestFactor`, `holidayFactor` | hệ số ngày công. **Chưa nối vào máy tính công** |
+| `holidayFactors` | ngoại lệ theo từng ngày lễ: `[{ holidayId, factor }]`. Gửi mảng = **thay toàn bộ**; `[]` = xoá hết ngoại lệ; không gửi = giữ nguyên |
 | `requiredMinutes` | ca linh hoạt: tổng phút phải làm |
 | `lateToleranceMinutes` | biên độ dung thứ — **không phải "giờ vào mới"** |
 | `earlyLeaveToleranceMinutes` | |
@@ -1755,9 +1808,21 @@ Một DTO phục vụ nhiều loại ca: ca cố định cần `startTime`/`endT
 | `effectiveFrom`, `effectiveTo` | hiệu lực theo thời gian (D6) |
 | `segments` | ca gãy: `[{ order, startTime, endTime }]` |
 
+Phản hồi kèm thêm **`workMinutes`** — số phút công, do Backend **tính ra** từ giờ ca trừ giờ nghỉ. Đây là trường chỉ đọc: gửi lên cũng bị bỏ qua, và không có cột tương ứng trong database.
+
+| Loại ca | `workMinutes` tính thế nào |
+|---|---|
+| `FLEXIBLE` | `requiredMinutes` |
+| có `segments` | tổng độ dài các đoạn — **không** trừ `breakMinutes` (các đoạn đã loại giờ nghỉ) |
+| còn lại | `endTime − startTime − breakMinutes`, tự cộng 24h khi hiệu số ≤ 0 |
+
 > ⚠ `crossesMidnight` là trường nhỏ nhưng sai là hỏng cả bảng công: không có cờ này thì `06:00 < 22:00` sẽ tính ra giờ công **âm**, hoặc bị hiểu thành ca 16 tiếng. Cờ này cũng quyết định lượt chấm lúc 02:00 sáng thuộc về **ngày làm việc nào**.
 >
 > ⚠ `lateToleranceMinutes` là biên độ dung thứ: đến 08:04 với biên độ 5 phút thì **không** bị ghi đi muộn, nhưng giờ vào **vẫn lưu là 08:04** — báo cáo phải phản ánh sự thật, chỉ phần xử phạt mới được nới.
+>
+> ⚠ Ràng buộc duy nhất của `code` là **partial unique index** `WHERE "effectiveTo" IS NULL`, không phải unique thường. Phải như vậy vì D6: đổi giờ một ca đã phân sẽ **đóng** bản hiện tại rồi mở bản kế nhiệm mang **cùng mã**. Ca xoá mềm vẫn giữ mã (`effectiveTo` vẫn null) — mã đã in trên bảng công không được mang nghĩa khác.
+>
+> ⚠ Hệ số ngày công hiện **chỉ được lưu và hiển thị**. Máy tính công chưa đọc tới, nên sửa chúng không làm đổi số liệu kỳ lương — xem `docs/04` mục 6.5.
 
 ```bash
 # Ca hành chính có nghỉ trưa (ca gãy)
@@ -1765,10 +1830,13 @@ curl -X POST http://localhost:3000/v1/admin/shifts \
   -H "Authorization: Bearer $HR_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Hành chính",
+    "name": "Hành chính", "code": "HC", "symbol": "X",
     "type": "FIXED",
     "startTime": "08:00", "endTime": "17:30",
-    "breakMinutes": 60,
+    "breakStart": "12:00", "breakEnd": "13:00",
+    "checkInFrom": "06:00", "checkInTo": "10:00",
+    "checkOutFrom": "16:00", "checkOutTo": "22:00",
+    "workDayCredit": 1,
     "lateToleranceMinutes": 5,
     "weekdayMask": 31,
     "isDefault": true,
@@ -1776,15 +1844,30 @@ curl -X POST http://localhost:3000/v1/admin/shifts \
                   { "order": 2, "startTime": "13:00", "endTime": "17:30" } ]
   }'
 
-# Ca đêm vắt qua nửa đêm
+# Ca đêm vắt qua nửa đêm — khoảng nghỉ phải nằm TRONG ca, không phải nghỉ trưa
 curl -X POST http://localhost:3000/v1/admin/shifts \
   -H "Authorization: Bearer $HR_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{ "name": "Ca đêm", "startTime": "22:00", "endTime": "06:00",
-        "crossesMidnight": true, "breakMinutes": 45, "weekdayMask": 0 }'
+  -d '{ "name": "Ca đêm", "code": "CD", "symbol": "Đ",
+        "startTime": "22:00", "endTime": "06:00",
+        "crossesMidnight": true,
+        "breakStart": "00:30", "breakEnd": "01:00",
+        "weekdayMask": 0 }'
+
+# Ca nửa buổi cho riêng phòng Kho, có hệ số riêng cho Tết
+curl -X POST http://localhost:3000/v1/admin/shifts \
+  -H "Authorization: Bearer $HR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "name": "Nửa buổi sáng", "code": "NB1",
+        "startTime": "08:00", "endTime": "12:00",
+        "departmentIds": ["dept_kho"],
+        "workDayCredit": 0.5,
+        "requireCheckOut": false,
+        "holidayFactor": 3,
+        "holidayFactors": [ { "holidayId": "hol_tet_2026", "factor": 4 } ] }'
 ```
 
-**Lỗi:** `POL_INVALID_TIME_FORMAT`
+**Lỗi:** `POL_INVALID_TIME_FORMAT`, `POL_SHIFT_CODE_TAKEN`, `POL_SHIFT_CHECKIN_REQUIRED`, `POL_SHIFT_INVALID_WINDOW`
 
 #### `PUT /v1/admin/shifts/:id` — Cập nhật ca 🔒 📝audit
 
@@ -1819,9 +1902,71 @@ curl -X POST http://localhost:3000/v1/admin/shift-assignments/bulk \
     "employeeIds": ["emp_01J...", "emp_02K...", "emp_03L..."],
     "shiftId": "sft_01J...",
     "from": "2026-09-01", "to": "2026-09-30",
-    "weekdays": [1,2,3,4,5]
+    "weekdays": [1,2,3,4,5],
+    "scheduleId": "sch_01J..."
   }'
 ```
+
+`scheduleId` là tuỳ chọn. Có nó thì Backend kiểm tra thêm **ba** điều mà bảng đã chốt lúc lập, và lượt xếp được gắn vào bảng để sau này xoá bảng còn biết phải xoá những gì:
+
+| Kiểm tra | Lỗi khi vi phạm |
+|---|---|
+| `shiftId` nằm trong `shiftIds` của bảng | `POL_SCHEDULE_OUT_OF_SCOPE` |
+| `from`–`to` nằm trong tháng của bảng | `POL_SCHEDULE_OUT_OF_PERIOD` |
+| nhân viên là thành viên của bảng | lọc bỏ, trả về trong `skippedEmployeeIds` |
+
+---
+
+### Bảng phân ca (`FR-WEB-HR-13`)
+
+Bảng phân ca là **đơn vị công việc** của người xếp lịch ("bảng phân ca tháng 8 phòng Kho"), đứng trên `shift_assignment` vốn chỉ là từng ô lịch rời rạc.
+
+#### `GET /v1/admin/shift-schedules` — Danh sách 🔒
+
+Lọc theo `month` (`YYYY-MM-DD`, tự chuẩn hoá về ngày 01) và `departmentId`. MANAGER chỉ thấy bảng có chạm tới phòng ban mình quản lý.
+
+#### `POST /v1/admin/shift-schedules` — Lập bảng 🔒 📝audit
+
+| Trường | Ghi chú |
+|---|---|
+| `departmentIds` | bắt buộc, ≥1. **Toàn bộ CBNV đang làm việc** của các phòng này được đưa vào bảng, chưa xếp ca |
+| `shiftIds` | bắt buộc, ≥1. Phạm vi ca dùng được trong bảng |
+| `periodMonth` | ngày bất kỳ trong tháng, service chuẩn hoá về ngày 01 |
+| `name` | bỏ trống = `Bảng phân ca Tháng MM/YYYY` |
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/shift-schedules \
+  -H "Authorization: Bearer $HR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "departmentIds": ["dept_kho"], "shiftIds": ["sft_hc", "sft_dem"],
+        "periodMonth": "2026-09-01" }'
+```
+
+> ⚠ **Một người, một tháng, một bảng.** Ràng buộc nằm ở tầng database
+> (`shift_schedule_member_employeeId_periodMonth_key`), không chỉ ở service: hai
+> request lập bảng chạy song song đều thấy "chưa ai giữ" rồi cùng ghi. Vi phạm →
+> `POL_SCHEDULE_EMPLOYEE_TAKEN`, kèm tên người và tên bảng đang giữ họ.
+>
+> Cần vậy vì `shift_assignment` chỉ cho phép **một ca mỗi người mỗi ngày**. Hai
+> bảng cùng tháng sẽ tranh nhau ghi vào cùng ô, bảng lưu sau đè bảng lưu trước —
+> và màn chi tiết của bảng kia hiển thị ca mà nó không hề xếp.
+
+#### `DELETE /v1/admin/shift-schedules/:id` 🔒 📝audit
+
+Xoá bảng **và toàn bộ lịch ca do nó xếp**, trong một transaction. Trả về `{ deleted, removedAssignments, removedMembers }`.
+
+- **BR-07**: chặn khi tháng của bảng thuộc kỳ lương đã chốt → `PAY_PERIOD_CLOSED`.
+- Bảng bị xoá **mềm** (còn tra được trong audit log); thành viên bị xoá **hẳn** — ràng buộc "một người một tháng một bảng" không lọc `deletedAt`, giữ lại dòng thành viên nghĩa là những người đó vĩnh viễn không lập được bảng mới cho tháng đó.
+- Lịch ca bị xoá tường minh bởi service, **không** để database cascade: `ON DELETE SET NULL` ở khoá ngoại là cố ý, vì đây là dữ liệu đi thẳng vào bảng công và việc xoá nó phải qua kiểm tra BR-07 ở trên.
+
+#### `POST /v1/admin/shift-schedules/:id/members` — Thêm CBNV 🔒 📝audit
+#### `POST /v1/admin/shift-schedules/:id/members/remove` — Bỏ CBNV 🔒 📝audit
+
+Cả hai nhận `{ "employeeIds": [...] }`. Bỏ CBNV **xoá luôn lịch ca của họ trong bảng này** — nếu không, bảng công cuối tháng vẫn tính theo ca cũ dù họ không còn nằm trong bảng nào.
+
+> Dùng `POST .../remove` chứ không `DELETE`: danh sách id đi trong body, mà body của `DELETE` bị nhiều proxy và thư viện HTTP cắt bỏ âm thầm — request tới nơi với body rỗng sẽ bỏ nhầm không ai, hoặc tuỳ cách viết, bỏ hết cả bảng.
+
+`GET /v1/admin/shift-assignments` nhận thêm `scheduleId`: dòng của bảng khi đó là **thành viên đã chốt** của bảng, không phải "ai đang thuộc phòng ban này" — hai thứ đó lệch nhau ngay khi có người chuyển phòng giữa tháng.
 
 ---
 
@@ -2599,6 +2744,7 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | GET | `/v1/requests/pending-approval` | 🔒 | Đơn tôi cần duyệt |
 | GET | `/v1/requests` | 🔒 | Danh sách đơn |
 | POST | `/v1/requests` | 🔒 | Tạo đơn |
+| GET | `/v1/admin/requests/approval-preview` | MGR/HR/ADMIN | Xem trước luồng duyệt |
 | POST | `/v1/admin/requests` | MGR/HR/ADMIN 📝 | Tạo đơn thay mặt nhân viên |
 | GET | `/v1/requests/:id` | 🔒 | Chi tiết + lịch sử duyệt |
 | PATCH | `/v1/requests/:id` | 🔒 | Sửa đơn nháp |
@@ -2660,6 +2806,13 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | GET | `/shift-assignments` | MGR/HR/ADMIN | Bảng phân ca theo khoảng ngày (`FR-WEB-HR-03`) |
 | POST | `/shift-assignments/bulk` | MGR/HR/ADMIN 📝 | Phân ca hàng loạt |
 | POST | `/shift-assignments/clear` | MGR/HR/ADMIN 📝 | Xoá phân ca trong một khoảng ngày |
+| GET | `/shift-schedules` | MGR/HR/ADMIN | Danh sách bảng phân ca (`FR-WEB-HR-13`) |
+| GET | `/shift-schedules/:id` | MGR/HR/ADMIN | Chi tiết một bảng |
+| POST | `/shift-schedules` | MGR/HR/ADMIN 📝 | Lập bảng phân ca |
+| PATCH | `/shift-schedules/:id` | MGR/HR/ADMIN 📝 | Sửa tên / phạm vi |
+| DELETE | `/shift-schedules/:id` | HR/ADMIN 📝 | Xoá bảng **kèm toàn bộ lịch ca của nó** |
+| POST | `/shift-schedules/:id/members` | MGR/HR/ADMIN 📝 | Thêm CBNV vào bảng |
+| POST | `/shift-schedules/:id/members/remove` | MGR/HR/ADMIN 📝 | Bỏ CBNV **kèm lịch ca của họ trong bảng** |
 | GET | `/leave-policies` | MGR/HR/ADMIN | Chính sách phép năm (`FR-WEB-POL-07/08`) |
 | PUT | `/leave-policies` | HR/ADMIN 📝 | Tạo phiên bản mới (versioned, không ghi đè) |
 | GET | `/holidays` | MGR/HR/ADMIN | Danh mục ngày lễ |
@@ -2700,6 +2853,19 @@ sinh và hạn.
 | POST | `/:id/record` | HR/ADMIN 📝 | Ghi nhận một lần làm bù |
 | POST | `/:id/extend` | HR/ADMIN 📝 | Gia hạn làm bù |
 | POST | `/:id/cancel` | HR/ADMIN 📝 | Huỷ khoản ghi nhầm (chỉ khi chưa bù giờ nào) |
+
+**Hai nguồn ghi vào sổ, phân biệt bằng cột `source`:**
+
+| `source` | Ai sinh ra | Đường vào |
+|---|---|---|
+| `ENGINE` | Engine tính công | Tự động, mỗi lần tính lại một ngày thiếu giờ |
+| `MANUAL` | HR nhập tay | `POST /v1/admin/makeup` |
+
+> ⚠ **Engine chỉ được sửa/xoá dòng của chính nó.** `calculateAndPersist` là hàm idempotent bị gọi lại rất nhiều lần cho cùng một ngày (mỗi lần hiệu chỉnh công, mỗi lần duyệt đơn ngược quá khứ, mỗi đêm khi cron quét), và mỗi lần nó **đối chiếu** để tổng nợ `ENGINE` của ngày khớp số giờ thực thiếu — chứ không ghi thêm. Bỏ điều kiện `source` thì một lần tính lại sẽ xoá mất khoản nợ HR nhập tay theo thoả thuận riêng.
+>
+> Ngày **không** sinh nợ: ngày lễ, cuối tuần, và ngày không có giờ làm nào (vắng mặt / thiếu bản ghi) — vắng mặt là nghỉ không lương, không phải nợ công. Ngưỡng tối thiểu là `makeup.minDebtMinutes` (mặc định 15 phút).
+
+**Đơn xin làm bù được duyệt** (`deductFrom = MAKEUP_CREDIT`) cũng ghi vào sổ này, trả **khoản nợ cũ nhất trước**. Đơn khai nhiều giờ hơn số nợ thật bị từ chối ngay lúc duyệt với `MKUP_EXCEEDS_DEBT` — phần dôi ra là tăng ca, hệ số lương khác hẳn.
 
 ### Web Quản lý — Loại đơn & luồng duyệt `/v1/admin/request-types` (`FR-WEB-REQ-05`)
 

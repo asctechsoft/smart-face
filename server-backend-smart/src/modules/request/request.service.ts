@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
   Employee,
+  EmployeeStatus,
   LeaveRequest,
   Prisma,
   RequestStatus,
@@ -15,6 +16,7 @@ import { StorageService } from 'src/infra/storage/storage.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { AuditRepository } from '../audit/audit.repository';
 import { AuditService } from '../audit/audit.service';
+import { MakeupService } from '../makeup/makeup.service';
 import { NotificationService } from '../notification/notification.service';
 import { RealtimeGateway } from '../notification/realtime.gateway';
 import { PolicyKeys } from '../policy/policy.constants';
@@ -29,6 +31,38 @@ import type {
   UpdateRequestDto,
 } from './dto/request.dto';
 import type { RequestContext, TenantContext } from 'src/common/types/request-context';
+
+/**
+ * Loại bước duyệt → những vai trò đủ tư cách xử lý bước đó.
+ *
+ * NGUỒN DUY NHẤT cho ba câu hỏi vốn được trả lời ở ba chỗ khác nhau:
+ *
+ *   • người này có duyệt được bước kia không?        (`roleMatchesApprover`)
+ *   • người này duyệt được những loại bước nào?      (`approverRolesFor`)
+ *   • ai đủ tư cách đứng ở bước này?                 (`findEligibleApprovers`)
+ *
+ * Trước đây hai câu đầu là hai khối `switch`/`if` viết tay song song, kèm một
+ * dòng cảnh báo "sửa hàm này thì phải sửa hàm kia". Lệch nhau sẽ cho ra lỗi khó
+ * chịu nhất trong nhóm này: đơn HIỆN trong danh sách cần duyệt, bấm duyệt lại
+ * báo không có quyền.
+ *
+ * `COMPANY_ADMIN` có mặt ở mọi bước một cách có chủ đích — họ là phương án dự
+ * phòng khi trưởng phòng hoặc HR vắng mặt, để đơn không treo vô thời hạn.
+ */
+const APPROVER_STEP_ROLES: Record<string, SystemRole[]> = {
+  DIRECT_MANAGER: [SystemRole.MANAGER, SystemRole.COMPANY_ADMIN],
+  DEPARTMENT_HEAD: [SystemRole.MANAGER, SystemRole.COMPANY_ADMIN],
+  HR_PAYROLL: [SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN],
+  COMPANY_ADMIN: [SystemRole.COMPANY_ADMIN],
+};
+
+/** Nhãn tiếng Việt của loại bước duyệt — dùng cho màn xem trước luồng duyệt. */
+const APPROVER_STEP_LABEL: Record<string, string> = {
+  DIRECT_MANAGER: 'Quản lý trực tiếp',
+  DEPARTMENT_HEAD: 'Trưởng phòng ban',
+  HR_PAYROLL: 'Kế toán / HR',
+  COMPANY_ADMIN: 'Admin công ty',
+};
 
 /**
  * Đơn từ — docs/03 mục 6, docs/04 mục 4.
@@ -51,6 +85,7 @@ export class RequestService {
     private readonly attendance: AttendanceService,
     private readonly audit: AuditService,
     private readonly audits: AuditRepository,
+    private readonly makeup: MakeupService,
   ) {}
 
   // ===========================================================================
@@ -130,21 +165,46 @@ export class RequestService {
     dto: CreateRequestOnBehalfDto,
     departmentScope: string[] | null,
   ) {
-    const employee = await this.requests.findEmployee(ctx.companyId, dto.employeeId);
-    if (!employee) {
-      throw new AppException('EMP_NOT_FOUND');
-    }
-
     // MANAGER bị giới hạn HAI CHIỀU (docs/04 mục 1): vai trò nói được làm gì,
     // phạm vi phòng ban nói được làm trên ai. Thiếu chốt này thì một trưởng
     // phòng tạo được đơn nghỉ phép cho nhân viên phòng khác (BR-09).
-    if (departmentScope && !departmentScope.includes(employee.departmentId ?? '')) {
-      throw new AppException('AUTH_FORBIDDEN', {
-        reason: 'Bạn chỉ tạo đơn được cho nhân viên thuộc phòng ban mình quản lý.',
+    const employee = await this.requireScopedEmployee(ctx, dto.employeeId, departmentScope);
+
+    // `PENDING_ACTIVATION` được PHÉP: đó là hồ sơ HR đã tạo nhưng người đó chưa
+    // đăng nhập lần nào — chính là nhóm cần tạo đơn hộ nhất, vì chưa cài ứng
+    // dụng thì không tự gửi đơn được.
+    //
+    // Chốt này không thừa dù ô chọn đã lọc sẵn: ô chọn là gợi ý cho người dùng,
+    // còn đây là ranh giới thật. Gọi thẳng API với id của một người đã nghỉ việc
+    // sẽ tạo ra chứng từ nghỉ phép cho người không còn trong biên chế.
+    if (
+      employee.status !== EmployeeStatus.ACTIVE &&
+      employee.status !== EmployeeStatus.PENDING_ACTIVATION
+    ) {
+      throw new AppException('SYS_VALIDATION_ERROR', {
+        reason: `Không tạo đơn được cho nhân viên ở trạng thái ${employee.status}.`,
       });
     }
 
-    const detail = await this.createForEmployee(ctx, employee, dto);
+    // Kiểm tra người duyệt chỉ định TRƯỚC khi ghi đơn. Kiểm tra sau thì đơn đã
+    // nằm trong database rồi, và ném lỗi lúc đó để lại một đơn mồ côi không ai
+    // duyệt được.
+    let overrides: Map<number, string> | undefined;
+    if (dto.approvers?.length) {
+      const requestType = await this.requireRequestType(ctx.companyId, dto.requestTypeCode);
+      const quantity = this.computeQuantity(
+        requestType,
+        new Date(dto.startAt),
+        new Date(dto.endAt),
+        dto.isHalfDay ?? false,
+      );
+      const steps = await this.applicableFlowSteps(ctx.companyId, requestType, quantity);
+
+      await this.assertApproverOverrides(ctx.companyId, employee, steps, dto.approvers);
+      overrides = new Map(dto.approvers.map((item) => [item.order, item.approverId]));
+    }
+
+    const detail = await this.createForEmployee(ctx, employee, dto, overrides);
 
     // Ghi audit Ở ĐÂY chứ không dùng `@Audit()`: interceptor lấy `targetId` từ
     // `params.id` hoặc `body.id`, mà đơn vừa tạo thì chưa có id nào để lấy.
@@ -165,7 +225,147 @@ export class RequestService {
     return detail;
   }
 
-  private async createForEmployee(ctx: TenantContext, employee: Employee, dto: CreateRequestDto) {
+  /**
+   * Xem trước luồng duyệt TRƯỚC khi tạo đơn — `FR-WEB-REQ-09`.
+   *
+   * Trả về đúng những bước sẽ được sinh ra, kèm người duyệt hệ thống tự suy và
+   * danh sách ứng viên thay thế cho từng bước.
+   *
+   * Vì sao cần: luồng duyệt phụ thuộc vào ĐỘ DÀI đơn (nghỉ 1 ngày chỉ cần trưởng
+   * phòng, nghỉ 3 ngày trở lên mới thêm bước HR — xem `stepApplies`). Người nhập
+   * hộ không đoán được điều đó, và một đơn gửi sai đường phải huỷ rồi làm lại.
+   */
+  async previewApprovalFlow(
+    ctx: TenantContext,
+    query: {
+      employeeId: string;
+      requestTypeCode: string;
+      startAt: string;
+      endAt: string;
+      isHalfDay?: boolean;
+    },
+    departmentScope: string[] | null,
+  ) {
+    const employee = await this.requireScopedEmployee(ctx, query.employeeId, departmentScope);
+    const requestType = await this.requireRequestType(ctx.companyId, query.requestTypeCode);
+
+    const startAt = new Date(query.startAt);
+    const endAt = new Date(query.endAt);
+    const quantity = this.computeQuantity(requestType, startAt, endAt, query.isHalfDay ?? false);
+
+    const steps = await this.applicableFlowSteps(ctx.companyId, requestType, quantity);
+
+    const detailed = await Promise.all(
+      steps.map(async (step) => {
+        const suggestedId = await this.resolveApprover(ctx.companyId, step.approverRole, employee);
+        const candidates = await this.requests.findEligibleApprovers(
+          ctx.companyId,
+          APPROVER_STEP_ROLES[step.approverRole] ?? [],
+          employee.id,
+        );
+
+        return {
+          order: step.order,
+          approverRole: step.approverRole,
+          approverRoleLabel: APPROVER_STEP_LABEL[step.approverRole] ?? step.approverRole,
+          suggestedApproverId: suggestedId,
+          suggestedApproverName:
+            candidates.find((candidate) => candidate.id === suggestedId)?.fullName ?? null,
+          candidates: candidates.map((candidate) => ({
+            id: candidate.id,
+            fullName: candidate.fullName,
+            employeeCode: candidate.employeeCode,
+          })),
+        };
+      }),
+    );
+
+    return { quantity, unit: requestType.unit, steps: detailed };
+  }
+
+  /** Các bước duyệt thực sự áp dụng cho một đơn có độ dài `quantity`. */
+  private async applicableFlowSteps(
+    companyId: string,
+    requestType: RequestType,
+    quantity: number,
+  ): Promise<FlowStepTemplate[]> {
+    const flowSteps = await this.requests.findFlowSteps(companyId, requestType.id);
+
+    // Không cấu hình luồng → mặc định 1 cấp: quản lý trực tiếp.
+    const steps: FlowStepTemplate[] = flowSteps.length
+      ? flowSteps
+      : [{ order: 1, approverRole: 'DIRECT_MANAGER', condition: null }];
+
+    return steps.filter((step) => this.stepApplies(step.condition, quantity));
+  }
+
+  /** Nhân viên trong tenant VÀ trong phạm vi phòng ban của người gọi (BR-09). */
+  private async requireScopedEmployee(
+    ctx: TenantContext,
+    employeeId: string,
+    departmentScope: string[] | null,
+  ): Promise<Employee> {
+    const employee = await this.requests.findEmployee(ctx.companyId, employeeId);
+    if (!employee) {
+      throw new AppException('EMP_NOT_FOUND');
+    }
+    if (departmentScope && !departmentScope.includes(employee.departmentId ?? '')) {
+      throw new AppException('AUTH_FORBIDDEN', {
+        reason: 'Bạn chỉ thao tác được với nhân viên thuộc phòng ban mình quản lý.',
+      });
+    }
+    return employee;
+  }
+
+  /**
+   * Người nhập hộ chỉ được chọn AI đứng ở mỗi bước, KHÔNG được đổi CÓ NHỮNG BƯỚC
+   * NÀO.
+   *
+   * Đây là ranh giới quan trọng nhất của tính năng chọn người duyệt. Cho phép
+   * thêm/bớt bước là vô hiệu hoá `FR-WEB-REQ-05` — công ty cấu hình "nghỉ trên 3
+   * ngày phải qua HR" rồi người nhập đơn tự bỏ bước đó đi.
+   */
+  private async assertApproverOverrides(
+    companyId: string,
+    employee: Employee,
+    steps: FlowStepTemplate[],
+    overrides: Array<{ order: number; approverId: string }>,
+  ): Promise<void> {
+    for (const override of overrides) {
+      const step = steps.find((candidate) => candidate.order === override.order);
+      if (!step) {
+        throw new AppException('SYS_VALIDATION_ERROR', {
+          reason: `Đơn này không có bước duyệt thứ ${override.order}.`,
+        });
+      }
+
+      if (override.approverId === employee.id) {
+        throw new AppException('SYS_VALIDATION_ERROR', {
+          reason: 'Không ai được duyệt đơn của chính mình (BR-APV-03).',
+        });
+      }
+
+      const approver = await this.requests.findEmployee(companyId, override.approverId);
+      if (!approver) {
+        throw new AppException('EMP_NOT_FOUND');
+      }
+
+      if (!this.roleMatchesApprover(approver.roles, step.approverRole)) {
+        throw new AppException('SYS_VALIDATION_ERROR', {
+          reason: `${approver.fullName} không có quyền duyệt bước "${
+            APPROVER_STEP_LABEL[step.approverRole] ?? step.approverRole
+          }".`,
+        });
+      }
+    }
+  }
+
+  private async createForEmployee(
+    ctx: TenantContext,
+    employee: Employee,
+    dto: CreateRequestDto,
+    approverOverrides?: Map<number, string>,
+  ) {
     const requestType = await this.requireRequestType(ctx.companyId, dto.requestTypeCode);
 
     const startAt = new Date(dto.startAt);
@@ -218,7 +418,13 @@ export class RequestService {
     });
 
     if (submitNow) {
-      await this.generateApprovalSteps(ctx.companyId, request, requestType, employee);
+      await this.generateApprovalSteps(
+        ctx.companyId,
+        request,
+        requestType,
+        employee,
+        approverOverrides,
+      );
       await this.reservePendingLeave(ctx.companyId, employee.id, requestType, quantity);
       await this.notifyApprovers(ctx.companyId, request.id);
     }
@@ -521,6 +727,10 @@ export class RequestService {
       Number(request.quantity),
     );
 
+    // Đơn làm bù: ghi giờ đã bù vào sổ công làm bù. Ném lỗi ở đây là CỐ Ý —
+    // xem `applyMakeupCredit`.
+    await this.applyMakeupCredit(ctx, request);
+
     // BR-APV-06 + BR-REQ-03: tính lại công cho khoảng thời gian của đơn,
     // kể cả khi đơn được duyệt NGƯỢC VỀ QUÁ KHỨ.
     await this.triggerRecalculation(ctx.companyId, request);
@@ -676,22 +886,28 @@ export class RequestService {
     request: LeaveRequest,
     requestType: RequestType,
     employee: Employee,
+    /**
+     * Người duyệt do NGƯỜI NHẬP ĐƠN chỉ định, theo `order` của bước.
+     *
+     * Chỉ ghi đè AI đứng ở bước, không đổi CÓ NHỮNG BƯỚC NÀO — danh sách bước
+     * vẫn do cấu hình luồng và độ dài đơn quyết định. Đã được
+     * `assertApproverOverrides` kiểm tra vai trò trước khi tới đây.
+     */
+    approverOverrides?: Map<number, string>,
   ): Promise<void> {
-    const flowSteps = await this.requests.findFlowSteps(companyId, requestType.id);
-
-    // Không cấu hình luồng → mặc định 1 cấp: quản lý trực tiếp.
-    const steps: FlowStepTemplate[] = flowSteps.length
-      ? flowSteps
-      : [{ order: 1, approverRole: 'DIRECT_MANAGER', condition: null }];
-
-    const quantity = Number(request.quantity);
-    const applicable = steps.filter((step) => this.stepApplies(step.condition, quantity));
+    const applicable = await this.applicableFlowSteps(
+      companyId,
+      requestType,
+      Number(request.quantity),
+    );
 
     const seeds = await Promise.all(
       applicable.map(async (step) => ({
         order: step.order,
         approverRole: step.approverRole,
-        approverId: await this.resolveApprover(companyId, step.approverRole, employee),
+        approverId:
+          approverOverrides?.get(step.order) ??
+          (await this.resolveApprover(companyId, step.approverRole, employee)),
       })),
     );
 
@@ -766,17 +982,13 @@ export class RequestService {
    * chốt phê duyệt mà không ai biết.
    */
   private roleMatchesApprover(roles: SystemRole[], approverRole: string): boolean {
-    switch (approverRole) {
-      case 'DIRECT_MANAGER':
-      case 'DEPARTMENT_HEAD':
-        return roles.includes(SystemRole.MANAGER) || roles.includes(SystemRole.COMPANY_ADMIN);
-      case 'HR_PAYROLL':
-        return roles.includes(SystemRole.HR_PAYROLL) || roles.includes(SystemRole.COMPANY_ADMIN);
-      case 'COMPANY_ADMIN':
-        return roles.includes(SystemRole.COMPANY_ADMIN);
-      default:
-        return false;
-    }
+    const accepted = APPROVER_STEP_ROLES[approverRole];
+    // Bước duyệt lạ → KHÔNG AI duyệt được. Chốt an toàn quan trọng: thêm một
+    // loại bước mới vào cấu hình mà quên khai ở bảng trên thì lỗi lộ ra ngay.
+    // Mặc định `true` sẽ khiến bước mới được mọi người duyệt, âm thầm bỏ qua
+    // chốt phê duyệt mà không ai biết.
+    if (!accepted) return false;
+    return accepted.some((role) => roles.includes(role));
   }
 
   /**
@@ -787,21 +999,15 @@ export class RequestService {
    * một đơn cụ thể, hàm này dựng mệnh đề WHERE cho màn hình "đơn tôi cần duyệt".
    * Hỏi database "bước nào người này duyệt được" thì phải có sẵn danh sách.
    *
-   * `new Set` khử trùng lặp vì người vừa là MANAGER vừa là COMPANY_ADMIN sẽ có
-   * `DIRECT_MANAGER` hai lần — lọt vào mệnh đề `IN` là dư thừa vô ích.
-   *
-   * ⚠ Sửa hàm này thì phải sửa `roleMatchesApprover` tương ứng. Hai hàm lệch
+   * Cả hai chiều đọc CÙNG một bảng `APPROVER_STEP_ROLES`, nên không thể lệch
+   * nhau nữa. Trước đây là hai câu lệnh `switch`/`if` viết tay song song, và lệch
    * nhau sẽ tạo ra lỗi khó chịu: đơn hiện trong danh sách cần duyệt nhưng bấm
    * duyệt lại báo không có quyền.
    */
   private approverRolesFor(roles: SystemRole[]): string[] {
-    const result: string[] = [];
-    if (roles.includes(SystemRole.MANAGER)) result.push('DIRECT_MANAGER', 'DEPARTMENT_HEAD');
-    if (roles.includes(SystemRole.HR_PAYROLL)) result.push('HR_PAYROLL');
-    if (roles.includes(SystemRole.COMPANY_ADMIN)) {
-      result.push('DIRECT_MANAGER', 'DEPARTMENT_HEAD', 'HR_PAYROLL', 'COMPANY_ADMIN');
-    }
-    return [...new Set(result)];
+    return Object.entries(APPROVER_STEP_ROLES)
+      .filter(([, accepted]) => accepted.some((role) => roles.includes(role)))
+      .map(([step]) => step);
   }
 
   // ===========================================================================
@@ -846,6 +1052,51 @@ export class RequestService {
   }
 
   /** BR-REQ-01 — trừ phép TẠI THỜI ĐIỂM DUYỆT. */
+  /**
+   * Đơn làm bù được duyệt → ghi giờ đã bù vào sổ công làm bù.
+   *
+   * ## Mắt xích bị thiếu
+   *
+   * `commitLeaveDeduction` bên dưới thoát ngay ở dòng đầu với mọi `deductFrom`
+   * khác `ANNUAL_LEAVE`. Loại đơn làm bù có `deductFrom = MAKEUP_CREDIT`, nên
+   * duyệt xong KHÔNG có gì xảy ra: sổ công làm bù trống trơn, không lỗi, không
+   * cảnh báo. Người duyệt bấm đồng ý rồi đi tìm con số không bao giờ hiện ra.
+   *
+   * ## Vì sao để lỗi ném ra ngoài
+   *
+   * `applyFromApprovedRequest` từ chối khi số giờ trên đơn vượt quá số nợ thật.
+   * Chặn ở đây có nghĩa là đơn KHÔNG được duyệt — và đó là điều đúng: phần dôi
+   * ra không phải công làm bù mà là tăng ca, với hệ số lương hoàn toàn khác.
+   * Nuốt lỗi để đơn vẫn duyệt được sẽ tạo ra một đơn "đã duyệt" mà sổ sách không
+   * ghi nhận gì — đúng cái tình trạng bản vá này đang chữa.
+   *
+   * Thứ tự cũng quan trọng: hàm này chạy TRƯỚC `triggerRecalculation`, để lúc
+   * engine tính lại thì giờ bù đã nằm trong sổ và được cộng vào ngày làm bù.
+   */
+  private async applyMakeupCredit(
+    ctx: TenantContext,
+    request: { id: string; employeeId: string; requestType: RequestType; startAt: Date; quantity: Prisma.Decimal | number },
+  ): Promise<void> {
+    if (request.requestType.deductFrom !== 'MAKEUP_CREDIT') return;
+
+    const quantity = Number(request.quantity);
+    // Loại đơn làm bù khai theo GIỜ (`unit: 'HOUR'`); sổ làm bù ghi theo PHÚT.
+    const minutes =
+      request.requestType.unit === 'HOUR' ? Math.round(quantity * 60) : Math.round(quantity);
+
+    const timezone = await this.policy.getTimezone(ctx.companyId);
+
+    await this.makeup.applyFromApprovedRequest(ctx, {
+      employeeId: request.employeeId,
+      minutes,
+      // Ngày làm bù là ngày BẮT ĐẦU của đơn. Đơn làm bù vắt qua nhiều ngày là
+      // trường hợp hiếm và không biểu diễn được trong mô hình một-dòng-một-ngày;
+      // engine cộng `makeupMinutes` vào đúng một ngày (`sumMakeupMinutes`).
+      makeupWorkDate: toWorkDate(request.startAt, timezone),
+      requestId: request.id,
+    });
+  }
+
   private async commitLeaveDeduction(
     companyId: string,
     employeeId: string,

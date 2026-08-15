@@ -49,7 +49,8 @@ export interface DeviceBindingView {
 }
 
 export interface EmployeeSearchFilter {
-  status?: EmployeeStatus;
+  /** Một hoặc nhiều trạng thái. Bỏ trống = mọi trạng thái chưa xoá mềm. */
+  status?: EmployeeStatus[];
   departmentId?: string;
   branchId?: string;
   /** Phạm vi phòng ban của MANAGER — do guard áp, không lấy từ query. */
@@ -120,7 +121,9 @@ export class EmployeeRepository extends BaseRepository {
   ): Promise<{ items: EmployeeListItem[]; total: number }> {
     const where: Prisma.EmployeeWhereInput = { companyId, deletedAt: null };
 
-    if (filter.status) where.status = filter.status;
+    // Mảng rỗng KHÔNG được rơi vào `in: []` — Prisma dịch thành 0 dòng, tức là
+    // gửi `?status=` (rỗng) sẽ trả về danh sách trắng thay vì bỏ qua bộ lọc.
+    if (filter.status?.length) where.status = { in: filter.status };
     if (filter.departmentId) where.departmentId = filter.departmentId;
     if (filter.branchId) where.branchId = filter.branchId;
     // Phạm vi của MANAGER ghi đè bộ lọc do client gửi lên — thu hẹp, không mở rộng.

@@ -20,8 +20,12 @@ import type { TenantContext } from 'src/common/types/request-context';
 import {
   BulkShiftAssignmentDto,
   ClearShiftAssignmentDto,
+  CreateShiftScheduleDto,
   ShiftAssignmentQueryDto,
+  ShiftScheduleMemberDto,
+  ShiftScheduleQueryDto,
   UpdatePoliciesDto,
+  UpdateShiftScheduleDto,
   UpsertBranchDto,
   UpsertDepartmentDto,
   UpsertHolidayDto,
@@ -183,6 +187,107 @@ export class PolicyController {
   @ApiOperation({ summary: 'Xoá phân ca trong một khoảng ngày (FR-WEB-HR-04)' })
   clearAssignments(@CurrentTenant() ctx: TenantContext, @Body() dto: ClearShiftAssignmentDto) {
     return this.admin.clearShiftAssignments(ctx.companyId, dto);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bảng phân ca (FR-WEB-HR-13)
+  // ---------------------------------------------------------------------------
+
+  @Get('shift-schedules')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @DepartmentScoped()
+  @ApiOperation({ summary: 'Danh sách bảng phân ca (FR-WEB-HR-13)' })
+  listSchedules(@CurrentTenant() ctx: TenantContext, @Query() query: ShiftScheduleQueryDto) {
+    return this.admin.listShiftSchedules(ctx.companyId, query, resolveDepartmentScope(ctx));
+  }
+
+  @Get('shift-schedules/:id')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @ApiOperation({ summary: 'Chi tiết một bảng phân ca' })
+  @ApiErrors('POL_SCHEDULE_NOT_FOUND')
+  getSchedule(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
+    return this.admin.getShiftSchedule(ctx.companyId, id);
+  }
+
+  @Post('shift-schedules')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @DepartmentScoped()
+  @Audit({ action: 'SHIFT_SCHEDULE_CREATE', targetType: 'SHIFT' })
+  @ApiOperation({
+    summary: 'Lập bảng phân ca',
+    description:
+      'Kéo toàn bộ CBNV đang làm việc của các phòng ban đã chọn vào bảng, chưa xếp ca gì. Mỗi người mỗi tháng chỉ thuộc một bảng.',
+  })
+  @ApiErrors('POL_SHIFT_NOT_FOUND', 'POL_SCHEDULE_EMPLOYEE_TAKEN')
+  createSchedule(@CurrentTenant() ctx: TenantContext, @Body() dto: CreateShiftScheduleDto) {
+    return this.admin.createShiftSchedule(
+      ctx.companyId,
+      dto,
+      ctx.userId,
+      resolveDepartmentScope(ctx),
+    );
+  }
+
+  @Patch('shift-schedules/:id')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @Audit({ action: 'SHIFT_SCHEDULE_UPDATE', targetType: 'SHIFT' })
+  @ApiOperation({ summary: 'Sửa bảng phân ca (tên, phạm vi). Kỳ lập bảng không đổi được.' })
+  @ApiErrors('POL_SCHEDULE_NOT_FOUND', 'POL_SHIFT_NOT_FOUND')
+  updateSchedule(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: UpdateShiftScheduleDto,
+  ) {
+    return this.admin.updateShiftSchedule(ctx.companyId, id, dto);
+  }
+
+  @Delete('shift-schedules/:id')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL)
+  @Audit({ action: 'SHIFT_SCHEDULE_DELETE', targetType: 'SHIFT' })
+  @ApiOperation({
+    summary: 'Xoá bảng phân ca kèm toàn bộ lịch ca của nó',
+    description:
+      'BR-07: chặn khi tháng của bảng đã thuộc kỳ lương đã chốt — lịch ca đó đã được dùng để trả lương.',
+  })
+  @ApiErrors('POL_SCHEDULE_NOT_FOUND', 'PAY_PERIOD_CLOSED')
+  deleteSchedule(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
+    return this.admin.deleteShiftSchedule(ctx.companyId, id);
+  }
+
+  @Post('shift-schedules/:id/members')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @DepartmentScoped()
+  @Audit({ action: 'SHIFT_SCHEDULE_MEMBER_ADD', targetType: 'SHIFT' })
+  @ApiOperation({ summary: 'Thêm CBNV vào bảng phân ca' })
+  @ApiErrors('POL_SCHEDULE_NOT_FOUND', 'POL_SCHEDULE_EMPLOYEE_TAKEN')
+  addScheduleMembers(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: ShiftScheduleMemberDto,
+  ) {
+    return this.admin.addScheduleMembers(ctx.companyId, id, dto, resolveDepartmentScope(ctx));
+  }
+
+  /**
+   * POST chứ không DELETE: danh sách id nằm trong body, mà body của DELETE bị
+   * nhiều proxy và thư viện HTTP cắt bỏ âm thầm — request tới nơi với body rỗng
+   * sẽ bỏ nhầm không ai, hoặc tuỳ cách viết, bỏ hết cả bảng.
+   */
+  @Post('shift-schedules/:id/members/remove')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @HttpCode(HttpStatus.OK)
+  @Audit({ action: 'SHIFT_SCHEDULE_MEMBER_REMOVE', targetType: 'SHIFT' })
+  @ApiOperation({
+    summary: 'Bỏ CBNV khỏi bảng phân ca',
+    description: 'Xoá luôn lịch ca của họ TRONG bảng này — nếu không, bảng công vẫn tính theo ca cũ.',
+  })
+  @ApiErrors('POL_SCHEDULE_NOT_FOUND')
+  removeScheduleMembers(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: ShiftScheduleMemberDto,
+  ) {
+    return this.admin.removeScheduleMembers(ctx.companyId, id, dto);
   }
 
   // ---------------------------------------------------------------------------

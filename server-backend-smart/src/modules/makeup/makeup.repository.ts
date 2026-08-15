@@ -41,6 +41,8 @@ export interface CreateMakeupData {
   makeupMinutes?: number;
   requestId?: string | null;
   status: string;
+  /** Bỏ trống = `MANUAL`. Chỉ engine tính công mới đặt `ENGINE`. */
+  source?: string;
 }
 
 /** Tổng hợp cho thẻ chỉ số ở đầu màn hình công làm bù. */
@@ -153,6 +155,49 @@ export class MakeupRepository extends BaseRepository {
   async delete(companyId: string, id: string): Promise<number> {
     const result = await this.db().makeupWorkRecord.deleteMany({ where: { id, companyId } });
     return result.count;
+  }
+
+  /**
+   * Các khoản nợ ENGINE tự sinh cho MỘT ngày công cụ thể.
+   *
+   * Lọc theo `source` là điểm mấu chốt: engine chỉ được đụng vào dòng của chính
+   * nó. Bỏ điều kiện đó thì một lần tính lại ngày công sẽ xoá mất khoản nợ HR
+   * nhập tay theo thoả thuận riêng, chỉ vì bảng chấm công ngày đó không thiếu giờ.
+   *
+   * Sắp xếp MỚI NHẤT TRƯỚC vì khi nợ giảm, phải cắt từ dòng vừa sinh ra ngược
+   * lên — dòng cũ nhất có nhiều khả năng đã được bù một phần.
+   */
+  async findEngineDebts(
+    companyId: string,
+    employeeId: string,
+    debtWorkDate: Date,
+  ): Promise<MakeupWorkRecord[]> {
+    return this.db().makeupWorkRecord.findMany({
+      where: { companyId, employeeId, debtWorkDate, source: 'ENGINE' },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  /**
+   * Các khoản còn nợ của một nhân viên, CŨ NHẤT TRƯỚC.
+   *
+   * Thứ tự FIFO là có chủ đích: khoản cũ nhất cũng là khoản sắp hết hạn nhất,
+   * nên giờ làm bù phải trả nó trước. Trả khoản mới trước sẽ để khoản cũ rơi
+   * vào quá hạn trong khi nhân viên đã làm bù đủ giờ.
+   */
+  async findOutstandingDebts(
+    companyId: string,
+    employeeId: string,
+  ): Promise<MakeupWorkRecord[]> {
+    return this.db().makeupWorkRecord.findMany({
+      where: {
+        companyId,
+        employeeId,
+        status: { in: ['OPEN', 'PARTIAL'] },
+        remainingMinutes: { gt: 0 },
+      },
+      orderBy: [{ debtWorkDate: 'asc' }, { createdAt: 'asc' }],
+    });
   }
 
   /**

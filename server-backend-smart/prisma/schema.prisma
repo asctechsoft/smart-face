@@ -64,6 +64,7 @@ model Company {
   userAccounts   UserAccount[]
   policies       CompanyPolicy[]
   shifts         Shift[]
+  shiftSchedules ShiftSchedule[]
   holidays       Holiday[]
   requestTypes   RequestType[]
   payrollPeriods PayrollPeriod[]
@@ -323,6 +324,7 @@ model Employee {
   leaveBalances     LeaveBalance[]
   shiftAssignments  ShiftAssignment[]
   makeupRecords     MakeupWorkRecord[]
+  scheduleMembers   ShiftScheduleMember[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -487,15 +489,97 @@ model Shift {
   effectiveFrom              DateTime
   effectiveTo                DateTime?
 
-  segments    ShiftSegment[]
-  assignments ShiftAssignment[]
+  // ---------------------------------------------------------------------------
+  //  Danh mục ca (FR-WEB-POL-04)
+  // ---------------------------------------------------------------------------
+
+  /// Mã ca do công ty tự đặt — "HC", "C1", "D2". Duy nhất trong một công ty.
+  code   String
+  /// Ký hiệu in trên bảng chấm công — "X", "+", "Đ". Không cần duy nhất:
+  /// nhiều ca khác nhau vẫn có thể cùng hiện một ký hiệu trên bảng công.
+  symbol String?
+
+  /// Phòng ban áp dụng. Rỗng = mọi phòng ban.
+  ///
+  /// Chỉ dùng để LỌC GỢI Ý khi phân ca, không chặn. Ràng buộc cứng ở đây sẽ
+  /// biến mọi ngoại lệ có thật — mượn việc sang phòng khác, ca đặc biệt cuối
+  /// năm — thành một lần phải vào sửa danh mục trước khi xếp được lịch.
+  departmentIds String[] @default([])
+
+  /// BR-ATT-02: ca nào cũng phải chấm vào, nếu không thì không có gì để tính
+  /// giờ công. Cột vẫn tồn tại để đọc lên giao diện, nhưng service từ chối
+  /// mọi yêu cầu đặt về `false`.
+  requireCheckIn  Boolean @default(true)
+  /// Khung giờ chấm vào được chấp nhận, dạng "HH:mm". Null = không giới hạn.
+  checkInFrom     String?
+  checkInTo       String?
+  /// Ca chỉ điểm danh đầu giờ (họp, đào tạo) thì tắt chấm ra.
+  requireCheckOut Boolean @default(true)
+  checkOutFrom    String?
+  checkOutTo      String?
+
+  /// Nghỉ giữa ca theo GIỜ CỤ THỂ. `breakMinutes` ở trên vẫn là nguồn duy nhất
+  /// mà máy tính công đọc — hai cột này chỉ mô tả khoảng nghỉ nằm ở đâu, và
+  /// service tự tính `breakMinutes` lại từ chúng để hai bên không bao giờ lệch.
+  breakStart String?
+  breakEnd   String?
+
+  /// Số ngày công một ca này được tính. Ca gãy nửa buổi đặt 0.5.
+  workDayCredit Decimal @default(1.00) @db.Decimal(4, 2)
+
+  /// Hệ số ngày công theo tính chất của ngày.
+  ///
+  /// ⚠ CHƯA được máy tính công đọc tới — xem `docs/04` mục 6.5. Đây là khai báo
+  /// danh mục, không phải cấu hình đang có hiệu lực. Đừng suy ra số liệu bảng
+  /// công từ mấy cột này cho tới khi phần nối vào engine được làm.
+  normalDayFactor   Decimal @default(1.00) @db.Decimal(4, 2)
+  weeklyRestFactor  Decimal @default(2.00) @db.Decimal(4, 2)
+  holidayFactor     Decimal @default(3.00) @db.Decimal(4, 2)
+
+  segments       ShiftSegment[]
+  assignments    ShiftAssignment[]
+  holidayFactors ShiftHolidayFactor[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
 
+  /// ⚠ Ràng buộc DUY NHẤT của `code` là một PARTIAL UNIQUE INDEX, không khai
+  /// được ở đây (Prisma chưa hỗ trợ `WHERE` cho `@@unique`). Nó nằm trong
+  /// `migrations/20260815130000_shift_code_partial_unique`:
+  ///
+  ///   UNIQUE ("companyId", "code") WHERE "effectiveTo" IS NULL
+  ///
+  /// Phải là partial vì D6: đổi giờ một ca đã phân sẽ ĐÓNG bản hiện tại
+  /// (`effectiveTo`) rồi mở bản kế nhiệm mang CÙNG mã. Ràng buộc đầy đủ sẽ chặn
+  /// đúng cơ chế phiên bản hoá của chính hệ thống này.
+  ///
+  /// Bản đã đóng nhả mã cho bản kế nhiệm; bản xoá mềm thì KHÔNG (`effectiveTo`
+  /// vẫn null) — mã ca đã in trên bảng công không được mang nghĩa khác.
+  @@index([companyId, code])
   @@index([companyId, effectiveFrom])
   @@map("shift")
+}
+
+/// Hệ số ngày công đặt riêng cho MỘT ngày lễ cụ thể của MỘT ca.
+///
+/// Tồn tại vì `holidayFactor` chung không đủ: Tết trả khác 30/4, và cùng một
+/// ngày lễ thì ca đêm lại khác ca hành chính. Không có bản ghi ở đây thì ca
+/// dùng `holidayFactor` chung — bảng này chỉ chứa ngoại lệ, không chứa mặc định.
+model ShiftHolidayFactor {
+  id        String  @id @default(cuid())
+  shiftId   String
+  shift     Shift   @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  holidayId String
+  holiday   Holiday @relation(fields: [holidayId], references: [id], onDelete: Cascade)
+  factor    Decimal @db.Decimal(4, 2)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([shiftId, holidayId])
+  @@index([holidayId])
+  @@map("shift_holiday_factor")
 }
 
 /// Ca gãy: sáng 08:00-12:00, chiều 14:00-18:00
@@ -522,11 +606,82 @@ model ShiftAssignment {
   workDate   DateTime @db.Date
   createdBy  String?
 
+  /// Bảng phân ca đã sinh ra lượt này. Null = xếp ngoài bảng (dữ liệu cũ).
+  ///
+  /// ⚠ `@@unique([employeeId, workDate])` KHÔNG kèm `scheduleId`, và không được
+  /// kèm: máy tính công đọc đúng MỘT ca cho một người trong một ngày. Cho hai
+  /// bảng cùng giữ một ô là để engine chọn bừa một trong hai.
+  scheduleId String?
+  schedule   ShiftSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
+
   createdAt DateTime @default(now())
 
   @@unique([employeeId, workDate])
   @@index([companyId, workDate])
+  @@index([scheduleId])
   @@map("shift_assignment")
+}
+
+/// Bảng phân ca của một tháng — FR-WEB-HR-05.
+///
+/// Đây là ĐƠN VỊ CÔNG VIỆC của người xếp lịch ("bảng phân ca tháng 8 phòng
+/// Kho"), đứng trên `ShiftAssignment` vốn chỉ là từng ô lịch rời rạc. Bảng giữ
+/// phạm vi đã chốt lúc lập — phòng ban nào, được dùng những ca nào — để mọi
+/// thao tác bên trong không đi ra ngoài phạm vi đó.
+model ShiftSchedule {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+  name      String
+
+  /// Kỳ lập bảng. LUÔN là ngày 01 của tháng — service tự chuẩn hoá.
+  /// Lưu ngày cụ thể thay vì cặp (năm, tháng) để so sánh khoảng và sắp xếp
+  /// bằng chính kiểu dữ liệu, không phải bằng phép ghép chuỗi.
+  periodMonth DateTime @db.Date
+
+  /// Phạm vi chốt lúc lập bảng. Màn chi tiết chỉ cho lọc và phân ca trong đây.
+  departmentIds String[] @default([])
+  shiftIds      String[] @default([])
+
+  createdBy String?
+
+  members     ShiftScheduleMember[]
+  assignments ShiftAssignment[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([companyId, periodMonth])
+  @@map("shift_schedule")
+}
+
+/// Một CBNV có mặt trong bảng phân ca.
+///
+/// Tồn tại thành bảng riêng thay vì suy ra từ `departmentIds`: danh sách người
+/// được CHỐT lúc lập bảng và sửa được sau đó (thêm/bớt CBNV). Suy ra động thì
+/// một lần đổi phòng ban của nhân viên sẽ âm thầm viết lại một bảng đã xếp xong.
+model ShiftScheduleMember {
+  id         String        @id @default(cuid())
+  scheduleId String
+  schedule   ShiftSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  /// Bản sao của `schedule.periodMonth`, tồn tại DUY NHẤT để ràng buộc bên dưới
+  /// chạy được ở tầng database. Service luôn ghi hai chỗ cùng lúc.
+  periodMonth DateTime @db.Date
+
+  createdAt DateTime @default(now())
+
+  /// Một người, một tháng, một bảng. Không có ràng buộc này thì hai bảng cùng
+  /// tháng sẽ tranh nhau ghi vào cùng ô `(employeeId, workDate)`, bảng lưu sau
+  /// đè bảng lưu trước — và màn chi tiết của bảng kia hiển thị ca mà nó không
+  /// hề xếp.
+  @@unique([employeeId, periodMonth])
+  @@unique([scheduleId, employeeId])
+  @@index([scheduleId])
+  @@map("shift_schedule_member")
 }
 
 model Holiday {
@@ -541,6 +696,8 @@ model Holiday {
   otMultiplier   Decimal   @default(3.0) @db.Decimal(4, 2)
   /// Rỗng = áp dụng toàn công ty
   branchIds      String[]  @default([])
+
+  shiftFactors ShiftHolidayFactor[]
 
   createdAt DateTime @default(now())
 
@@ -988,11 +1145,18 @@ model MakeupWorkRecord {
   requestId        String?
   /// "OPEN" | "PARTIAL" | "COMPLETED" | "EXPIRED"
   status           String    @default("OPEN")
+  /// "MANUAL" (HR nhập tay) | "ENGINE" (engine tính công tự sinh từ ngày thiếu giờ)
+  ///
+  /// Engine CHỈ được sửa/xoá dòng của chính nó. Không có cột này thì mỗi lần
+  /// tính lại một ngày, engine sẽ xoá nhầm khoản nợ HR nhập tay theo thoả thuận
+  /// riêng — chỉ vì ngày đó nhìn từ bảng chấm công thì không thiếu giờ.
+  source           String    @default("MANUAL")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([companyId, employeeId, status])
+  @@index([companyId, employeeId, debtWorkDate])
   @@map("makeup_work_record")
 }
 

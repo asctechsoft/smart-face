@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import {
   ApprovalStep,
   Employee,
+  EmployeeStatus,
   LeaveBalance,
   LeaveRequest,
   MakeupWorkRecord,
@@ -10,6 +11,7 @@ import {
   RequestAttachment,
   RequestStatus,
   RequestType,
+  SystemRole,
 } from '@prisma/client';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
@@ -647,6 +649,33 @@ export class RequestRepository extends BaseRepository {
   /** Số đơn đã phát sinh theo loại — dùng để cảnh báo trước khi tắt một loại đơn. */
   async countRequestsOfType(companyId: string, requestTypeId: string): Promise<number> {
     return this.db().leaveRequest.count({ where: { companyId, requestTypeId } });
+  }
+
+  /**
+   * Những người đủ tư cách đứng ở một bước duyệt.
+   *
+   * `PENDING_ACTIVATION` được tính là ứng viên hợp lệ: đó là hồ sơ đã có vai trò
+   * nhưng chưa đăng nhập lần đầu. Loại họ ra sẽ làm danh sách rỗng ở đúng những
+   * công ty mới triển khai — nơi chưa ai kịp đăng nhập, kể cả trưởng phòng.
+   *
+   * Loại `excludeEmployeeId` vì `BR-APV-03`: không ai duyệt đơn của chính mình.
+   */
+  async findEligibleApprovers(
+    companyId: string,
+    roles: SystemRole[],
+    excludeEmployeeId: string,
+  ): Promise<Array<{ id: string; fullName: string; employeeCode: string; roles: SystemRole[] }>> {
+    return this.db().employee.findMany({
+      where: {
+        companyId,
+        deletedAt: null,
+        status: { in: [EmployeeStatus.ACTIVE, EmployeeStatus.PENDING_ACTIVATION] },
+        id: { not: excludeEmployeeId },
+        roles: { hasSome: roles },
+      },
+      select: { id: true, fullName: true, employeeCode: true, roles: true },
+      orderBy: { fullName: 'asc' },
+    });
   }
 
   async findDepartmentManagerId(companyId: string, departmentId: string): Promise<string | null> {

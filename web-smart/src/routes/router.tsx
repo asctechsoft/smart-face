@@ -36,6 +36,11 @@ const EmployeeDetailPage = lazy(() =>
     default: m.EmployeeDetailPage,
   })),
 );
+const ShiftScheduleListPage = lazy(() =>
+  import('@/features/shifts/ShiftScheduleListPage').then((m) => ({
+    default: m.ShiftScheduleListPage,
+  })),
+);
 const ShiftSchedulePage = lazy(() =>
   import('@/features/shifts/ShiftSchedulePage').then((m) => ({ default: m.ShiftSchedulePage })),
 );
@@ -139,7 +144,9 @@ export function AppRouter() {
             </Route>
 
             <Route element={<RequirePermission permission="shift.assign" />}>
-              <Route path="/shifts" element={<ShiftSchedulePage />} />
+              {/* Danh sách bảng phân ca là cửa vào; lưới người × ngày nằm trong một bảng. */}
+              <Route path="/shifts" element={<ShiftScheduleListPage />} />
+              <Route path="/shifts/:id" element={<ShiftSchedulePage />} />
             </Route>
 
             <Route element={<RequirePermission permission="role.manage" />}>

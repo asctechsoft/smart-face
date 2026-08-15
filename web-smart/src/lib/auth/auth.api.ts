@@ -1,4 +1,4 @@
-import { api } from '@/lib/api/client';
+import { api, COLD_START_TIMEOUT_MS } from '@/lib/api/client';
 import type { SystemRole } from '@/config/constants';
 
 /** `nextStep` quyết định màn hình kế tiếp sau khi đổi ID token lấy phiên. */
@@ -53,9 +53,14 @@ export const authApi = {
    * nên sau khi Firebase xác nhận danh tính, Backend đã biết chắc tài khoản này
    * thuộc công ty nào. Bắt người dùng gõ lại tên miền không thêm thông tin gì —
    * chỉ thêm một ô để gõ sai.
+   *
+   * Đây gần như luôn là lời gọi đầu tiên tới Backend nên dùng ngưỡng chờ dài
+   * hơn — xem `COLD_START_TIMEOUT_MS`.
    */
   createSession(payload: { firebaseIdToken: string }) {
-    return api.post<CreateSessionResult>('/auth/session', payload);
+    return api.post<CreateSessionResult>('/auth/session', payload, {
+      timeout: COLD_START_TIMEOUT_MS,
+    });
   },
 
   verifyTwoFactor(payload: { twoFactorToken: string; code: string }) {

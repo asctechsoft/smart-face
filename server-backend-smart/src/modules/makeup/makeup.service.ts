@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { MakeupWorkRecord } from '@prisma/client';
 import { PaginatedResult } from 'src/common/dto';
 import { AppException } from 'src/common/errors';
@@ -54,6 +54,8 @@ export interface MakeupConversion {
  */
 @Injectable()
 export class MakeupService {
+  private readonly logger = new Logger(MakeupService.name);
+
   constructor(
     private readonly records: MakeupRepository,
     private readonly transactions: TransactionManager,
@@ -61,6 +63,205 @@ export class MakeupService {
     private readonly audit: AuditService,
     private readonly notifications: NotificationService,
   ) {}
+
+  // ---------------------------------------------------------------------------
+  // Engine tính công gọi vào
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Đồng bộ khoản nợ ENGINE của một ngày công với số giờ thực sự thiếu.
+   *
+   * ## Vì sao hàm này tồn tại
+   *
+   * docs/04 mục 5.1: nợ công phát sinh từ việc đi muộn / về sớm tích luỹ, tức là
+   * từ engine tính công. Trước đây `MakeupWorkRecord` chỉ được tạo bằng tay qua
+   * màn "Ghi nhận nợ công", nên sổ làm bù gần như luôn trống và mọi thứ dựa trên
+   * nó — kể cả đơn xin làm bù — không có gì để trừ vào.
+   *
+   * ## Vì sao nó phải phức tạp hơn một lệnh `create`
+   *
+   * `calculateAndPersist` là hàm IDEMPOTENT (NFR-REL-06) và bị gọi lại rất nhiều
+   * lần cho cùng một ngày: mỗi lần hiệu chỉnh công, mỗi lần duyệt đơn ngược quá
+   * khứ, và mỗi đêm khi cron quét. Một lệnh `create` trần ở đây sẽ nhân bản nợ
+   * sau mỗi lần chạy — và đây là con số đi thẳng vào bảng lương.
+   *
+   * Nên hàm này ĐỐI CHIẾU thay vì ghi thêm: giữ cho tổng nợ ENGINE của ngày đó
+   * luôn bằng `shortfallMinutes`, dù chạy một lần hay một trăm lần.
+   *
+   * ## Ba ranh giới không được vượt
+   *
+   * 1. **Chỉ đụng dòng `source = ENGINE`.** Khoản nợ HR nhập tay theo thoả thuận
+   *    riêng phải sống sót qua mọi lần tính lại.
+   * 2. **Không bao giờ sửa dòng đã có giờ bù.** Nhân viên đã làm bù thật; xoá
+   *    dòng đó là xoá công đã làm của người ta.
+   * 3. **Không tạo nợ cho ngày nghỉ, ngày lễ, hay ngày vắng mặt** — việc lọc đó
+   *    nằm ở phía engine, hàm này chỉ nhận `shortfallMinutes` đã tính sẵn.
+   */
+  async reconcileEngineDebt(
+    companyId: string,
+    employeeId: string,
+    debtWorkDate: Date,
+    shortfallMinutes: number,
+  ): Promise<void> {
+    const existing = await this.records.findEngineDebts(companyId, employeeId, debtWorkDate);
+    const recorded = existing.reduce((sum, row) => sum + row.debtMinutes, 0);
+
+    // Đường thoát nhanh và cũng là bảo chứng idempotent: chạy lại khi không có
+    // gì đổi thì không phát sinh một lệnh ghi nào.
+    if (recorded === shortfallMinutes) return;
+
+    if (shortfallMinutes > recorded) {
+      await this.growEngineDebt(
+        companyId,
+        employeeId,
+        debtWorkDate,
+        existing,
+        shortfallMinutes - recorded,
+      );
+      return;
+    }
+
+    await this.shrinkEngineDebt(companyId, existing, recorded - shortfallMinutes);
+  }
+
+  /** Nợ tăng: dồn vào dòng chưa bù nếu có, không thì mở dòng mới. */
+  private async growEngineDebt(
+    companyId: string,
+    employeeId: string,
+    debtWorkDate: Date,
+    existing: MakeupWorkRecord[],
+    delta: number,
+  ): Promise<void> {
+    const untouched = existing.find((row) => row.makeupMinutes === 0 && row.status !== 'COMPLETED');
+
+    if (untouched) {
+      await this.records.update(companyId, untouched.id, {
+        debtMinutes: untouched.debtMinutes + delta,
+        remainingMinutes: untouched.remainingMinutes + delta,
+      });
+      return;
+    }
+
+    const conversion = await this.getConversion(companyId);
+    await this.records.create(companyId, {
+      employeeId,
+      debtWorkDate,
+      debtMinutes: delta,
+      remainingMinutes: delta,
+      // Hạn đếm từ NGÀY PHÁT SINH NỢ, không phải hôm nay: tính lại một ngày của
+      // tháng trước mà lấy hạn từ hôm nay là tự kéo dài hạn thêm một tháng.
+      dueDate: this.addDays(debtWorkDate, conversion.dueDays),
+      status: 'OPEN',
+      source: 'ENGINE',
+    });
+  }
+
+  /**
+   * Nợ giảm (ngày được hiệu chỉnh, hoặc đơn nghỉ được duyệt ngược quá khứ).
+   *
+   * Cắt từ dòng MỚI NHẤT ngược lên và chỉ cắt vào phần CHƯA BÙ. Phần đã bù thì
+   * giữ nguyên: đó là giờ nhân viên đã làm thật, và nó vẫn đang được cộng vào
+   * công của ngày làm bù.
+   */
+  private async shrinkEngineDebt(
+    companyId: string,
+    existing: MakeupWorkRecord[],
+    excess: number,
+  ): Promise<void> {
+    let left = excess;
+
+    for (const row of existing) {
+      if (left <= 0) break;
+      if (row.makeupMinutes > 0) continue;
+
+      if (row.debtMinutes <= left) {
+        left -= row.debtMinutes;
+        await this.records.delete(companyId, row.id);
+        continue;
+      }
+
+      await this.records.update(companyId, row.id, {
+        debtMinutes: row.debtMinutes - left,
+        remainingMinutes: Math.max(0, row.remainingMinutes - left),
+      });
+      left = 0;
+    }
+
+    // Còn dư nghĩa là phần vượt nằm ở các dòng ĐÃ BÙ. Không đụng vào, nhưng cũng
+    // không im lặng: nhân viên đã làm bù cho một khoản nợ mà nay không còn nữa,
+    // và số giờ đó cần được xử lý như tăng ca chứ không phải bù công.
+    if (left > 0) {
+      this.logger.warn(
+        `Nợ công giảm ${excess} phút nhưng chỉ cắt được ${excess - left}: phần còn lại đã được làm bù. ` +
+          `Kiểm tra lại ngày ${formatWorkDate(existing[0]?.debtWorkDate ?? new Date())} của nhân viên ${existing[0]?.employeeId}.`,
+      );
+    }
+  }
+
+  /**
+   * Áp giờ làm bù từ một ĐƠN vừa được duyệt vào các khoản còn nợ.
+   *
+   * ## Vì sao cần
+   *
+   * Duyệt đơn làm bù trước đây không chạm gì vào sổ: `commitLeaveDeduction` chỉ
+   * xử lý `deductFrom = ANNUAL_LEAVE`, còn `MAKEUP_CREDIT` rơi thẳng ra ngoài,
+   * im lặng. Người duyệt bấm đồng ý và không có gì xảy ra.
+   *
+   * ## Trả nợ CŨ NHẤT TRƯỚC
+   *
+   * Khoản cũ nhất cũng là khoản sắp hết hạn nhất. Trả khoản mới trước sẽ để
+   * khoản cũ rơi vào quá hạn trong khi nhân viên đã làm bù đủ giờ — rồi họ phải
+   * đi xin gia hạn cho một khoản mình đã trả.
+   *
+   * ## Vượt quá số nợ thì TỪ CHỐI, không cắt bớt
+   *
+   * Phần dôi ra không phải công làm bù mà là tăng ca, và tăng ca có luồng duyệt
+   * cùng hệ số lương riêng (150% / 200% / 300%). Lặng lẽ nuốt phần dôi là trả
+   * thiếu lương; lặng lẽ cộng vào là trả sai hệ số. Cả hai đều sai theo hướng
+   * không ai phát hiện ra, nên đơn bị chặn ngay lúc duyệt kèm số nợ thực tế.
+   */
+  async applyFromApprovedRequest(
+    ctx: TenantContext,
+    input: { employeeId: string; minutes: number; makeupWorkDate: Date; requestId: string },
+  ): Promise<{ appliedMinutes: number; touchedRecordIds: string[] }> {
+    if (input.minutes <= 0) return { appliedMinutes: 0, touchedRecordIds: [] };
+
+    const debts = await this.records.findOutstandingDebts(ctx.companyId, input.employeeId);
+    const outstanding = debts.reduce((sum, row) => sum + row.remainingMinutes, 0);
+
+    if (input.minutes > outstanding) {
+      throw new AppException('MKUP_EXCEEDS_DEBT', {
+        remainingMinutes: outstanding,
+        provided: input.minutes,
+        hint:
+          outstanding === 0
+            ? 'Nhân viên không còn khoản công nào cần bù. Giờ làm thêm ngoài giờ thuộc đơn đăng ký OT.'
+            : `Nhân viên chỉ còn nợ ${this.formatMinutes(outstanding)}. Sửa lại số giờ trên đơn, phần dôi ra dùng đơn đăng ký OT.`,
+      });
+    }
+
+    const touched: string[] = [];
+    let left = input.minutes;
+
+    for (const debt of debts) {
+      if (left <= 0) break;
+
+      const take = Math.min(left, debt.remainingMinutes);
+      // Dùng lại đúng `record()` của đường nhập tay: nó đã xử lý việc TÁCH DÒNG
+      // khi bù dở dang (FR-WEB-MKUP-02) và khôi phục trạng thái. Viết một nhánh
+      // ghi riêng ở đây là nhân đôi quy tắc khó nhất của module này.
+      await this.record(ctx, debt.id, {
+        makeupWorkDate: formatWorkDate(input.makeupWorkDate),
+        minutes: take,
+        requestId: input.requestId,
+      });
+
+      touched.push(debt.id);
+      left -= take;
+    }
+
+    return { appliedMinutes: input.minutes - left, touchedRecordIds: touched };
+  }
 
   // ---------------------------------------------------------------------------
   // Đọc

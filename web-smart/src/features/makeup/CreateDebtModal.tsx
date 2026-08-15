@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Alert, DatePicker, Input, InputNumber, Modal, Select } from 'antd';
-import { REASON_MIN_LENGTH } from '@/config/constants';
+import { EMPLOYABLE_STATUSES, REASON_MIN_LENGTH } from '@/config/constants';
 import { formatMinutes, toWorkDate, todayWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
 import { useAuth } from '@/lib/auth/auth-context';
@@ -35,7 +35,7 @@ export function CreateDebtModal({ open, onClose }: { open: boolean; onClose: () 
 
   // Danh sách nhân viên để chọn. Chỉ tải khi hộp thoại mở — trang bên dưới không
   // cần dữ liệu này và nó là một truy vấn phân trang thật sự.
-  const employees = useEmployeeList({ pageSize: 100, status: 'ACTIVE' });
+  const employees = useEmployeeList({ pageSize: 100, status: EMPLOYABLE_STATUSES });
 
   const totalMinutes = hours * 60 + minutes;
   const canSubmit =

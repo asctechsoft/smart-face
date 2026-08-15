@@ -5,6 +5,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
+import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmployeeCell } from '@/components/EmployeeCell';
 import { StatusBadge, employeeStatusTone } from '@/components/StatusBadge';
 import { ReasonDialog } from '@/components/ReasonDialog';
@@ -13,7 +14,7 @@ import { Can, useCan } from '@/lib/rbac/Can';
 import { EMPLOYEE_STATUS_LABEL, ROLE_LABEL, DEFAULT_PAGE_SIZE } from '@/config/constants';
 import { formatDay } from '@/lib/utils/date';
 import { useAuth } from '@/lib/auth/auth-context';
-import { useDepartments, useBranches, toSelectOptions } from '@/features/shared/org.api';
+import { useBranches, toSelectOptions } from '@/features/shared/org.api';
 import {
   useEmployeeList,
   useReactivateEmployee,
@@ -65,7 +66,6 @@ export function EmployeeListPage() {
   const terminate = useTerminateEmployee();
   const resendInvite = useResendInvite();
 
-  const departments = useDepartments();
   const branches = useBranches();
 
   const query: EmployeeQuery = useMemo(
@@ -307,13 +307,11 @@ export function EmployeeListPage() {
         </FilterField>
 
         <FilterField label="Phòng ban" htmlFor="e-dept" width={200}>
-          <Select
+          <DepartmentTreeSelect
             id="e-dept"
-            value={query.departmentId ?? ''}
-            loading={departments.isLoading}
-            options={toSelectOptions(departments.data, 'Tất cả phòng ban')}
+            value={query.departmentId}
             onChange={(value) => patchQuery({ departmentId: value })}
-            style={{ width: '100%' }}
+            placeholder="Tất cả phòng ban"
           />
         </FilterField>
 

@@ -33,13 +33,38 @@ export class ApiError extends Error {
   }
 }
 
-/** Mất mạng, timeout, CORS — không có thân lỗi nào để đọc. */
+/**
+ * Không có thân lỗi nào để đọc — hoặc chưa từng có phản hồi, hoặc phản hồi không
+ * đúng định dạng.
+ *
+ * **Vì sao phải tách `TIMEOUT` khỏi `UNREACHABLE`.** Cả hai đều rơi vào cùng một
+ * nhánh của axios (`!error.response`) nên rất dễ gộp làm một, nhưng hệ quả với
+ * người dùng ngược nhau:
+ *
+ *   `UNREACHABLE` — chưa gửi được đi. Chắc chắn KHÔNG có gì xảy ra ở máy chủ.
+ *   `TIMEOUT`     — đã gửi đi, chỉ là câu trả lời về không kịp. Máy chủ RẤT CÓ
+ *                   THỂ đã làm xong việc đó rồi.
+ *
+ * Gộp lại thì người dùng bị bảo "kiểm tra đường truyền" trong khi thao tác của
+ * họ đã thành công — đây đúng là chuyện xảy ra ở màn đăng nhập: Backend tạo
+ * phiên xong, Web hết giờ chờ trước khi phản hồi về, và báo mất kết nối.
+ */
+export type NetworkFailureKind = 'UNREACHABLE' | 'TIMEOUT' | 'BAD_RESPONSE';
+
+const NETWORK_MESSAGES: Record<NetworkFailureKind, string> = {
+  UNREACHABLE: 'Không kết nối được tới máy chủ',
+  TIMEOUT: 'Máy chủ không trả lời kịp',
+  BAD_RESPONSE: 'Máy chủ trả về phản hồi không đọc được',
+};
+
 export class NetworkError extends Error {
   readonly code = 'NET_UNREACHABLE';
+  readonly kind: NetworkFailureKind;
 
-  constructor(message = 'Không kết nối được tới máy chủ') {
-    super(message);
+  constructor(kind: NetworkFailureKind = 'UNREACHABLE') {
+    super(NETWORK_MESSAGES[kind]);
     this.name = 'NetworkError';
+    this.kind = kind;
   }
 }
 
@@ -233,6 +258,16 @@ export function toUserError(error: unknown): UserFacingError {
   }
 
   if (error instanceof NetworkError) {
+    if (error.kind === 'TIMEOUT') {
+      return {
+        title: 'Máy chủ phản hồi quá chậm',
+        // KHÔNG mời thử lại ngay: yêu cầu có thể đã chạy xong ở máy chủ, làm lại
+        // lần nữa là tạo bản ghi thứ hai.
+        body: 'Yêu cầu vừa rồi có thể đã được xử lý xong. Tải lại trang để xem kết quả trước khi làm lại.',
+        canRetry: true,
+      };
+    }
+
     return {
       title: 'Không kết nối được máy chủ',
       body: 'Kiểm tra đường truyền rồi thử lại.',

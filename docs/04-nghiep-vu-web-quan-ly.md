@@ -206,6 +206,14 @@ Ba ràng buộc bắt buộc:
 2. **Bắt buộc `onBehalfReason`** (≥ 10 ký tự) — trả lời "vì sao đơn này không do nhân viên tự gửi", khác hẳn `reason` là lý do nghỉ. Ghi vào audit `REQUEST_CREATE_ON_BEHALF`.
 3. **Hiện rõ trên màn chi tiết** để người duyệt biết đơn này do ai nhập. Duyệt một đơn tưởng do nhân viên tự khai, trong khi thật ra là HR nhập theo giấy tờ, là hai quyết định khác nhau.
 
+**Chọn người duyệt.** Màn lập đơn hiện sẵn luồng duyệt sẽ áp dụng, và cho chọn **ai** đứng ở từng bước:
+
+- Số bước phụ thuộc **độ dài đơn** (mục 4.1) — nghỉ 1 ngày chỉ cần trưởng phòng, từ 3 ngày mới thêm bước HR. Người nhập hộ không đoán được, nên phải nhìn thấy trước khi bấm tạo.
+- **Chỉ đổi được AI, không đổi được CÓ NHỮNG BƯỚC NÀO.** Cho phép thêm/bớt bước là vô hiệu hoá `FR-WEB-REQ-05`: công ty cấu hình "nghỉ trên 3 ngày phải qua HR" rồi người nhập đơn tự bỏ bước đó đi.
+- Mặc định là **để ngỏ** — ai giữ vai trò tương ứng cũng duyệt được. Chỉ định đích danh một người thì người đó nghỉ phép là mọi đơn treo lại chờ họ về. Chỉ nên đóng đinh khi cần đúng một người xử lý.
+
+> Việc này không chỉ để tiện. Phòng ban **chưa gán trưởng phòng** thì bước `DIRECT_MANAGER` không suy ra được ai, và trước đây người nhập đơn không có cách nào biết điều đó cho tới khi đơn nằm im trong hàng chờ.
+
 > **Cố ý KHÔNG chặn người tạo hộ tự duyệt ở bước sau.** Công ty nhỏ thường chỉ có đúng một người vừa làm HR vừa là cấp duyệt — chặn cứng sẽ khoá chết mọi đơn họ nhập. Kiểm soát ở đây là **minh bạch** (audit + cảnh báo trên màn duyệt), không phải cấm đoán. `BR-APV-03` vẫn giữ nguyên: không ai duyệt được đơn mà **chính mình là người xin nghỉ**.
 >
 > `MANAGER` bị giới hạn hai chiều như mọi nơi khác: chỉ tạo được đơn cho nhân viên **thuộc phòng ban mình quản lý** (`BR-09`).
@@ -274,6 +282,35 @@ Cấu hình công ty:
 
 **Yêu cầu thi công:** cấu hình làm tròn và cộng dồn phải nằm trong `CompanyPolicy`, không hard-code (`BR-12`). Đây là chỗ dễ gây sai lệch lương nhất — cần unit test phủ kỹ các trường hợp biên.
 
+### 5.2. Nợ công vào sổ bằng đường nào
+
+Sổ công làm bù có **hai nguồn**, và cột `source` trên `MakeupWorkRecord` phân biệt chúng:
+
+| `source` | Ai sinh ra | Khi nào |
+|---|---|---|
+| `ENGINE` | Engine tính công | Ngày công thiếu giờ so với ca |
+| `MANUAL` | HR nhập tay | Thoả thuận riêng, hoặc chuyển dữ liệu từ hệ thống cũ |
+
+**Engine là nguồn chính.** Nợ công phát sinh từ đi muộn / về sớm tích luỹ, tức là từ chính phép tính công — không phải từ việc ai đó nhớ ra và gõ vào.
+
+Ngày **không** sinh nợ: ngày lễ, cuối tuần, và ngày `rawWorkedMinutes = 0` (vắng mặt hoặc thiếu bản ghi chấm công). Ranh giới cuối là quan trọng nhất: **vắng mặt là nghỉ không lương, không phải nợ công**. Thiếu điều kiện đó thì mỗi ngày nghỉ việc riêng đẻ ra một khoản nợ 8 tiếng.
+
+Thiếu dưới `makeup.minDebtMinutes` (mặc định 15 phút) thì bỏ qua — vài phút lệch do làm tròn không đáng thành một khoản nợ có hạn xử lý và có thông báo đẩy về điện thoại nhân viên.
+
+> ⚠ **Engine chỉ được sửa/xoá dòng `source = ENGINE`.** `calculateAndPersist` là hàm idempotent bị gọi lại rất nhiều lần cho cùng một ngày, và mỗi lần nó **đối chiếu** để tổng nợ `ENGINE` của ngày đó khớp số giờ thực thiếu — chứ không ghi thêm. Không có ranh giới `source` thì một lần tính lại sẽ xoá mất khoản nợ HR nhập tay theo thoả thuận riêng, chỉ vì bảng chấm công ngày đó nhìn không thiếu giờ.
+>
+> Và **không bao giờ đụng vào dòng đã có giờ bù** — đó là công nhân viên đã làm thật.
+
+### 5.3. Đơn xin làm bù
+
+Đơn có `deductFrom = MAKEUP_CREDIT` được duyệt → giờ trên đơn được ghi vào sổ, **trả khoản nợ cũ nhất trước** (khoản cũ cũng là khoản sắp hết hạn nhất; trả khoản mới trước sẽ để khoản cũ rơi vào quá hạn dù nhân viên đã làm bù đủ giờ).
+
+Một đơn trải được qua nhiều khoản nợ, và mỗi lần trả dở dang vẫn tách dòng theo đúng mục 5.1.
+
+**Đơn khai nhiều giờ hơn số nợ thật thì bị từ chối ngay lúc duyệt**, kèm con số nợ thực tế. Phần dôi ra không phải công làm bù mà là **tăng ca** — hệ số lương hoàn toàn khác (150% / 200% / 300%). Nuốt phần dôi là trả thiếu lương, cộng vào là trả sai hệ số; cả hai đều sai theo hướng không ai phát hiện ra.
+
+> Loại đơn này tính theo **giờ** (`unit: HOUR`). Màn lập đơn phải cho nhập ngày + giờ bắt đầu + giờ kết thúc, **không phải khoảng ngày**: `computeQuantity` lấy hiệu hai mốc chia cho một giờ, nên một khoảng ngày cho ra "làm bù 72 giờ" và con số đó đi thẳng vào sổ.
+
 ---
 
 ## 6. Cấu hình chính sách công ty (`FR-WEB-POL`)
@@ -303,6 +340,7 @@ Cấu hình công ty:
 | `FR-WEB-POL-09` | Cấu hình bán kính geofencing cho từng văn phòng/chi nhánh | Must |
 | `FR-WEB-POL-10` | Cấu hình ngưỡng nhận diện khuôn mặt và liveness theo công ty | Should |
 | `FR-WEB-POL-11` | Cấu hình chính sách chấm công ngoài vùng: chặn / cảnh báo / cho chấm và chờ duyệt | Must |
+| `FR-WEB-POL-12` | Danh mục ca: mã ca, ký hiệu chấm công, phòng ban áp dụng, khung giờ chấm vào/ra, ngày công và hệ số | Must |
 
 ### 6.3. Quy tắc phép năm
 
@@ -331,6 +369,45 @@ Cấu hình cần có:
 | **Đơn nghỉ duyệt ngược quá khứ** | Duyệt đơn nghỉ ngày 01 vào ngày 20. | Tính lại `AttendanceDaily` từ ngày 01 (`ADR-08`). |
 | **Múi giờ** | Server chạy UTC, công ty ở Asia/Ho_Chi_Minh. | Lưu UTC trong DB, mọi phép tính "ngày làm việc" đều quy đổi theo timezone của công ty. **Bắt buộc dùng thư viện có timezone** (Luxon / date-fns-tz), không tự cộng trừ giờ. |
 | **Ngày lễ trùng cuối tuần** | 30/04 rơi vào Chủ nhật → nghỉ bù thứ Hai. | Danh mục ngày lễ hỗ trợ ngày nghỉ bù, hệ số áp dụng theo ngày gốc hay ngày bù cần cấu hình. |
+
+### 6.5. Danh mục ca (`FR-WEB-POL-12`)
+
+Màn **Chính sách → Danh mục ca**. Một bản ghi ca gồm ba nhóm thông tin:
+
+**Nhận dạng**
+
+| Trường | Ghi chú |
+|---|---|
+| Tên ca | "Hành chính", "Ca đêm" |
+| **Mã ca** | Duy nhất trong công ty, tự chuẩn hoá về chữ HOA |
+| Ký hiệu chấm công | Ký tự in trên bảng công (`X`, `Đ`). **Không** cần duy nhất — nhiều ca vẫn có thể cùng ký hiệu |
+| Phòng ban áp dụng | Rỗng = mọi phòng ban. **Chỉ lọc gợi ý ở màn Phân ca, không chặn** |
+
+**Giờ giấc và chấm công**
+
+| Trường | Ghi chú |
+|---|---|
+| Giờ bắt đầu / kết thúc ca | `HH:mm` theo timezone công ty |
+| Nghỉ giữa ca | Bật/tắt. Bật thì khai giờ bắt đầu và kết thúc nghỉ; khoảng nghỉ phải **nằm trong** giờ ca |
+| **Số giờ công** | **Chỉ đọc** — bằng giờ ca trừ giờ nghỉ. Không lưu trong database, luôn tính lại từ giờ ca |
+| Yêu cầu chấm vào | **Luôn bắt buộc** (BR-ATT-02). Kèm khung giờ chấm vào hợp lệ |
+| Yêu cầu chấm ra | Tắt được — cho ca chỉ điểm danh đầu giờ (đào tạo, họp). Kèm khung giờ chấm ra |
+
+> **Vì sao chấm vào không tắt được.** Không có giờ vào thì không có gì để tính giờ công, và ngày đó rơi vào nhóm "thiếu bản ghi" trên bảng công chứ không phải "đi làm đủ". Một ca cho phép tắt chấm vào là một ca luôn sinh ra ngày công sai. Chấm **ra** thì khác: ca điểm danh đầu giờ là nhu cầu có thật.
+
+**Ngày công và hệ số**
+
+| Trường | Ghi chú |
+|---|---|
+| Số ngày công | Ca này được tính bao nhiêu ngày công. Nửa buổi = `0.5` |
+| Hệ số ngày thường / nghỉ tuần / ngày lễ | Nhân vào số ngày công theo tính chất của ngày |
+| Hệ số riêng từng ngày lễ | Ngoại lệ cho một ngày lễ cụ thể. Không khai = dùng hệ số ngày lễ chung |
+
+> ⚠ **Hệ số ngày công hiện CHƯA được máy tính công đọc tới.** Chúng được lưu, hiển thị và kiểm tra hợp lệ, nhưng bảng công và kỳ lương chưa dùng — sửa hệ số không làm đổi bất kỳ số liệu nào. Giao diện có ghi rõ điều này ngay tại chỗ nhập. Khi nối vào engine cần rà quan hệ với **hệ số OT 150/200/300%** (`FR-WEB-POL-05`) để một ngày lễ không bị nhân hệ số hai lần.
+
+> **Hệ số riêng từng ngày lễ gắn với `holidayId`, không gắn với ngày.** Ngày lễ có thể được dời khi trùng cuối tuần; gắn theo ngày thì ngoại lệ ở lại ô lịch cũ còn ngày lễ đã đi chỗ khác.
+
+**Mã ca và phiên bản hoá.** Ràng buộc duy nhất của mã ca chỉ tính trên các bản **còn mở** (`effectiveTo` rỗng). Phải vậy vì bẫy "đổi cấu hình ca giữa tháng" ở 6.4: đổi giờ một ca đã phân sẽ đóng bản hiện tại rồi mở bản kế nhiệm mang **cùng mã**. Ca xoá mềm vẫn giữ mã của nó — mã đó đã nằm trên bảng công đã in ra, cho dùng lại là để hai kỳ lương mang cùng một mã với hai ý nghĩa khác nhau.
 
 ---
 
@@ -438,6 +515,7 @@ PHẠT
 | `FR-WEB-HR-10` | Import hàng loạt bằng file Excel mẫu, báo lỗi theo từng dòng | Must |
 | `FR-WEB-HR-11` | Vòng đời nhân viên: thêm mới, tạm ngưng, chấm dứt hợp đồng | Must |
 | `FR-WEB-HR-12` | Chấm dứt hợp đồng → thu hồi quyền truy cập, xoá/khoá dữ liệu sinh trắc học theo chính sách | Must |
+| `FR-WEB-HR-13` | Bảng phân ca theo tháng: lập, sửa, xoá; thêm/bớt CBNV trong bảng | Must |
 
 ### 8.1. Luồng tạo nhân viên trực tiếp (Luồng B)
 
@@ -520,7 +598,42 @@ sequenceDiagram
 5. Ghi audit log
 ```
 
-### 8.4. Tiêu chí chấp nhận
+### 8.4. Bảng phân ca (`FR-WEB-HR-13`)
+
+Việc xếp lịch được tổ chức theo **bảng phân ca** — đơn vị công việc thật của người xếp lịch ("bảng phân ca tháng 8 phòng Kho"), thay vì thao tác trực tiếp trên từng ô lịch rời rạc.
+
+```
+Danh sách bảng phân ca          →   Chi tiết một bảng
+  lọc: tháng, phòng ban              lưới: người × ngày trong tháng
+  thêm / sửa / xoá bảng              lọc: khoảng ngày (trong tháng), phòng ban (trong phạm vi bảng)
+                                     phân ca hàng loạt · thêm CBNV · bỏ CBNV
+```
+
+**Tham số lúc lập bảng** — ba trường đầu là **phạm vi**, chốt một lần và ràng buộc mọi thao tác bên trong:
+
+| Trường | Ghi chú |
+|---|---|
+| Phòng ban áp dụng | Nhiều phòng. **Toàn bộ CBNV đang làm việc** của các phòng này được đưa vào bảng, chưa xếp ca gì |
+| Ca làm việc | Nhiều ca. Combo **lọc theo phòng ban đã chọn** (dựa trên "Phòng ban áp dụng" của danh mục ca, mục 6.5) |
+| Kỳ lập bảng | Một tháng. Không sửa được sau khi lập |
+| Tên bảng | Mặc định `Bảng phân ca Tháng MM/YYYY`, sửa được |
+
+> **Danh sách thành viên được CHỐT lúc lập, không suy ra động từ phòng ban.** Suy ra động thì một lần chuyển phòng của nhân viên sẽ âm thầm viết lại một bảng đã xếp xong — người đang có lịch cả tháng bỗng biến mất khỏi bảng. Đổi lại, cần chức năng **Thêm CBNV** cho người mới vào hoặc được điều động.
+
+> ⚠ **Một người, một tháng, một bảng.** `shift_assignment` chỉ cho phép **một ca mỗi người mỗi ngày**; hai bảng cùng tháng sẽ tranh nhau ghi vào cùng ô, bảng lưu sau đè bảng lưu trước, và màn chi tiết của bảng kia hiển thị ca mà nó không hề xếp. Ràng buộc đặt ở **tầng database**, không chỉ ở service — hai request lập bảng chạy song song đều thấy "chưa ai giữ" rồi cùng ghi.
+
+**Phân ca hàng loạt** trong bảng đi theo thứ tự người dùng quyết định: **phòng ban → ca → khoảng ngày → áp dụng cho ai**. Trường cuối là hai lựa chọn loại trừ:
+
+- **Toàn bộ CBNV** — mọi người thuộc phòng ban đã chọn, *kể cả người ở trang sau của lưới*.
+- **Từng CBNV** — chọn thủ công; chỉ khi chọn mục này mới hiện combo chọn nhiều người.
+
+> Phân biệt này quan trọng hơn vẻ ngoài của nó. Nút "chọn tất cả" kiểu cũ chỉ chọn được những người **đang hiển thị**, nên người dùng tưởng đã xếp cho cả phòng 40 người mà thực ra chỉ 25 người đầu — và 15 người còn lại không có lịch cho tới lúc chốt lương.
+
+**Xoá bảng** xoá luôn toàn bộ lịch ca của bảng đó, trong một transaction. Chặn theo **BR-07** khi tháng của bảng đã thuộc kỳ lương đã chốt. **Bỏ CBNV khỏi bảng** cũng xoá lịch ca của họ trong bảng — nếu không, bảng công cuối tháng vẫn tính theo ca cũ dù họ không còn nằm trong bảng nào.
+
+**Combo phòng ban hiển thị cây cha con** ở mọi màn (`DepartmentTreeSelect`). Danh sách phẳng đọc được khi công ty có sáu phòng ban; tới ba cấp thì "Tổ 1" và "Tổ 2" nằm cạnh nhau mà không cho biết chúng thuộc khối nào.
+
+### 8.5. Tiêu chí chấp nhận
 
 - [ ] Import file 200 dòng có 5 dòng lỗi → 195 dòng được tạo, 5 dòng báo lỗi rõ ràng theo dòng.
 - [ ] Employee code sinh ra không trùng trong cùng công ty, kể cả khi import 2 người trùng tên trong cùng file.

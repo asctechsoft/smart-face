@@ -6,6 +6,7 @@ import {
   isWeekend,
   minutesBetween,
 } from 'src/common/utils';
+import { MakeupService } from '../makeup/makeup.service';
 import { PolicyKeys } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
 import { PayrollRepository } from './payroll.repository';
@@ -35,6 +36,19 @@ export interface DailyCalculationResult {
   appliedRequestIds: string[];
   hasFraudFlag: boolean;
   breakdown: Record<string, unknown>;
+
+  /**
+   * Ba con số dưới đây phục vụ việc tính NỢ CÔNG, và cố ý tách khỏi
+   * `workedMinutes` ở trên.
+   *
+   * `workedMinutes` là số ĐÃ cộng giờ làm bù và ĐÃ làm tròn — đúng cho việc quy
+   * đổi ra công chuẩn, nhưng sai cho việc hỏi "hôm đó thiếu bao nhiêu giờ".
+   * Lấy nó để tính nợ sẽ cho ra kết quả tự triệt tiêu: bù xong thì ngày đó
+   * không còn thiếu, nên khoản nợ vừa được bù lại bị xoá đi.
+   */
+  requiredMinutes: number;
+  rawWorkedMinutes: number;
+  leaveCreditMinutes: number;
 }
 
 /**
@@ -60,6 +74,7 @@ export class PayrollEngineService {
   constructor(
     private readonly payrolls: PayrollRepository,
     private readonly policy: PolicyService,
+    private readonly makeup: MakeupService,
   ) {}
 
   /**
@@ -93,7 +108,69 @@ export class PayrollEngineService {
       breakdown: result.breakdown as Prisma.InputJsonValue,
     });
 
+    await this.syncMakeupDebt(companyId, employeeId, workDate, result);
+
     return result;
+  }
+
+  /**
+   * Sinh / điều chỉnh khoản nợ công của ngày vừa tính — docs/04 mục 5.1.
+   *
+   * Nợ công phát sinh từ đi muộn, về sớm tích luỹ. Trước đây engine chỉ ĐỌC số
+   * phút đã bù để cộng vào công, mà không bao giờ GHI ra khoản nợ — nên sổ công
+   * làm bù luôn trống và mọi thứ dựa vào nó không có gì để trừ.
+   *
+   * ## Ngày nào KHÔNG sinh nợ
+   *
+   * `HOLIDAY` / `WEEKEND` — không có nghĩa vụ làm việc, thiếu giờ là đương nhiên.
+   *
+   * `rawWorkedMinutes === 0` — vắng mặt cả ngày hoặc thiếu bản ghi chấm công.
+   * Đây là ranh giới quan trọng: vắng mặt là nghỉ không lương, KHÔNG phải nợ
+   * công. Không có điều kiện này thì mỗi ngày nghỉ việc riêng sẽ đẻ ra một khoản
+   * nợ 8 tiếng, và sổ làm bù ngập những khoản không ai định trả.
+   *
+   * ## Vì sao trừ `leaveCreditMinutes`
+   *
+   * Nghỉ phép nửa ngày rồi làm 2/4 tiếng còn lại thì thiếu 2 tiếng, không phải
+   * 6. Phần được nghỉ có lương đã tính đủ công.
+   *
+   * ## Ngưỡng tối thiểu
+   *
+   * Thiếu vài phút do làm tròn không đáng thành một khoản nợ có hạn xử lý.
+   * Ngưỡng là chính sách công ty (`BR-12`), không hard-code.
+   */
+  private async syncMakeupDebt(
+    companyId: string,
+    employeeId: string,
+    workDate: Date,
+    result: DailyCalculationResult,
+  ): Promise<void> {
+    const exempt =
+      result.status === DailyStatus.HOLIDAY ||
+      result.status === DailyStatus.WEEKEND ||
+      result.rawWorkedMinutes === 0;
+
+    const rawShortfall = exempt
+      ? 0
+      : Math.max(
+          0,
+          result.requiredMinutes - result.rawWorkedMinutes - result.leaveCreditMinutes,
+        );
+
+    const threshold = await this.policy.getNumber(companyId, PolicyKeys.MAKEUP_MIN_DEBT_MINUTES);
+    const shortfall = rawShortfall >= threshold ? rawShortfall : 0;
+
+    // Vẫn gọi cả khi `shortfall === 0`: ngày hôm qua thiếu giờ, hôm nay được
+    // hiệu chỉnh cho đủ, thì khoản nợ cũ phải biến mất theo. Bỏ qua lệnh gọi khi
+    // bằng 0 sẽ để lại nợ ma mà không ai lần ra được nguồn gốc.
+    await this.makeup
+      .reconcileEngineDebt(companyId, employeeId, workDate, shortfall)
+      .catch((error: Error) =>
+        // Không để việc ghi sổ nợ làm hỏng kết quả tính công đã ghi thành công.
+        this.logger.error(
+          `Không đồng bộ được nợ công (${employeeId} @ ${formatWorkDate(workDate)}): ${error.message}`,
+        ),
+      );
   }
 
   /** Tính thuần — không chạm DB ghi. Tách riêng để unit test dễ phủ (NFR-MAINT-01). */
@@ -213,6 +290,8 @@ export class PayrollEngineService {
         ? Math.round(((countedMinutes + leaveCredit) / minutesPerDay) * 1000) / 1000
         : 0;
 
+    const requiredMinutes = shift?.requiredMinutes ?? minutesPerDay;
+
     // --- Trạng thái ngày --------------------------------------------------------
     const status = this.resolveStatus({
       hasLogs: effectiveLogs.length > 0,
@@ -221,7 +300,7 @@ export class PayrollEngineService {
       earlyLeaveMinutes,
       otMinutes: otResult.otMinutes,
       workedMinutes: countedMinutes,
-      requiredMinutes: shift?.requiredMinutes ?? minutesPerDay,
+      requiredMinutes,
       isHoliday: Boolean(holiday),
       isWeekendDay: isWeekend(workDate),
       hasLeaveRequest: approvedRequests.some((request) => request.deductFrom !== 'NONE'),
@@ -245,6 +324,9 @@ export class PayrollEngineService {
       status,
       appliedRequestIds: approvedRequests.map((request) => request.id),
       hasFraudFlag: fraudFlagCount > 0,
+      requiredMinutes,
+      rawWorkedMinutes,
+      leaveCreditMinutes: leaveCredit,
       // Snapshot để giải trình "con số này ra từ đâu" khi có khiếu nại.
       breakdown: {
         engineVersion: CALC_ENGINE_VERSION,

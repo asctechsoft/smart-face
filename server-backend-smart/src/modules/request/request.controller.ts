@@ -20,6 +20,7 @@ import { AppException } from 'src/common/errors';
 import { resolveDepartmentScope } from 'src/common/guards/scope.guard';
 import type { TenantContext } from 'src/common/types/request-context';
 import {
+  ApprovalPreviewQueryDto,
   ApproveRequestDto,
   BulkApproveDto,
   CancelRequestDto,
@@ -113,6 +114,22 @@ export class RequestController {
     // cùng lúc đều thấy "còn 1 ngày phép" và cùng được duyệt — nhân viên nghỉ 2
     // ngày trong khi chỉ còn 1. Loại lỗi này chỉ xuất hiện khi có tải thật.
     return this.requests.create(ctx, dto);
+  }
+
+  @Get('admin/requests/approval-preview')
+  @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Xem trước luồng duyệt trước khi tạo đơn hộ (FR-WEB-REQ-09)',
+    description:
+      'Trả về đúng những bước duyệt sẽ được sinh ra cho đơn này, kèm người duyệt hệ thống tự suy và danh sách ứng viên thay thế cho từng bước. Luồng duyệt phụ thuộc ĐỘ DÀI đơn (nghỉ 1 ngày chỉ cần trưởng phòng, nghỉ 3 ngày trở lên mới thêm bước HR), nên phải hỏi lại mỗi khi đổi loại đơn hoặc khoảng ngày.',
+  })
+  @ApiErrors('EMP_NOT_FOUND', 'AUTH_FORBIDDEN', 'REQ_TYPE_NOT_FOUND')
+  approvalPreview(
+    @CurrentTenant() ctx: TenantContext,
+    @Query() query: ApprovalPreviewQueryDto,
+  ) {
+    return this.requests.previewApprovalFlow(ctx, query, resolveDepartmentScope(ctx));
   }
 
   @Post('admin/requests')

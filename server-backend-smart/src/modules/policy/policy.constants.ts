@@ -78,6 +78,15 @@ export const PolicyKeys = {
   // --- Làm bù (docs/04 mục 5.1) ---------------------------------------------
   MAKEUP_DUE_DAYS: 'makeup.dueDays',
   MAKEUP_CARRY_SURPLUS: 'makeup.carrySurplusToNextMonth',
+  /**
+   * Thiếu dưới ngần này phút thì KHÔNG sinh khoản nợ công.
+   *
+   * Không có ngưỡng thì một ngày thiếu 2 phút do làm tròn cũng đẻ ra một khoản
+   * nợ có hạn xử lý, có thông báo đẩy về điện thoại nhân viên, và nằm trong sổ
+   * chờ ai đó ghi nhận. Sổ làm bù đầy những dòng như vậy sẽ che mất các khoản
+   * thật sự đáng theo dõi.
+   */
+  MAKEUP_MIN_DEBT_MINUTES: 'makeup.minDebtMinutes',
 
   // --- Đơn từ ---------------------------------------------------------------
   REQUEST_BLOCK_WHEN_INSUFFICIENT_LEAVE: 'request.blockWhenInsufficientLeave',
@@ -253,6 +262,7 @@ export const POLICY_DEFAULTS: Record<string, unknown> = {
   // Làm bù
   [PolicyKeys.MAKEUP_DUE_DAYS]: 30,
   [PolicyKeys.MAKEUP_CARRY_SURPLUS]: true,
+  [PolicyKeys.MAKEUP_MIN_DEBT_MINUTES]: 15,
 
   // Đơn từ
   [PolicyKeys.REQUEST_BLOCK_WHEN_INSUFFICIENT_LEAVE]: true,
