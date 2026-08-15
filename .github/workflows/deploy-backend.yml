@@ -1,0 +1,61 @@
+name: Deploy Backend (VPS)
+
+# Tự động deploy server-backend-smart lên VPS mỗi khi nhánh main thay đổi
+# trong thư mục đó. Xem server-backend-smart/docs/DEPLOY.md để biết cách
+# cấu hình VPS lần đầu và các secret cần khai trong GitHub.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server-backend-smart/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-backend
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Load deploy SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Trust VPS host key
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "${{ secrets.VPS_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy over SSH
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          ssh -o StrictHostKeyChecking=yes "$VPS_USER@$VPS_HOST" 'bash -s' <<'EOF'
+            set -euo pipefail
+
+            DEPLOY_DIR="/opt/smartface"
+            REPO_URL="https://github.com/asctechsoft/smart-face.git"
+
+            if [ ! -d "$DEPLOY_DIR/.git" ]; then
+              git clone "$REPO_URL" "$DEPLOY_DIR"
+            fi
+
+            cd "$DEPLOY_DIR"
+            git fetch origin main
+            git reset --hard origin/main
+
+            cd "$DEPLOY_DIR/server-backend-smart"
+
+            if [ ! -f .env ]; then
+              echo "Thieu server-backend-smart/.env tren VPS - xem docs/DEPLOY.md, dung deploy." >&2
+              exit 1
+            fi
+
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            docker image prune -f
+            docker compose -f docker-compose.prod.yml ps
+          EOF

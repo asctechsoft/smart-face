@@ -315,17 +315,73 @@ Một đơn trải được qua nhiều khoản nợ, và mỗi lần trả dở
 
 ## 6. Cấu hình chính sách công ty (`FR-WEB-POL`)
 
-### 6.1. Loại ca làm việc
+### 6.1. Danh mục Ca làm việc — Thiết lập ca (`FR-WEB-POL-12`…`FR-WEB-POL-17`)
+
+Danh mục dùng chung toàn công ty: mỗi dòng là một ca làm việc, được tái sử dụng khi phân ca cho phòng ban/nhân viên ở mục 8.2. Sửa một ca ở đây ảnh hưởng tới mọi bảng phân ca đang dùng ca đó (theo `effectiveFrom`/`effectiveTo`, xem bẫy ở 6.5).
+
+| Trường | Mô tả | Bắt buộc | Ví dụ |
+|---|---|---|---|
+| **Mã ca** | Định danh duy nhất trong công ty, bất biến sau khi tạo | Có | `CA_HC`, `CA_S`, `CA_C`, `CA_D` |
+| **Tên ca** | Tên hiển thị | Có | "Ca hành chính", "Ca sáng" |
+| **Ký hiệu chấm công** | Ký hiệu ngắn (1–3 ký tự) hiển thị trên bảng công và bảng phân ca | Có | `HC`, `S`, `C`, `Đ` |
+| **Giờ bắt đầu làm việc** | Giờ vào chính thức của ca | Có | 08:00 |
+| **Giờ kết thúc làm việc** | Giờ ra chính thức của ca | Có | 17:30 |
+| **Giờ bắt đầu được chấm vào** | Mốc sớm nhất trong ngày hệ thống bắt đầu chấp nhận chấm công vào cho ca này | Có | 06:30 |
+| **Giờ bắt đầu được chấm ra** | Mốc sớm nhất trong ngày hệ thống bắt đầu chấp nhận chấm công ra cho ca này | Có | 16:30 |
+| **Giờ nghỉ trưa — bắt đầu / kết thúc** | Khung giờ nghỉ trưa, bị trừ khỏi tổng giờ công dù nhân viên có mặt tại văn phòng | Không (chỉ ca có nghỉ trưa) | 12:00 → 13:00 |
+| **Hệ số công theo loại ngày** | Hệ số nhân "công chuẩn" khi ca rơi vào từng loại ngày | Có | Ngày thường `×1` · Ngày nghỉ `×2` · Ngày lễ `×3` |
+| **Trạng thái** | Đang dùng / Ngừng dùng — không xoá cứng vì đã có lịch sử phân ca | Có | Đang dùng |
+
+**Màn hình thiết lập ca:**
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  THIẾT LẬP CA LÀM VIỆC                              [+ Thêm ca]  │
+├─────────────────────────────────────────────────────────────────┤
+│  Mã ca *              [ CA_HC______________ ]                    │
+│  Tên ca *             [ Ca hành chính_______ ]                    │
+│  Ký hiệu chấm công *  [ HC__ ]                                    │
+│                                                                    │
+│  Giờ bắt đầu làm việc *   [ 08:00 ]                                │
+│  Giờ kết thúc làm việc *  [ 17:30 ]                                │
+│                                                                    │
+│  Khung giờ được phép chấm công                                    │
+│    Giờ bắt đầu được chấm vào *  [ 06:30 ]                          │
+│    Giờ bắt đầu được chấm ra  *  [ 16:30 ]                          │
+│                                                                    │
+│  Giờ nghỉ trưa            ☑ Có áp dụng nghỉ trưa                  │
+│    Bắt đầu nghỉ  [ 12:00 ]      Kết thúc nghỉ  [ 13:00 ]           │
+│                                                                    │
+│  Hệ số công theo loại ngày                                        │
+│    Ngày thường  [ 1 ]    Ngày nghỉ  [ 2 ]    Ngày lễ  [ 3 ]        │
+│                                        [ Thiết lập nghỉ lễ ▸ ]     │
+│                                                                    │
+│                                     [ Huỷ ]     [ Lưu ca làm việc ]│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+> **Thiết lập nghỉ lễ** không khai báo lại ở từng ca — bấm mở ra chính là **danh mục ngày nghỉ lễ dùng chung của công ty** (`FR-WEB-POL-06`, xem 6.4). Ca chỉ khai báo **hệ số áp dụng** khi ngày rơi vào ngày lễ; danh sách "ngày nào là lễ" được quản lý tập trung một chỗ để tránh mỗi ca định nghĩa lễ khác nhau.
+>
+> **Phân biệt với `FR-WEB-POL-05`:** hệ số ở đây (`×1`/`×2`/`×3`) là hệ số quy đổi **công chuẩn** (một ngày làm lễ tính bằng 3 ngày công thường khi trả lương theo ngày công), khác với hệ số OT (150%/200%/300%) ở mục 6.3 vốn áp cho **số giờ làm ngoài giờ**. Hai hệ số cùng tồn tại và có thể cộng dồn — cần thống nhất công thức trả lương với kế toán trước khi thi công `FR-WEB-PAY-03`.
+
+**Ràng buộc khi lưu:**
+
+- `Giờ bắt đầu được chấm vào` phải **trước** `Giờ bắt đầu làm việc`.
+- `Giờ bắt đầu được chấm ra` phải **trước hoặc bằng** `Giờ kết thúc làm việc`; chấm ra trước giờ kết thúc vẫn được nhưng tính "về sớm" theo `FR-WEB-POL-04`.
+- Nếu bật nghỉ trưa: khung giờ nghỉ phải nằm trong `[Giờ bắt đầu làm việc, Giờ kết thúc làm việc]`.
+- Ca đêm (giờ kết thúc < giờ bắt đầu, VD 22:00 → 06:00) áp dụng nguyên tắc `workDate` ở mục 6.5.
+
+### 6.2. Loại ca làm việc
 
 | Thành phần | Nội dung | Yêu cầu thi công |
 |---|---|---|
 | **Ca hành chính** | Giờ vào – giờ ra cố định (VD 08:00 – 17:30), có nghỉ trưa | Trường hợp cơ bản nhất, làm trước |
-| **Ca xoay / Ca kíp** | Nhiều ca trong ngày (sáng/chiều/đêm), lịch phân ca theo tuần | **Ca đêm vắt qua nửa đêm** là bẫy lớn — xem 6.4 |
+| **Ca xoay / Ca kíp** | Nhiều ca trong ngày (sáng/chiều/đêm), lịch phân ca theo tuần | **Ca đêm vắt qua nửa đêm** là bẫy lớn — xem 6.5 |
 | **Ca linh hoạt (flexible)** | Chấm công theo tổng số giờ/ngày, không cố định giờ vào ra | Không tính "đi muộn", chỉ tính đủ/thiếu giờ |
 | **Cấu hình trễ cho phép** | Số phút được trễ trước khi tính lỗi (VD 5–15 phút) | Áp dụng cho ca hành chính và ca kíp |
 | **Cấu hình tăng ca (OT)** | Hệ số OT theo ngày thường/cuối tuần/lễ, duyệt trước hoặc sau | Hệ số theo luật LĐ VN: 150% / 200% / 300% |
 
-### 6.2. Danh sách yêu cầu
+### 6.3. Danh sách yêu cầu
 
 | Mã | Yêu cầu | Ưu tiên |
 |---|---|---|
@@ -340,9 +396,14 @@ Một đơn trải được qua nhiều khoản nợ, và mỗi lần trả dở
 | `FR-WEB-POL-09` | Cấu hình bán kính geofencing cho từng văn phòng/chi nhánh | Must |
 | `FR-WEB-POL-10` | Cấu hình ngưỡng nhận diện khuôn mặt và liveness theo công ty | Should |
 | `FR-WEB-POL-11` | Cấu hình chính sách chấm công ngoài vùng: chặn / cảnh báo / cho chấm và chờ duyệt | Must |
-| `FR-WEB-POL-12` | Danh mục ca: mã ca, ký hiệu chấm công, phòng ban áp dụng, khung giờ chấm vào/ra, ngày công và hệ số | Must |
+| `FR-WEB-POL-12` | Quản lý danh mục ca làm việc: mã ca, tên ca, ký hiệu chấm công, trạng thái đang dùng/ngừng dùng | Must |
+| `FR-WEB-POL-13` | Thiết lập khung giờ được phép chấm vào/chấm ra riêng biệt với giờ vào/ra chính thức của ca | Must |
+| `FR-WEB-POL-14` | Thiết lập giờ nghỉ trưa (bắt đầu/kết thúc) theo từng ca, trừ khỏi tổng giờ công | Must |
+| `FR-WEB-POL-15` | Thiết lập hệ số công theo loại ngày (ngày thường/ngày nghỉ/ngày lễ) cho từng ca | Must |
+| `FR-WEB-POL-16` | Liên kết hệ số ngày lễ của ca với danh mục ngày nghỉ lễ dùng chung (`FR-WEB-POL-06`) | Must |
+| `FR-WEB-POL-17` | Không cho xoá cứng ca đã có lịch sử phân ca — chỉ chuyển trạng thái "Ngừng dùng" | Must |
 
-### 6.3. Quy tắc phép năm
+### 6.4. Quy tắc phép năm
 
 ```
 Số phép năm = phép cơ bản theo loại hợp đồng
@@ -357,7 +418,7 @@ Cấu hình cần có:
   - Nhân viên vào giữa năm: tính theo tỷ lệ tháng làm việc
 ```
 
-### 6.4. Bẫy cần xử lý khi thi công
+### 6.5. Bẫy cần xử lý khi thi công
 
 > Đây là những trường hợp gây sai lệch lương nếu bỏ sót. Chi tiết kỹ thuật xem `00-kien-thuc-nen-tang.md` Phần 7.
 
@@ -369,6 +430,8 @@ Cấu hình cần có:
 | **Đơn nghỉ duyệt ngược quá khứ** | Duyệt đơn nghỉ ngày 01 vào ngày 20. | Tính lại `AttendanceDaily` từ ngày 01 (`ADR-08`). |
 | **Múi giờ** | Server chạy UTC, công ty ở Asia/Ho_Chi_Minh. | Lưu UTC trong DB, mọi phép tính "ngày làm việc" đều quy đổi theo timezone của công ty. **Bắt buộc dùng thư viện có timezone** (Luxon / date-fns-tz), không tự cộng trừ giờ. |
 | **Ngày lễ trùng cuối tuần** | 30/04 rơi vào Chủ nhật → nghỉ bù thứ Hai. | Danh mục ngày lễ hỗ trợ ngày nghỉ bù, hệ số áp dụng theo ngày gốc hay ngày bù cần cấu hình. |
+| **Phân ca chồng chéo** | Một nhân viên bị gán 2 ca trùng khung giờ trong cùng ngày (VD vừa Ca hành chính vừa Ca đêm ngày 05). | Khi "Thiết lập ca áp dụng" (8.2) ghi đè, phải chặn hoặc cảnh báo nếu khung giờ hai ca giao nhau trong cùng `workDate`. |
+| **Xoá nhân viên khỏi phân ca giữa tháng** | Xoá ngày 20, nhưng công đã chấm ngày 01–19 vẫn phải giữ nguyên. | Xoá khỏi bảng phân ca chỉ dừng áp lịch **từ thời điểm xoá trở đi**, không xoá `AttendanceDaily` đã phát sinh. |
 
 ### 6.5. Danh mục ca (`FR-WEB-POL-12`)
 
@@ -544,7 +607,91 @@ sequenceDiagram
     B->>B: status = ACTIVE
 ```
 
-### 8.2. Import hàng loạt bằng Excel
+### 8.2. Phân hệ phân ca (`FR-WEB-HR-13`…`FR-WEB-HR-18`)
+
+Mở rộng `FR-WEB-HR-03`/`FR-WEB-HR-04`. Tách bạch hai khái niệm: **danh mục ca** (mục 6.1) định nghĩa "ca là gì" dùng chung toàn công ty; **phân hệ phân ca** ở đây định nghĩa "nhân viên nào làm ca nào, ngày nào" theo từng phòng ban/tháng.
+
+#### 8.2.1. Thiết lập phân ca
+
+| Trường | Mô tả | Bắt buộc |
+|---|---|---|
+| Tên phòng ban | Phòng ban áp dụng bảng phân ca này | Có |
+| Ca làm việc áp dụng | Chọn 1 hoặc nhiều ca từ danh mục (6.1) được phép dùng trong phòng ban này | Có |
+| Tháng áp dụng | Tháng/năm bảng phân ca có hiệu lực | Có |
+| Tên bảng phân ca | Tên gợi nhớ để phân biệt nhiều bảng cùng phòng ban/tháng | Có |
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  THIẾT LẬP PHÂN CA                                [+ Tạo bảng]   │
+├─────────────────────────────────────────────────────────────────┤
+│  Tên phòng ban *       [ Kinh doanh ▾ ]                           │
+│  Ca làm việc áp dụng * [ ☑ Ca hành chính  ☑ Ca sáng  ☐ Ca đêm ]   │
+│  Tháng áp dụng *       [ Tháng 08 / 2026 ▾ ]                      │
+│  Tên bảng phân ca *    [ Phân ca Kinh doanh T8/2026________ ]     │
+│                                                                    │
+│                                     [ Huỷ ]    [ Tạo bảng phân ca ]│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Danh sách bảng phân ca:**
+
+```
+┌────┬────────────────────────────┬────────────┬─────────┬───────────┬──────────────┐
+│ #  │ Tên bảng phân ca           │ Phòng ban  │ Tháng   │ Trạng thái│              │
+├────┼────────────────────────────┼────────────┼─────────┼───────────┼──────────────┤
+│ 1  │ Phân ca Kinh doanh T8/2026 │ Kinh doanh │ 08/2026 │ Thành công│[Xem chi tiết]│
+│ 2  │ Phân ca Kỹ thuật T8/2026   │ Kỹ thuật   │ 08/2026 │ Thành công│[Xem chi tiết]│
+└────┴────────────────────────────┴────────────┴─────────┴───────────┴──────────────┘
+```
+
+#### 8.2.2. Xem chi tiết bảng phân ca
+
+Bấm **Xem chi tiết** hiển thị danh sách toàn bộ nhân viên của phòng ban đó, cùng ca áp dụng cho từng ngày trong tháng — dạng bảng ma trận **nhân viên × ngày**:
+
+```
+┌────────────────────┬────┬────┬────┬────┬────┬────┬────┬───┬──────┐
+│ Nhân viên           │ 01 │ 02 │ 03 │ 04 │ 05 │ 06 │ 07 │...│  31  │
+├────────────────────┼────┼────┼────┼────┼────┼────┼────┼───┼──────┤
+│ Nguyễn Văn Đức      │ HC │ HC │ HC │ HC │ HC │ NP │ NP │...│  HC  │
+│ Trần Thị Mai        │ S  │ S  │ S  │ C  │ C  │ NP │ NP │...│  S   │
+│ Lê Văn Hùng         │ HC │NGHỈ│ HC │ HC │ HC │ NP │ NP │...│  HC  │
+└────────────────────┴────┴────┴────┴────┴────┴────┴────┴───┴──────┘
+   HC/S/C = ký hiệu ca (mục 6.1) · NP = nghỉ phép/cuối tuần · NGHỈ = nghỉ không lương/lễ
+
+           [ Thiết lập ca áp dụng ]  [ + Thêm nhân viên vào phân ca ]  [ − Xoá nhân viên khỏi ca làm ]
+```
+
+**Thiết lập ca áp dụng** (áp hàng loạt cho toàn bộ hoặc một phần nhân viên trong bảng):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  THIẾT LẬP CA ÁP DỤNG                                             │
+├─────────────────────────────────────────────────────────────────┤
+│  ☑ Chọn tất cả nhân viên trong bảng     (12/12 đã chọn)           │
+│    ☑ Nguyễn Văn Đức   ☑ Trần Thị Mai   ☑ Lê Văn Hùng   ...        │
+│                                                                    │
+│  Ca áp dụng *          [ Ca hành chính ▾ ]                        │
+│  Áp dụng cho ngày      [ Cả tháng / Chọn ngày cụ thể ▾ ]          │
+│                                                                    │
+│                                     [ Huỷ ]          [ Áp dụng ]  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Thêm nhân viên vào phân ca**: chọn nhân viên đang thuộc phòng ban nhưng chưa có trong bảng → thêm vào bảng, mặc định chưa gán ca cho tới khi dùng "Thiết lập ca áp dụng".
+- **Xoá nhân viên khỏi ca làm**: gỡ nhân viên khỏi bảng phân ca của tháng đó. **Không xoá** dữ liệu chấm công/bảng công đã phát sinh trước thời điểm xoá — chỉ ngừng áp lịch phân ca kể từ đó trở đi (xem bẫy ở 6.5).
+
+#### 8.2.3. Danh sách yêu cầu
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-HR-13` | Tạo bảng phân ca theo phòng ban: chọn phòng ban, chọn 1 hoặc nhiều ca áp dụng, tháng áp dụng, đặt tên bảng | Must |
+| `FR-WEB-HR-14` | Danh sách bảng phân ca đã tạo kèm trạng thái, nút xem chi tiết | Must |
+| `FR-WEB-HR-15` | Xem chi tiết bảng phân ca: ma trận nhân viên × ngày trong tháng, hiển thị ký hiệu ca từng ngày | Must |
+| `FR-WEB-HR-16` | Thiết lập ca áp dụng hàng loạt: chọn tất cả hoặc một phần nhân viên trong bảng + chọn ca áp dụng chung | Must |
+| `FR-WEB-HR-17` | Thêm nhân viên vào bảng phân ca đang có (không cần tạo lại bảng mới) | Must |
+| `FR-WEB-HR-18` | Xoá nhân viên khỏi bảng phân ca — không xoá dữ liệu chấm công đã phát sinh trước đó | Must |
+
+### 8.3. Import hàng loạt bằng Excel
 
 **File mẫu:**
 
@@ -577,7 +724,7 @@ sequenceDiagram
 
 > **Nguyên tắc:** import **không bao giờ fail toàn bộ file** vì một dòng lỗi. Báo lỗi theo dòng, cho import phần hợp lệ.
 
-### 8.3. Vòng đời nhân viên
+### 8.4. Vòng đời nhân viên
 
 | Trạng thái | Chấm công | Đăng nhập | Dữ liệu sinh trắc học | Chuyển sang được |
 |---|:---:|:---:|---|---|
@@ -639,6 +786,10 @@ Danh sách bảng phân ca          →   Chi tiết một bảng
 - [ ] Employee code sinh ra không trùng trong cùng công ty, kể cả khi import 2 người trùng tên trong cùng file.
 - [ ] Nhân viên `TERMINATED` không đăng nhập được, token cũ bị từ chối ngay.
 - [ ] Xoá hồ sơ `PENDING_ACTIVATION` được, xoá hồ sơ `ACTIVE` bị chặn (chỉ được tạm ngưng/chấm dứt).
+- [ ] Tạo bảng phân ca cho phòng ban có 0 nhân viên → chặn tạo hoặc cảnh báo rõ ràng, không tạo bảng rỗng vô nghĩa.
+- [ ] "Thiết lập ca áp dụng" cho ca có khung giờ giao với ca đã gán trước đó trong cùng ngày → cảnh báo hoặc chặn chồng ca (6.5).
+- [ ] Xoá nhân viên khỏi bảng phân ca ngày 20 → bảng công các ngày 01–19 của nhân viên đó không đổi.
+- [ ] Thêm nhân viên mới vào bảng phân ca đã tồn tại → không tạo bảng phân ca trùng cho cùng phòng ban/tháng.
 
 ---
 
