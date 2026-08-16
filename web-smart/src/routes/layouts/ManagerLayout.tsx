@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { Badge, Button, Drawer, Dropdown, Tooltip } from 'antd';
+import { Button, Drawer, Dropdown } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { Icon } from '@/components/Icon';
 import { EmployeeQuickSearch } from '@/components/EmployeeQuickSearch';
+import { NotificationBell } from '@/features/notifications/NotificationBell';
+import { SettingsMenu } from './SettingsMenu';
 import { useAuth } from '@/lib/auth/auth-context';
 import { hasPermission } from '@/lib/rbac/permissions';
 import { NAV_GROUPS } from '@/routes/nav-items';
@@ -12,7 +14,6 @@ import { ROLE_LABEL } from '@/config/constants';
 import { initials } from '@/lib/utils/format';
 import { formatDayLong } from '@/lib/utils/date';
 import { api } from '@/lib/api/client';
-import { qk } from '@/lib/api/query-client';
 
 /**
  * Bố cục Web Quản lý.
@@ -53,13 +54,6 @@ export function ManagerLayout() {
   // vẫn nhìn thấy menu che kín trang vừa mở.
   useEffect(() => setMobileNavOpen(false), [location.pathname]);
 
-  const { data: unreadCount } = useQuery({
-    queryKey: [...qk.notifications, 'unread'],
-    queryFn: () => api.get<{ count: number }>('/notifications/unread-count'),
-    refetchInterval: 60_000,
-    retry: false,
-  });
-
   // Hồ sơ nhân viên gắn với tài khoản — `GET /auth/me` chỉ trả id và vai trò,
   // không có tên để hiện ở góc phải.
   const { data: profile } = useQuery({
@@ -98,9 +92,6 @@ export function ManagerLayout() {
                         <>
                           <Icon name={item.icon} size={18} fill={isActive} />
                           <span style={{ flex: 1 }}>{item.label}</span>
-                          {item.key === 'notifications' && unreadCount?.count ? (
-                            <Badge count={unreadCount.count} size="small" />
-                          ) : null}
                         </>
                       )}
                     </NavLink>
@@ -187,13 +178,10 @@ export function ManagerLayout() {
             <EmployeeQuickSearch />
           </div>
 
-          <Tooltip title="Thông báo">
-            <NavLink to="/notifications" aria-label="Thông báo">
-              <Badge count={unreadCount?.count ?? 0} size="small">
-                <Icon name="notifications" size={24} color="var(--sf-on-surface-variant)" />
-              </Badge>
-            </NavLink>
-          </Tooltip>
+          {/* Chuông rồi tới bánh răng — hai thứ "mở ra một lớp phủ" đứng cạnh
+              nhau, tách khỏi menu tài khoản bên phải. */}
+          <NotificationBell />
+          <SettingsMenu />
 
           <Dropdown
             trigger={['click']}

@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { Button } from 'antd';
 import {
   Bar,
@@ -127,15 +126,14 @@ export function DashboardPage() {
         )}
       </div>
 
-      {/* ── Cảnh báo bất thường (FR-WEB-DASH-05) ──────────────────────── */}
+      {/*
+        ── Cảnh báo bất thường (FR-WEB-DASH-05) ─────────────────────────
+        Khối này CHỈ để đọc: màn hình xử lý cờ nghi vấn đã gỡ khỏi Web Quản lý,
+        nên ở đây không còn đường dẫn "xem tất cả" hay "xử lý" nào. Chi tiết
+        từng cờ vẫn xem được trong ngăn kéo bản ghi công tương ứng ở Chấm công.
+      */}
       <section style={{ marginBottom: 24 }}>
-        <SectionTitle
-          extra={
-            <Link to="/fraud" className="sf-body-sm" style={{ fontWeight: 600 }}>
-              Xem tất cả cảnh báo
-            </Link>
-          }
-        >
+        <SectionTitle>
           Cảnh báo bất thường hôm nay
           {alerts.data?.total ? ` (${alerts.data.total})` : ''}
         </SectionTitle>
@@ -203,14 +201,6 @@ export function DashboardPage() {
                   <StatusBadge tone={severityTone(alert.severity)}>
                     {FRAUD_SEVERITY_LABEL[alert.severity] ?? alert.severity}
                   </StatusBadge>
-
-                  <Link
-                    to={`/fraud?flagId=${alert.id}`}
-                    className="sf-body-sm"
-                    style={{ fontWeight: 700 }}
-                  >
-                    Xử lý
-                  </Link>
                 </li>
               ))}
             </ul>
@@ -223,9 +213,9 @@ export function DashboardPage() {
                   textAlign: 'center',
                 }}
               >
-                <Link to="/fraud" className="sf-body-sm" style={{ fontWeight: 600 }}>
+                <span className="sf-body-sm sf-text-variant">
                   Còn {alerts.data.total - 6} cảnh báo khác
-                </Link>
+                </span>
               </div>
             ) : null}
           </div>

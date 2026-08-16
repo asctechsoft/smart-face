@@ -1,27 +1,27 @@
-import { NAV_GROUPS } from './nav-items';
+import { NAV_GROUPS, SETTINGS_ITEMS } from './nav-items';
 
 /**
  * Tên trang đang xem, suy ra từ đường dẫn.
  *
- * Nguồn chính là `NAV_GROUPS` — đã có sẵn nhãn tiếng Việt cho mọi mục menu, nên
- * khai lại một bảng thứ hai là mời gọi hai chỗ lệch nhau khi đổi tên một mục.
+ * Nguồn chính là `NAV_GROUPS` + `SETTINGS_ITEMS` — đã có sẵn nhãn tiếng Việt cho
+ * mọi lối vào (sidenav và popover bánh răng), nên khai lại một bảng thứ hai là
+ * mời gọi hai chỗ lệch nhau khi đổi tên một mục.
  *
- * Chỉ những route KHÔNG nằm trên sidenav mới cần khai riêng ở đây.
+ * Chỉ những route KHÔNG có lối vào nào mới cần khai riêng ở đây.
  */
 const EXTRA_TITLES: Record<string, string> = {
   '/employees/': 'Hồ sơ nhân viên',
-  '/requests/settings': 'Loại đơn & luồng duyệt',
   '/doi-mat-khau': 'Đổi mật khẩu',
   '/design-system': 'Thư viện giao diện',
 };
 
-const NAV_ITEMS = NAV_GROUPS.flatMap((group) => group.items);
+const NAV_ITEMS = [...NAV_GROUPS.flatMap((group) => group.items), ...SETTINGS_ITEMS];
 
 /**
  * Khớp theo TIỀN TỐ DÀI NHẤT, không phải khớp tuyệt đối.
  *
  * `/employees/abc123` phải ra "Hồ sơ nhân viên" chứ không phải rỗng, và
- * `/requests/settings` phải ra "Loại đơn & luồng duyệt" chứ không phải "Đơn từ"
+ * `/requests/settings` phải ra "Loại đơn và luồng duyệt" chứ không phải "Đơn từ"
  * — dù `/requests` cũng là một tiền tố khớp.
  */
 export function resolvePageTitle(pathname: string): string {

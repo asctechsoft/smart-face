@@ -44,31 +44,17 @@ const ShiftScheduleListPage = lazy(() =>
 const ShiftSchedulePage = lazy(() =>
   import('@/features/shifts/ShiftSchedulePage').then((m) => ({ default: m.ShiftSchedulePage })),
 );
-const MakeupPage = lazy(() =>
-  import('@/features/makeup/MakeupPage').then((m) => ({ default: m.MakeupPage })),
-);
 const RequestTypesPage = lazy(() =>
   import('@/features/requests/RequestTypesPage').then((m) => ({ default: m.RequestTypesPage })),
 );
 const RolesPage = lazy(() =>
   import('@/features/access/RolesPage').then((m) => ({ default: m.RolesPage })),
 );
-const PayrollPage = lazy(() =>
-  import('@/features/payroll/PayrollPage').then((m) => ({ default: m.PayrollPage })),
-);
 const PolicyPage = lazy(() =>
   import('@/features/policy/PolicyPage').then((m) => ({ default: m.PolicyPage })),
 );
 const ReportsPage = lazy(() =>
   import('@/features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })),
-);
-const FraudPage = lazy(() =>
-  import('@/features/fraud/FraudPage').then((m) => ({ default: m.FraudPage })),
-);
-const NotificationsPage = lazy(() =>
-  import('@/features/notifications/NotificationsPage').then((m) => ({
-    default: m.NotificationsPage,
-  })),
 );
 const AuditLogPage = lazy(() =>
   import('@/features/audit/AuditLogPage').then((m) => ({ default: m.AuditLogPage })),
@@ -130,14 +116,6 @@ export function AppRouter() {
               <Route path="/requests/settings" element={<RequestTypesPage />} />
             </Route>
 
-            <Route element={<RequirePermission permission="makeup.view" />}>
-              <Route path="/makeup" element={<MakeupPage />} />
-            </Route>
-
-            <Route element={<RequirePermission permission="fraud.view" />}>
-              <Route path="/fraud" element={<FraudPage />} />
-            </Route>
-
             <Route element={<RequirePermission permission="employee.view" />}>
               <Route path="/employees" element={<EmployeeListPage />} />
               <Route path="/employees/:id" element={<EmployeeDetailPage />} />
@@ -153,20 +131,12 @@ export function AppRouter() {
               <Route path="/access" element={<RolesPage />} />
             </Route>
 
-            <Route element={<RequirePermission permission="payroll.view" />}>
-              <Route path="/payroll" element={<PayrollPage />} />
-            </Route>
-
             <Route element={<RequirePermission permission="report.view" />}>
               <Route path="/reports" element={<ReportsPage />} />
             </Route>
 
             <Route element={<RequirePermission permission="policy.view" />}>
               <Route path="/policy" element={<PolicyPage />} />
-            </Route>
-
-            <Route element={<RequirePermission permission="notification.send" />}>
-              <Route path="/notifications" element={<NotificationsPage />} />
             </Route>
 
             <Route element={<RequirePermission permission="audit.view" />}>

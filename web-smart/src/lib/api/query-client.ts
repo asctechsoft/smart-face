@@ -74,30 +74,16 @@ export const qk = {
   shiftSchedules: (params: unknown) => ['policy', 'shift-schedules', params] as const,
   shiftSchedule: (id: string) => ['policy', 'shift-schedule', id] as const,
 
-  makeup: ['makeup'] as const,
-  makeupList: (params: unknown) => ['makeup', 'list', params] as const,
-  makeupSummary: (params: unknown) => ['makeup', 'summary', params] as const,
-
   // Khác `requestTypes()` ở nhóm đơn từ: khoá đó là danh mục cho người TẠO đơn
   // (chỉ loại đang bật), còn khoá này là màn hình CẤU HÌNH (gồm cả loại đã tắt).
   requestConfig: ['request-config'] as const,
   requestConfigList: () => ['request-config', 'list'] as const,
-
-  payroll: ['payroll'] as const,
-  payrollPeriods: () => ['payroll', 'periods'] as const,
-  payrollSummary: (id: string) => ['payroll', 'summary', id] as const,
-  payrollPreClose: (id: string) => ['payroll', 'pre-close', id] as const,
 
   reports: ['reports'] as const,
   reportTrend: (params: unknown) => ['reports', 'trend', params] as const,
   reportViolations: (params: unknown) => ['reports', 'violations', params] as const,
   reportLeaveUsage: (year: number) => ['reports', 'leave-usage', year] as const,
   reportOvertime: (params: unknown) => ['reports', 'overtime', params] as const,
-
-  fraud: ['fraud'] as const,
-  fraudFlags: (params: unknown) => ['fraud', 'flags', params] as const,
-  fraudStats: (params: unknown) => ['fraud', 'stats', params] as const,
-  fraudDetail: (id: string) => ['fraud', 'detail', id] as const,
 
   notifications: ['notifications'] as const,
   auditLogs: (params: unknown) => ['audit-logs', params] as const,

@@ -205,7 +205,14 @@ export function RolesPage() {
   );
 }
 
-/** Danh mục quyền hiển thị — nhóm theo module để đọc như bảng ở docs/04 mục 1. */
+/**
+ * Danh mục quyền hiển thị — nhóm theo module để đọc như bảng ở docs/04 mục 1.
+ *
+ * Chỉ liệt kê những quyền CÓ màn hình tương ứng trong Web Quản lý. Backend vẫn
+ * giữ nguyên các quyền của những chức năng đã gỡ (tính công, cờ nghi vấn, công
+ * làm bù) — nhưng bảng này trả lời câu hỏi "vai trò này bấm được gì ở đây", nên
+ * liệt kê một quyền không có nút nào để bấm chỉ gây hiểu nhầm.
+ */
 const PERMISSION_ROWS: { group: string; items: { permission: Permission; label: string }[] }[] = [
   {
     group: 'Chấm công',
@@ -213,7 +220,6 @@ const PERMISSION_ROWS: { group: string; items: { permission: Permission; label: 
       { permission: 'attendance.view', label: 'Xem bảng chấm công' },
       { permission: 'attendance.adjust', label: 'Sửa / bổ sung công thủ công' },
       { permission: 'attendance.export', label: 'Xuất Excel bảng công' },
-      { permission: 'makeup.manage', label: 'Ghi nhận công làm bù' },
     ],
   },
   {
@@ -234,18 +240,13 @@ const PERMISSION_ROWS: { group: string; items: { permission: Permission; label: 
     ],
   },
   {
-    group: 'Tính công & chính sách',
-    items: [
-      { permission: 'payroll.calculate', label: 'Chạy tính công' },
-      { permission: 'payroll.close', label: 'Chốt / mở lại kỳ lương' },
-      { permission: 'policy.edit', label: 'Đổi chính sách công ty' },
-    ],
+    group: 'Chính sách',
+    items: [{ permission: 'policy.edit', label: 'Đổi chính sách công ty' }],
   },
   {
     group: 'Giám sát',
     items: [
-      { permission: 'fraud.review', label: 'Quyết định huỷ / giữ công nghi vấn' },
-      { permission: 'audit.view', label: 'Xem nhật ký kiểm toán' },
+      { permission: 'audit.view', label: 'Xem nhật ký hoạt động' },
       { permission: 'role.manage', label: 'Phân quyền nội bộ' },
     ],
   },

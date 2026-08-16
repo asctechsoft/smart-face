@@ -17,9 +17,13 @@ export interface NavGroup {
 /**
  * Cấu trúc sidenav — icon lấy từ bảng ánh xạ ở docs/16 mục 9.
  *
- * Nhóm theo nhịp công việc thật của người dùng, không theo module kỹ thuật:
- * việc hằng ngày (chấm công, đơn từ) nằm trên; việc hằng tháng (tính công) và
- * việc cấu hình một lần (chính sách) nằm dưới.
+ * Chỉ còn NĂM mục: đây là những việc người dùng làm lặp lại trong ngày và trong
+ * tuần. Mọi thứ chỉ đụng tới khi cấu hình một lần đã chuyển sang popover bánh
+ * răng trên thanh header (`SETTINGS_ITEMS`) — menu dọc dài 13 mục làm việc hằng
+ * ngày phải cuộn qua những mục cả tháng không ai bấm.
+ *
+ * Vì chỉ còn một nhóm nên nhóm này KHÔNG có nhãn: một tiêu đề nhóm đứng trên
+ * toàn bộ danh sách không phân biệt được gì với chính danh sách đó.
  */
 export const NAV_GROUPS: NavGroup[] = [
   {
@@ -32,12 +36,6 @@ export const NAV_GROUPS: NavGroup[] = [
         to: '/dashboard',
         permission: 'dashboard.view',
       },
-    ],
-  },
-  {
-    key: 'daily',
-    label: 'Hằng ngày',
-    items: [
       {
         key: 'attendance',
         label: 'Chấm công',
@@ -53,58 +51,11 @@ export const NAV_GROUPS: NavGroup[] = [
         permission: 'request.view',
       },
       {
-        key: 'fraud',
-        label: 'Cảnh báo gian lận',
-        icon: 'gpp_maybe',
-        to: '/fraud',
-        permission: 'fraud.view',
-      },
-    ],
-  },
-  {
-    key: 'people',
-    label: 'Nhân sự',
-    items: [
-      {
-        key: 'employees',
-        label: 'Nhân viên',
-        icon: 'group',
-        to: '/employees',
-        permission: 'employee.view',
-      },
-      {
         key: 'shifts',
         label: 'Phân ca',
         icon: 'event_repeat',
         to: '/shifts',
         permission: 'shift.assign',
-      },
-      {
-        key: 'makeup',
-        label: 'Công làm bù',
-        icon: 'more_time',
-        to: '/makeup',
-        permission: 'makeup.view',
-      },
-      {
-        key: 'notifications',
-        label: 'Thông báo',
-        icon: 'campaign',
-        to: '/notifications',
-        permission: 'notification.send',
-      },
-    ],
-  },
-  {
-    key: 'payroll',
-    label: 'Tính công & Báo cáo',
-    items: [
-      {
-        key: 'payroll',
-        label: 'Kỳ lương',
-        icon: 'receipt_long',
-        to: '/payroll',
-        permission: 'payroll.view',
       },
       {
         key: 'reports',
@@ -115,38 +66,49 @@ export const NAV_GROUPS: NavGroup[] = [
       },
     ],
   },
+];
+
+/**
+ * Nội dung popover bánh răng trên header.
+ *
+ * Vẫn là NavItem và vẫn trỏ tới đúng những route cũ — popover chỉ đổi chỗ đứng
+ * của lối vào, không đổi màn hình phía sau. Nhờ vậy `page-title.ts` lấy được
+ * nhãn tiêu đề trang từ đây y như lấy từ sidenav.
+ */
+export const SETTINGS_ITEMS: NavItem[] = [
   {
-    key: 'settings',
-    label: 'Thiết lập',
-    items: [
-      {
-        key: 'policy',
-        label: 'Chính sách công ty',
-        icon: 'tune',
-        to: '/policy',
-        permission: 'policy.view',
-      },
-      {
-        key: 'request-types',
-        label: 'Loại đơn & duyệt',
-        icon: 'account_tree',
-        to: '/requests/settings',
-        permission: 'request.configure',
-      },
-      {
-        key: 'access',
-        label: 'Phân quyền nội bộ',
-        icon: 'admin_panel_settings',
-        to: '/access',
-        permission: 'role.manage',
-      },
-      {
-        key: 'audit',
-        label: 'Nhật ký kiểm toán',
-        icon: 'history',
-        to: '/audit-logs',
-        permission: 'audit.view',
-      },
-    ],
+    key: 'employees',
+    label: 'Nhân viên',
+    icon: 'group',
+    to: '/employees',
+    permission: 'employee.view',
+  },
+  {
+    key: 'policy',
+    label: 'Chính sách công ty',
+    icon: 'tune',
+    to: '/policy',
+    permission: 'policy.view',
+  },
+  {
+    key: 'request-types',
+    label: 'Loại đơn và luồng duyệt',
+    icon: 'account_tree',
+    to: '/requests/settings',
+    permission: 'request.configure',
+  },
+  {
+    key: 'access',
+    label: 'Phân quyền',
+    icon: 'admin_panel_settings',
+    to: '/access',
+    permission: 'role.manage',
+  },
+  {
+    key: 'audit',
+    label: 'Nhật ký hoạt động',
+    icon: 'history',
+    to: '/audit-logs',
+    permission: 'audit.view',
   },
 ];

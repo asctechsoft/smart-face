@@ -1,13 +1,9 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Alert, Button, DatePicker, Drawer, Radio, Select } from 'antd';
 import { toUserMessage } from '@/lib/errors/api-error';
 import { toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
-import {
-  DepartmentTreeSelect,
-  useDepartmentDescendants,
-} from '@/components/DepartmentTreeSelect';
+import { DepartmentTreeSelect, useDepartmentDescendants } from '@/components/DepartmentTreeSelect';
 import { useShifts } from '@/features/policy/policy.api';
 import {
   useBulkAssignShifts,
@@ -78,7 +74,6 @@ export function BulkAssignDrawer({
   /** Khoảng ngày hợp lệ của kỳ. Ngoài khoảng này Backend từ chối. */
   periodBounds?: { from: string; to: string };
 }) {
-  const navigate = useNavigate();
   const toast = useToast();
   const showError = useErrorToast();
   const shifts = useShifts();
@@ -146,8 +141,6 @@ export function BulkAssignDrawer({
       toast.success(
         `Đã phân ca cho ${result.employeeCount} nhân viên`,
         `${result.dayCount} ngày, tổng ${result.assigned} lượt. Bảng công của những ngày ĐÃ TÍNH không tự đổi theo ca mới.`,
-        // Hệ quả nói ở dòng trên chỉ có ích khi kèm đường đi tới chỗ xử lý nó.
-        { label: 'Chạy lại tính công', onClick: () => navigate('/payroll') },
       );
       if (result.skippedEmployeeIds.length > 0) {
         toast.warning(
