@@ -8,6 +8,12 @@ export interface Department {
   branchId: string | null;
   parentId: string | null;
   managerId: string | null;
+  /**
+   * Số CBNV **xếp ca được** đứng trực tiếp ở phòng ban này (`ACTIVE` +
+   * `PENDING_ACTIVATION`), KHÔNG cộng dồn phòng ban con — muốn cả nhánh thì tự
+   * cộng theo `withDescendantDepartments`.
+   */
+  _count?: { employees: number };
 }
 
 export interface Branch {

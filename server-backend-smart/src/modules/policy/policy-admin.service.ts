@@ -27,6 +27,7 @@ import {
 } from './dto/policy.dto';
 import { PolicyRepository, ShiftCatalogRow, ShiftScheduleRow } from './policy.repository';
 import { PolicyService } from './policy.service';
+import { AssignedShiftIndex, addDays } from './shift-overlap.util';
 
 /** Trần khoảng ngày của bảng phân ca — hai tháng là đủ cho mọi thao tác xếp lịch thật. */
 const MAX_BOARD_DAYS = 62;
@@ -286,16 +287,56 @@ export class PolicyAdminService {
       (date) => !dto.weekdays?.length || dto.weekdays.includes(weekdayOf(date)),
     );
 
+    // Một ngày được mang NHIỀU ca, miễn giờ không giao nhau — nên phải biết ngày
+    // đó đang có sẵn ca gì. Đọc một lượt cho cả khoảng thay vì mỗi ô một truy
+    // vấn: xếp cả tháng cho 25 người là 775 ô.
+    //
+    // Nới hai đầu thêm một ngày vì ca đêm tràn qua ranh giới ngày theo cả hai
+    // chiều: ca 22:00–06:00 của hôm trước vẫn chạy tới 6 giờ sáng hôm nay.
+    const known = new AssignedShiftIndex(
+      await this.policies.findAssignmentsWithShift(
+        companyId,
+        [...validIds],
+        addDays(from, -1),
+        addDays(to, 1),
+      ),
+    );
+
     let assigned = 0;
+    const conflicts: { employeeId: string; workDate: string; shiftName: string }[] = [];
+
     for (const employeeId of dto.employeeIds) {
       if (!validIds.has(employeeId)) continue;
       for (const workDate of dates) {
+        const clash = known.findClash(employeeId, workDate, shift, dto.shiftId);
+        if (clash) {
+          conflicts.push({
+            employeeId,
+            workDate: formatWorkDate(workDate),
+            shiftName: clash.shift.name,
+          });
+          continue;
+        }
+
         await this.policies.upsertShiftAssignment(companyId, {
           employeeId,
           shiftId: dto.shiftId,
           workDate,
           createdBy,
           scheduleId: dto.scheduleId ?? null,
+        });
+        // Ghi lại ngay để những ngày sau trong cùng lượt xếp vẫn so đúng.
+        known.add({
+          employeeId,
+          workDate,
+          shiftId: dto.shiftId,
+          shift: {
+            name: shift.name,
+            startTime: shift.startTime,
+            endTime: shift.endTime,
+            crossesMidnight: shift.crossesMidnight,
+            type: shift.type,
+          },
         });
         assigned += 1;
       }
@@ -306,6 +347,10 @@ export class PolicyAdminService {
       employeeCount: validIds.size,
       dayCount: dates.length,
       skippedEmployeeIds: dto.employeeIds.filter((id) => !validIds.has(id)),
+      // Báo ra thay vì im lặng bỏ qua: người dùng vừa xin xếp cả tháng, mà một
+      // phần không xếp được thì họ phải biết chính xác ngày nào và vướng ca nào.
+      conflicts: conflicts.slice(0, 20),
+      conflictCount: conflicts.length,
     };
   }
 
@@ -320,7 +365,11 @@ export class PolicyAdminService {
   ) {
     const { items, total } = await this.policies.listShiftSchedules(companyId, {
       month: query.month ? startOfMonth(parseWorkDate(query.month)) : undefined,
-      departmentId: query.departmentId,
+      // Cả hai chiều: lọc theo một tổ phải thấy bảng lập cho khối chứa tổ đó,
+      // lọc theo khối phải thấy bảng lập riêng cho từng tổ bên dưới.
+      departmentIds: query.departmentId
+        ? await this.policies.relatedDepartmentIds(companyId, [query.departmentId])
+        : undefined,
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
     });
@@ -354,6 +403,10 @@ export class PolicyAdminService {
    * xếp ca gì. Danh sách người được chốt tại đây thay vì suy ra động từ phòng
    * ban, vì một lần chuyển phòng của nhân viên không được phép viết lại một bảng
    * đã xếp xong.
+   *
+   * "Phòng ban đã chọn" gồm cả CẤP DƯỚI của chúng: nhân viên gắn ở lá của cây,
+   * còn nút cha thường không có ai đứng trực tiếp. Chọn một khối rồi nhận về
+   * bảng rỗng là cách hỏng khó chịu nhất vì nó không báo lỗi gì.
    */
   async createShiftSchedule(
     companyId: string,
@@ -367,9 +420,19 @@ export class PolicyAdminService {
 
     const employeeIds = await this.policies.findAssignableEmployeeIdsInDepartments(
       companyId,
-      dto.departmentIds,
+      await this.policies.expandDepartmentIds(companyId, dto.departmentIds),
       departmentScope,
     );
+
+    // docs/04 mục 8.5 — không tạo bảng rỗng vô nghĩa. Bảng không có ai vẫn GIỮ
+    // CHỖ cho tháng đó, nên người lập sau nhìn thấy "đã có bảng" và không hiểu
+    // vì sao lưới trống trơn.
+    if (employeeIds.length === 0) {
+      throw new AppException('POL_SCHEDULE_NO_MEMBERS', {
+        departments: await this.policies.findDepartmentNames(companyId, dto.departmentIds),
+      });
+    }
+
     await this.assertMembersFree(periodMonth, employeeIds, undefined);
 
     const scheduleId = await this.transactions.run(async (tx) => {
@@ -590,7 +653,10 @@ export class PolicyAdminService {
     }
 
     const { items: employees, total } = await this.policies.searchAssignableEmployees(companyId, {
-      departmentId: query.departmentId,
+      // Lọc theo một khối phải ra người của mọi tổ bên dưới khối đó.
+      departmentIds: query.departmentId
+        ? await this.policies.expandDepartmentIds(companyId, [query.departmentId])
+        : undefined,
       departmentScope,
       memberIds,
       q: query.q,
@@ -598,11 +664,20 @@ export class PolicyAdminService {
       take: query.pageSize,
     });
 
+    // Xem trong một bảng thì lưới CHỈ hiện lịch do chính bảng đó xếp. Bảng vừa
+    // lập phải trắng trơn: tháng có sẵn lịch cũ (dựng trước khi có phân hệ này,
+    // hoặc do hệ thống khác ghi thẳng) mà hiện lên đây thì đọc thành "hệ thống
+    // tự ý phân ca".
+    //
+    // ⚠ Đánh đổi có ý thức: lịch cũ vẫn TỒN TẠI và vẫn tính vào bảng công, chỉ
+    // là không hiện ở lưới này. Xếp đè lên một ngày như vậy sẽ thay ca thật của
+    // ngày đó — `upsert` theo (nhân viên, ngày) nên không sinh dòng thứ hai.
     const assignments = await this.policies.findShiftAssignments(
       companyId,
       employees.map((employee) => employee.id),
       from,
       to,
+      query.scheduleId,
     );
 
     const holidays = await this.policies.listHolidays(companyId);
@@ -615,6 +690,10 @@ export class PolicyAdminService {
         id: row.id,
         employeeId: row.employeeId,
         shiftId: row.shiftId,
+        // Ai xếp lượt này. Lưới phải phân biệt được ca do CHÍNH bảng đang mở xếp
+        // với ca có sẵn từ trước (lịch cũ, hoặc do API xếp thẳng): hiện lẫn lộn
+        // thì một bảng vừa lập xong trông như đã tự phân ca đầy tháng.
+        scheduleId: row.scheduleId,
         // Trả chuỗi `YYYY-MM-DD` chứ không phải ISO datetime: `workDate` là ngày
         // làm việc theo lịch công ty, không có giờ. Để nguyên `Date` thì client
         // ở múi giờ âm sẽ hiển thị lệch một ngày.
@@ -646,6 +725,7 @@ export class PolicyAdminService {
       validIds,
       parseWorkDate(dto.from),
       parseWorkDate(dto.to),
+      dto.shiftId,
     );
     return { deleted, employeeCount: validIds.length };
   }

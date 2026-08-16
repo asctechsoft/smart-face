@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { Button, DatePicker, Input, Pagination, Popover, Tooltip } from 'antd';
+import { Alert, Button, DatePicker, Input, Pagination, Popover, Tooltip } from 'antd';
 import { PageHeader } from '@/components/PageHeader';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { EmptyState } from '@/components/ui';
@@ -112,13 +112,41 @@ export function ShiftSchedulePage() {
     return allowed ? all.filter((shift) => allowed.includes(shift.id)) : all;
   }, [shifts.data, schedule.data]);
 
-  /** `employeeId|workDate` → shiftId. Tra ô trong bảng phải là O(1), không phải quét mảng. */
+  /**
+   * `employeeId|workDate` → DANH SÁCH ca của ô đó. Tra ô phải là O(1), không
+   * phải quét mảng.
+   *
+   * Một ngày mang được nhiều ca miễn giờ không giao nhau, nên mỗi ô là một mảng
+   * chứ không phải một giá trị. Sắp theo giờ bắt đầu để ô đọc theo đúng trình
+   * tự trong ngày — và để khớp với ca mà máy tính công chọn (ca sớm nhất).
+   *
+   * Backend đã lọc sẵn theo `scheduleId`, nên mọi ô ở đây đều do CHÍNH bảng này
+   * xếp. Bảng vừa lập ra là lưới trắng, kể cả khi tháng đó đã có lịch ca cũ.
+   */
   const cellIndex = useMemo(() => {
-    const index = new Map<string, string>();
+    const index = new Map<string, string[]>();
     for (const assignment of board.data?.assignments ?? []) {
-      index.set(`${assignment.employeeId}|${assignment.workDate}`, assignment.shiftId);
+      const key = `${assignment.employeeId}|${assignment.workDate}`;
+      const bucket = index.get(key);
+      if (bucket) bucket.push(assignment.shiftId);
+      else index.set(key, [assignment.shiftId]);
     }
     return index;
+  }, [board.data]);
+
+  /**
+   * Số ô đang mang nhiều hơn một ca.
+   *
+   * Phải nói ra: máy tính công hiện chỉ đọc CA SỚM NHẤT trong ngày. Xếp hai ca
+   * rồi tưởng đã tính đủ công cả hai là hiểu nhầm tốn tiền thật.
+   */
+  const multiShiftCells = useMemo(() => {
+    const perCell = new Map<string, number>();
+    for (const assignment of board.data?.assignments ?? []) {
+      const key = `${assignment.employeeId}|${assignment.workDate}`;
+      perCell.set(key, (perCell.get(key) ?? 0) + 1);
+    }
+    return [...perCell.values()].filter((count) => count > 1).length;
   }, [board.data]);
 
   function patchQuery(patch: Record<string, string | undefined>) {
@@ -167,32 +195,61 @@ export function ShiftSchedulePage() {
   const allSelected = employees.length > 0 && selectedIds.length === employees.length;
 
   /**
-   * Đổi ca của một người trong một ngày.
+   * Thêm một ca cho một người trong một ngày.
    *
    * Dùng lại chính endpoint phân ca hàng loạt với `from = to = ngày đó` và đúng
    * một nhân viên — không cần endpoint riêng, và quan trọng hơn là đi qua cùng
-   * một đường ghi nên cùng chịu kiểm tra phạm vi phòng ban và cùng ghi audit log.
+   * một đường ghi nên cùng chịu kiểm tra phạm vi phòng ban, kiểm tra giao giờ và
+   * cùng ghi audit log.
    */
   async function assignOne(employee: ShiftBoardEmployee, date: string, shiftId: string) {
     try {
-      await assignShifts.mutateAsync({
+      const result = await assignShifts.mutateAsync({
         employeeIds: [employee.id],
         shiftId,
         from: date,
         to: date,
+        // Gắn lượt này vào bảng đang mở. Thiếu `scheduleId` thì ca sửa ngay
+        // trong bảng lại KHÔNG thuộc bảng nào: xoá bảng không dọn được nó, và
+        // nó hiện lên như "ca có sẵn" ở lần mở sau.
+        scheduleId,
       });
-      toast.success(`Đã đổi ca của ${employee.fullName}`, `Ngày ${date}.`);
+
+      // Backend bỏ qua ô bị giao giờ thay vì ném lỗi (một lượt xếp hàng loạt
+      // không nên đổ vì một ngày vướng). Ở đây người dùng bấm đúng MỘT ô, nên
+      // im lặng là không chấp nhận được.
+      const clash = result.conflicts[0];
+      if (clash) {
+        toast.warning(
+          `Không xếp được — trùng giờ với ca ${clash.shiftName}`,
+          'Hai ca trong cùng một ngày phải có khung giờ không giao nhau. Bỏ ca cũ trước, hoặc chọn ca khác giờ.',
+        );
+        return;
+      }
+      toast.success(`Đã xếp ca cho ${employee.fullName}`, `Ngày ${date}.`);
     } catch (caught) {
       showError(caught);
     }
   }
 
-  async function clearOne(employee: ShiftBoardEmployee, date: string) {
+  /**
+   * Bỏ ca khỏi một ngày.
+   *
+   * @param shiftId bỏ đúng ca này; bỏ trống = xoá sạch ca của ngày đó. Từ khi
+   *   một ngày mang được nhiều ca, xoá cả ngày để bỏ một ca là xoá mất phần
+   *   việc người dùng không hề động tới.
+   */
+  async function clearOne(employee: ShiftBoardEmployee, date: string, shiftId?: string) {
     try {
-      await clearShifts.mutateAsync({ employeeIds: [employee.id], from: date, to: date });
+      await clearShifts.mutateAsync({
+        employeeIds: [employee.id],
+        from: date,
+        to: date,
+        shiftId,
+      });
       toast.success(
-        `Đã xoá phân ca ngày ${date}`,
-        `${employee.fullName} quay về ca mặc định của công ty trong ngày này.`,
+        shiftId ? `Đã bỏ ca khỏi ngày ${date}` : `Đã xoá toàn bộ ca ngày ${date}`,
+        `${employee.fullName}${shiftId ? '' : ' quay về ca mặc định của công ty trong ngày này'}.`,
       );
     } catch (caught) {
       showError(caught);
@@ -207,7 +264,7 @@ export function ShiftSchedulePage() {
         title={schedule.data?.name ?? 'Bảng phân ca'}
         description={
           schedule.data
-            ? `Kỳ ${dayjs(schedule.data.periodMonth).format('MM/YYYY')} · ${schedule.data.memberCount} CBNV. Người chưa được xếp ca sẽ tính công theo ca mặc định của công ty.`
+            ? `Kỳ ${dayjs(schedule.data.periodMonth).format('MM/YYYY')} · ${schedule.data.memberCount} CBNV · ${schedule.data.assignmentCount} lượt do bảng này xếp. Người chưa được xếp ca sẽ tính công theo ca mặc định của công ty.`
             : 'Đang tải bảng phân ca…'
         }
         actions={
@@ -287,8 +344,9 @@ export function ShiftSchedulePage() {
             id="sb-dept"
             value={query.departmentId}
             onChange={(value) => patchQuery({ departmentId: value })}
-            // Chỉ các phòng ban đã chọn lúc lập bảng — lọc sang phòng khác chỉ
-            // ra bảng trống, vì thành viên của bảng không có ai ở đó.
+            // Chỉ các phòng ban đã chọn lúc lập bảng VÀ cấp dưới của chúng —
+            // lọc sang phòng khác chỉ ra bảng trống, vì thành viên của bảng
+            // không có ai ở đó. Tổ tiên vẫn hiện để cây giữ hình, nhưng bị khoá.
             limitTo={schedule.data?.departmentIds}
             placeholder="Tất cả phòng ban trong bảng"
           />
@@ -304,6 +362,22 @@ export function ShiftSchedulePage() {
           />
         </FilterField>
       </FilterBar>
+
+      {/*
+        Giới hạn đã biết, phải nói ra chứ không được để người dùng tự phát hiện
+        vào cuối tháng: lịch cho phép nhiều ca một ngày, nhưng máy tính công vẫn
+        chỉ đọc một ca. Xếp hai ca rồi tưởng đã tính đủ công cả hai là hiểu nhầm
+        tốn tiền thật.
+      */}
+      {multiShiftCells > 0 ? (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+          message={`${multiShiftCells} ngày đang có nhiều hơn một ca`}
+          description="Máy tính công hiện chỉ tính CA SỚM NHẤT trong ngày — các ca sau chưa được cộng vào giờ công. Lịch vẫn lưu đúng để tra cứu và để xếp người."
+        />
+      ) : null}
 
       {board.isLoading && !board.data ? (
         <TableSkeleton columns={8} />
@@ -432,8 +506,10 @@ export function ShiftSchedulePage() {
                     </th>
 
                     {days.map((day) => {
-                      const shiftId = cellIndex.get(`${employee.id}|${day.date}`);
-                      const shift = shiftId ? shiftById.get(shiftId) : undefined;
+                      const assignedShifts = (cellIndex.get(`${employee.id}|${day.date}`) ?? [])
+                        .map((id) => shiftById.get(id))
+                        .filter((item): item is Shift => Boolean(item))
+                        .sort((a, b) => (a.startTime ?? '').localeCompare(b.startTime ?? ''));
                       const holiday = holidayByDate.get(day.date);
 
                       return (
@@ -450,7 +526,7 @@ export function ShiftSchedulePage() {
                           }}
                         >
                           <ShiftCell
-                            shift={shift}
+                            assigned={assignedShifts}
                             employee={employee}
                             date={day.date}
                             shifts={allowedShifts}
@@ -458,7 +534,7 @@ export function ShiftSchedulePage() {
                             onAssign={(nextShiftId) =>
                               void assignOne(employee, day.date, nextShiftId)
                             }
-                            onClear={() => void clearOne(employee, day.date)}
+                            onClear={(shiftId) => void clearOne(employee, day.date, shiftId)}
                             busy={assignShifts.isPending || clearShifts.isPending}
                           />
                         </td>
@@ -539,18 +615,23 @@ function clampToPeriod(value: string, period: { from: string; to: string }): str
 }
 
 /**
- * Một ô lịch — bấm được để đổi ca của ĐÚNG người đó, ĐÚNG ngày đó.
+ * Một ô lịch — bấm được để sửa ca của ĐÚNG người đó, ĐÚNG ngày đó.
  *
  * Trên một lưới lịch, phản xạ đầu tiên của người dùng là bấm vào ô. Trước đây ô
  * chỉ là chữ tĩnh, và cách duy nhất để sửa lịch một người trong một ngày là mở
  * drawer phân ca hàng loạt rồi khai lại cả ba chiều (ai, ca nào, ngày nào) —
  * cho một thao tác mà toàn bộ ngữ cảnh đã nằm sẵn dưới con trỏ.
  *
+ * Một ngày mang được NHIỀU ca, nên danh sách trong popover là các mục BẬT/TẮT
+ * chứ không phải một phép chọn loại trừ: bấm ca chưa có = thêm, bấm ca đang có =
+ * bỏ đúng ca đó. Đây là lý do không dùng `Radio` — hình dáng của điều khiển phải
+ * nói đúng số lượng lựa chọn cho phép.
+ *
  * Người không có quyền xếp ca thấy ô tĩnh như cũ, không phải một nút bấm vào
  * rồi nhận 403.
  */
 function ShiftCell({
-  shift,
+  assigned,
   employee,
   date,
   shifts,
@@ -559,43 +640,57 @@ function ShiftCell({
   onAssign,
   onClear,
 }: {
-  shift: Shift | undefined;
+  /** Các ca của ô này, đã sắp theo giờ bắt đầu. */
+  assigned: Shift[];
   employee: ShiftBoardEmployee;
   date: string;
   shifts: Shift[];
   editable: boolean;
   busy: boolean;
   onAssign: (shiftId: string) => void;
-  onClear: () => void;
+  /** Bỏ trống `shiftId` = xoá sạch ca của ngày. */
+  onClear: (shiftId?: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const assignedIds = new Set(assigned.map((shift) => shift.id));
 
-  const description = shift
-    ? `${shift.name} · ${shiftHours(shift)}`
-    : 'Chưa phân ca — tính công theo ca mặc định của công ty';
+  const description =
+    assigned.length > 0
+      ? assigned.map((shift) => `${shift.name} · ${shiftHours(shift)}`).join(' + ')
+      : 'Chưa phân ca — tính công theo ca mặc định của công ty';
   const cellLabel = `${employee.fullName}, ngày ${date}: ${description}`;
 
-  const mark = shift ? (
-    <span
-      style={{
-        display: 'inline-block',
-        minWidth: 28,
-        paddingInline: 6,
-        borderRadius: 6,
-        fontSize: 12,
-        lineHeight: '20px',
-        fontWeight: 600,
-        background: shift.crossesMidnight ? 'var(--sf-teal-900, #0F3D33)' : 'var(--sf-teal-700)',
-        color: '#FFFFFF',
-      }}
-    >
-      {abbreviate(shift.name)}
-    </span>
-  ) : (
-    // Dấu "—" thay cho dấu chấm giữa: chấm giữa vừa mờ vừa không mang nghĩa gì,
-    // người dùng đọc thành nhiễu chứ không thành "ô này còn trống".
-    <span className="sf-text-muted">—</span>
-  );
+  const mark =
+    assigned.length > 0 ? (
+      // Xếp DỌC khi có nhiều ca: cột ngày rộng 44px, hai nhãn nằm ngang sẽ bóp
+      // chữ tới mức không đọc được, hoặc kéo giãn cả bảng ra ngoài màn hình.
+      <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+        {assigned.map((shift) => (
+          <span
+            key={shift.id}
+            style={{
+              display: 'inline-block',
+              minWidth: 28,
+              paddingInline: 6,
+              borderRadius: 6,
+              fontSize: 12,
+              lineHeight: '20px',
+              fontWeight: 600,
+              background: shift.crossesMidnight
+                ? 'var(--sf-teal-900, #0F3D33)'
+                : 'var(--sf-teal-700)',
+              color: '#FFFFFF',
+            }}
+          >
+            {abbreviate(shift.name)}
+          </span>
+        ))}
+      </span>
+    ) : (
+      // Dấu "—" thay cho dấu chấm giữa: chấm giữa vừa mờ vừa không mang nghĩa gì,
+      // người dùng đọc thành nhiễu chứ không thành "ô này còn trống".
+      <span className="sf-text-muted">—</span>
+    );
 
   if (!editable) {
     return (
@@ -613,28 +708,36 @@ function ShiftCell({
       placement="bottom"
       title={`${employee.fullName} · ${date}`}
       content={
-        <div style={{ display: 'grid', gap: 4, minWidth: 220 }}>
-          {shifts.map((option) => (
-            <Button
-              key={option.id}
-              size="small"
-              type={option.id === shift?.id ? 'primary' : 'text'}
-              disabled={busy}
-              style={{ justifyContent: 'flex-start', textAlign: 'left' }}
-              onClick={() => {
-                setOpen(false);
-                onAssign(option.id);
-              }}
-            >
-              {option.name} · {shiftHours(option)}
-            </Button>
-          ))}
+        <div style={{ display: 'grid', gap: 4, minWidth: 240 }}>
+          <p className="sf-body-sm sf-text-variant" style={{ margin: '0 0 4px', maxWidth: 260 }}>
+            Bấm để thêm hoặc bỏ ca. Xếp được nhiều ca trong ngày, miễn giờ không giao nhau.
+          </p>
 
-          {shift ? (
+          {shifts.map((option) => {
+            const isAssigned = assignedIds.has(option.id);
+            return (
+              <Button
+                key={option.id}
+                size="small"
+                type={isAssigned ? 'primary' : 'text'}
+                disabled={busy}
+                aria-pressed={isAssigned}
+                style={{ justifyContent: 'flex-start', textAlign: 'left' }}
+                onClick={() => {
+                  setOpen(false);
+                  if (isAssigned) onClear(option.id);
+                  else onAssign(option.id);
+                }}
+              >
+                {isAssigned ? '✓ ' : ''}
+                {option.name} · {shiftHours(option)}
+              </Button>
+            );
+          })}
+
+          {assigned.length > 1 ? (
             <>
-              <div
-                style={{ height: 1, background: 'var(--sf-outline-variant)', margin: '4px 0' }}
-              />
+              <div style={{ height: 1, background: 'var(--sf-outline-variant)', margin: '4px 0' }} />
               <Button
                 size="small"
                 type="text"
@@ -646,7 +749,7 @@ function ShiftCell({
                   onClear();
                 }}
               >
-                Xoá phân ca ngày này
+                Xoá cả {assigned.length} ca của ngày này
               </Button>
             </>
           ) : null}
@@ -655,7 +758,7 @@ function ShiftCell({
     >
       <button
         type="button"
-        aria-label={`${cellLabel}. Bấm để đổi ca.`}
+        aria-label={`${cellLabel}. Bấm để sửa ca.`}
         style={{
           border: 'none',
           background: 'none',

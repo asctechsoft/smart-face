@@ -608,15 +608,21 @@ model ShiftAssignment {
 
   /// Bảng phân ca đã sinh ra lượt này. Null = xếp ngoài bảng (dữ liệu cũ).
   ///
-  /// ⚠ `@@unique([employeeId, workDate])` KHÔNG kèm `scheduleId`, và không được
-  /// kèm: máy tính công đọc đúng MỘT ca cho một người trong một ngày. Cho hai
-  /// bảng cùng giữ một ô là để engine chọn bừa một trong hai.
+  /// ⚠ Khoá duy nhất KHÔNG kèm `scheduleId`, và không được kèm: hai bảng cùng
+  /// giữ một ô là để engine chọn bừa một trong hai.
   scheduleId String?
   schedule   ShiftSchedule? @relation(fields: [scheduleId], references: [id], onDelete: SetNull)
 
   createdAt DateTime @default(now())
 
-  @@unique([employeeId, workDate])
+  /// MỘT NGƯỜI, MỘT NGÀY, NHIỀU CA — miễn là giờ các ca không giao nhau.
+  ///
+  /// Khoá duy nhất có `shiftId` nên chỉ chặn xếp TRÙNG ĐÚNG một ca hai lần vào
+  /// cùng ngày. Việc "giờ không được giao nhau" thì database không diễn đạt
+  /// được (phải so khung giờ của bảng `shift`, và ca qua đêm còn tràn sang ngày
+  /// hôm sau), nên chốt đó nằm ở service — xem `assertNoShiftOverlap`.
+  @@unique([employeeId, workDate, shiftId])
+  @@index([employeeId, workDate])
   @@index([companyId, workDate])
   @@index([scheduleId])
   @@map("shift_assignment")

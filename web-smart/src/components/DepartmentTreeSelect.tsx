@@ -6,6 +6,9 @@ export interface DepartmentTreeNode {
   value: string;
   title: string;
   children: DepartmentTreeNode[];
+  /** Nút chỉ để dựng hình cây, không được chọn — xem `limitTo`. */
+  disabled?: boolean;
+  selectable?: boolean;
 }
 
 /**
@@ -22,10 +25,26 @@ export interface DepartmentTreeNode {
  *   hàm dựng cây đệ quy chạy vô hạn và treo tab trình duyệt. Duyệt theo bản đồ
  *   phẳng rồi mới nối, nên vòng lặp chỉ khiến nhánh đó không xuất hiện ở gốc —
  *   không treo.
+ *
+ * @param selectableIds bỏ trống = chọn được tất cả. Có giá trị thì những nút
+ *   ngoài tập này chỉ còn nhiệm vụ dựng hình cây và bị khoá.
  */
-export function buildDepartmentTree(departments: Department[]): DepartmentTreeNode[] {
+export function buildDepartmentTree(
+  departments: Department[],
+  selectableIds?: Set<string>,
+): DepartmentTreeNode[] {
   const nodes = new Map<string, DepartmentTreeNode>(
-    departments.map((d) => [d.id, { value: d.id, title: d.name, children: [] }]),
+    departments.map((d) => [
+      d.id,
+      {
+        value: d.id,
+        title: d.name,
+        children: [],
+        ...(selectableIds && !selectableIds.has(d.id)
+          ? { disabled: true, selectable: false }
+          : null),
+      },
+    ]),
   );
 
   const roots: DepartmentTreeNode[] = [];
@@ -59,12 +78,109 @@ export function buildDepartmentTree(departments: Department[]): DepartmentTreeNo
   return roots;
 }
 
+/**
+ * Các phòng ban đã chọn CỘNG toàn bộ cấp dưới của chúng.
+ *
+ * Nhân viên gắn ở LÁ của cây, nút cha thường không có ai đứng trực tiếp. Vì vậy
+ * mọi chỗ hiểu "phòng ban đã chọn" theo nghĩa khớp đúng id đều biến việc chọn
+ * cấp CAO NHẤT thành phạm vi HẸP NHẤT — không lỗi, chỉ là danh sách rỗng.
+ *
+ * ⚠ Backend có bản sao của hàm này (`withDescendantDepartments`) và là chốt
+ * cuối. Bản trên Web tồn tại để giao diện đếm đúng số người TRƯỚC khi bấm Lưu.
+ */
+export function withDescendantDepartments(
+  departments: Department[],
+  selectedIds: string[],
+): string[] {
+  if (selectedIds.length === 0) return [];
+
+  const childrenOf = new Map<string, string[]>();
+  for (const department of departments) {
+    if (!department.parentId) continue;
+    const siblings = childrenOf.get(department.parentId) ?? [];
+    siblings.push(department.id);
+    childrenOf.set(department.parentId, siblings);
+  }
+
+  const seen = new Set<string>();
+  const queue = [...selectedIds];
+  while (queue.length > 0) {
+    const id = queue.shift() as string;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    queue.push(...(childrenOf.get(id) ?? []));
+  }
+  return [...seen];
+}
+
+/** Các phòng ban đã chọn cộng toàn bộ cấp TRÊN của chúng. */
+export function withAncestorDepartments(
+  departments: Department[],
+  selectedIds: string[],
+): string[] {
+  const byId = new Map(departments.map((d) => [d.id, d]));
+  const seen = new Set<string>();
+
+  for (const id of selectedIds) {
+    let current: string | null | undefined = id;
+    while (current && !seen.has(current)) {
+      seen.add(current);
+      current = byId.get(current)?.parentId ?? null;
+    }
+  }
+  return [...seen];
+}
+
+/**
+ * Tập phòng ban thực sự nằm dưới các id đã chọn — dùng để lọc/đếm nhân viên.
+ *
+ * Trả về `null` khi không chọn gì, nghĩa là "không giới hạn". Mảng rỗng và
+ * "không lọc" là hai ý khác hẳn nhau, gộp lại thì bộ lọc rỗng biến thành bộ lọc
+ * khớp tất cả.
+ */
+export function useDepartmentDescendants(selectedIds: string[] | undefined): Set<string> | null {
+  const departments = useDepartments();
+
+  // Khoá theo NỘI DUNG chứ không theo tham chiếu mảng: nơi gọi thường dựng
+  // `[departmentId]` ngay trong thân component, nên mảng đổi tham chiếu mỗi lần
+  // render và `useMemo` sẽ không bao giờ giữ được kết quả nào.
+  const key = selectedIds?.length ? [...selectedIds].sort().join(',') : '';
+
+  return useMemo(() => {
+    if (!key) return null;
+    return new Set(withDescendantDepartments(departments.data ?? [], key.split(',')));
+  }, [departments.data, key]);
+}
+
+/**
+ * Tập phòng ban đã chọn cộng cấp TRÊN — dùng khi đối chiếu với một khai báo
+ * "áp dụng cho phòng ban nào" ở cấp cao hơn.
+ *
+ * Ca khai cho cả công ty vẫn phải hiện ra khi người dùng chỉ chọn một tổ, nếu
+ * không thì đúng những ca dùng chung lại là những ca không chọn được.
+ */
+export function useDepartmentAncestors(selectedIds: string[] | undefined): Set<string> | null {
+  const departments = useDepartments();
+  const key = selectedIds?.length ? [...selectedIds].sort().join(',') : '';
+
+  return useMemo(() => {
+    if (!key) return null;
+    return new Set(withAncestorDepartments(departments.data ?? [], key.split(',')));
+  }, [departments.data, key]);
+}
+
 interface BaseProps {
   id?: string;
   placeholder?: string;
   disabled?: boolean;
   style?: React.CSSProperties;
-  /** Giới hạn cây vào đúng những phòng ban này (và tổ tiên của chúng, để còn thấy nhánh). */
+  /**
+   * Giới hạn phần chọn được vào đúng những phòng ban này VÀ cấp dưới của chúng.
+   *
+   * Tổ tiên của chúng vẫn hiện nhưng bị khoá: bỏ hẳn cha đi thì con mất chỗ đứng
+   * trong cây và bị đẩy lên làm gốc, đọc như một phòng ban độc lập; còn để chọn
+   * được thì người dùng lọc ra một phạm vi rộng hơn phạm vi của bảng.
+   */
   limitTo?: string[];
 }
 
@@ -113,7 +229,17 @@ export function DepartmentTreeSelect({
   );
 }
 
-/** Bản chọn NHIỀU phòng ban. Tách hàm riêng vì kiểu của `value` khác hẳn. */
+/**
+ * Bản chọn NHIỀU phòng ban. Tách hàm riêng vì kiểu của `value` khác hẳn.
+ *
+ * Chọn theo CỤM: tích một khối là tích luôn mọi phòng bên dưới nó, và khối chỉ
+ * hiện là đã tích khi mọi phòng con đều được tích. Đây là cách người dùng đọc
+ * một cây tổ chức — "áp dụng cho khối Kỹ thuật" luôn bao hàm các tổ trong khối,
+ * không ai hiểu nó là "chỉ đúng cái nhãn Kỹ thuật".
+ *
+ * `SHOW_ALL` để `value` chứa CẢ cha lẫn con: bên nhận (Backend, bộ lọc màn chi
+ * tiết) nhờ đó không phải tự suy ra cây mới biết bảng phủ tới đâu.
+ */
 export function DepartmentTreeMultiSelect({
   value,
   onChange,
@@ -130,15 +256,12 @@ export function DepartmentTreeMultiSelect({
       style={{ width: '100%', ...base.style }}
       disabled={base.disabled}
       loading={loading}
-      multiple
+      treeCheckable
+      showCheckedStrategy={TreeSelect.SHOW_ALL}
       allowClear
       showSearch
       treeNodeFilterProp="title"
       treeDefaultExpandAll
-      // Chọn cha KHÔNG tự chọn hết con: "áp dụng cho khối Kỹ thuật" và "áp dụng
-      // cho từng tổ trong khối" là hai ý định khác nhau, và gộp lại thì người
-      // dùng không diễn đạt được ý thứ nhất.
-      treeCheckable={false}
       placeholder={base.placeholder ?? 'Chọn phòng ban'}
       value={value}
       onChange={(next: string[]) => onChange(next ?? [])}
@@ -153,21 +276,17 @@ function useDepartmentTree(limitTo?: string[]) {
 
   const treeData = useMemo(() => {
     const all = departments.data ?? [];
-    if (!limitTo) return buildDepartmentTree(all);
+    if (!limitTo?.length) return buildDepartmentTree(all);
 
-    // Giữ lại cả tổ tiên của các phòng ban được phép: bỏ cha đi thì con mất chỗ
-    // đứng trong cây và bị đẩy lên làm gốc, đọc như một phòng ban độc lập.
-    const keep = new Set(limitTo);
-    const byId = new Map(all.map((d) => [d.id, d]));
-    for (const id of limitTo) {
-      let current = byId.get(id)?.parentId ?? null;
-      while (current && !keep.has(current)) {
-        keep.add(current);
-        current = byId.get(current)?.parentId ?? null;
-      }
-    }
+    // Chọn được: các phòng ban đã chốt và cấp dưới của chúng.
+    // Hiện nhưng khoá: tổ tiên, chỉ để cây giữ đúng hình.
+    const selectable = new Set(withDescendantDepartments(all, limitTo));
+    const visible = new Set(withAncestorDepartments(all, [...selectable]));
 
-    return buildDepartmentTree(all.filter((d) => keep.has(d.id)));
+    return buildDepartmentTree(
+      all.filter((d) => visible.has(d.id)),
+      selectable,
+    );
   }, [departments.data, limitTo]);
 
   return { treeData, loading: departments.isLoading };

@@ -33,7 +33,6 @@ export function ShiftScheduleListPage() {
   const remove = useDeleteShiftSchedule();
 
   const [formOpen, setFormOpen] = useState(false);
-  const [editing, setEditing] = useState<ShiftSchedule | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<ShiftSchedule | null>(null);
 
   const month = searchParams.get('month') ?? undefined;
@@ -109,22 +108,27 @@ export function ShiftScheduleListPage() {
           {
             title: '',
             key: 'actions',
+            // Đủ chỗ cho cả hai nhãn. Nút bị bóp lại cho vừa ô sẽ dính sát nhau,
+            // và "Mở bảng" là một liên kết — bấm lệch vài pixel là mất trang.
             width: 200,
             render: (_: unknown, row: ShiftSchedule) => (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <Link to={`/shifts/${row.id}`}>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'nowrap' }}>
+                <Link to={`/shifts/${row.id}`} style={{ flex: '0 0 auto' }}>
                   <Button size="small">Mở bảng</Button>
                 </Link>
                 <Button
                   size="small"
-                  onClick={() => {
-                    setEditing(row);
-                    setFormOpen(true);
+                  type="text"
+                  danger
+                  style={{ flex: '0 0 auto' }}
+                  // Chặn sự kiện nổi lên: ô này nằm cạnh một liên kết, và một cú
+                  // bấm đi lạc sẽ điều hướng mất trang thay vì mở hộp thoại.
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setDeleteTarget(row);
                   }}
                 >
-                  Sửa
-                </Button>
-                <Button size="small" type="text" danger onClick={() => setDeleteTarget(row)}>
                   Xoá
                 </Button>
               </div>
@@ -147,7 +151,6 @@ export function ShiftScheduleListPage() {
               type="primary"
               icon={<Icon name="add" size={20} />}
               onClick={() => {
-                setEditing(null);
                 setFormOpen(true);
               }}
             >
@@ -202,7 +205,6 @@ export function ShiftScheduleListPage() {
             <Button
               type="primary"
               onClick={() => {
-                setEditing(null);
                 setFormOpen(true);
               }}
             >
@@ -212,14 +214,7 @@ export function ShiftScheduleListPage() {
         }
       />
 
-      <ShiftScheduleFormModal
-        open={formOpen}
-        editing={editing}
-        onClose={() => {
-          setFormOpen(false);
-          setEditing(null);
-        }}
-      />
+      <ShiftScheduleFormModal open={formOpen} onClose={() => setFormOpen(false)} />
 
       <ConfirmDialog
         open={Boolean(deleteTarget)}

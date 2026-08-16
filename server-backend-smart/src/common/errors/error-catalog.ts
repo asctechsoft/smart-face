@@ -889,6 +889,20 @@ export const ERROR_CATALOG = {
     hint: 'Mỗi người mỗi tháng chỉ thuộc một bảng. Bỏ họ khỏi bảng cũ, hoặc chọn phòng ban khác.',
     retryable: true,
   },
+  /**
+   * docs/04 mục 8.5: "không tạo bảng rỗng vô nghĩa".
+   *
+   * Bảng không có ai là bảng không xếp được ca nào, nhưng nó vẫn GIỮ CHỖ: tháng
+   * đó phòng ban đó coi như đã có bảng, và người lập không hiểu vì sao lưới chi
+   * tiết trống trơn. Nói thẳng phòng ban nào không có người ngay lúc lập.
+   */
+  POL_SCHEDULE_NO_MEMBERS: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Các phòng ban đã chọn không có CBNV nào đang làm việc.',
+    messageEn: 'The selected departments have no active employees.',
+    hint: 'Chọn phòng ban khác, hoặc thêm nhân viên vào phòng ban trước khi lập bảng.',
+    retryable: true,
+  },
   POL_SCHEDULE_OUT_OF_PERIOD: {
     status: HttpStatus.UNPROCESSABLE_ENTITY,
     message: 'Khoảng ngày nằm ngoài kỳ của bảng phân ca.',

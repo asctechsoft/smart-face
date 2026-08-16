@@ -578,7 +578,7 @@ PHẠT
 | `FR-WEB-HR-10` | Import hàng loạt bằng file Excel mẫu, báo lỗi theo từng dòng | Must |
 | `FR-WEB-HR-11` | Vòng đời nhân viên: thêm mới, tạm ngưng, chấm dứt hợp đồng | Must |
 | `FR-WEB-HR-12` | Chấm dứt hợp đồng → thu hồi quyền truy cập, xoá/khoá dữ liệu sinh trắc học theo chính sách | Must |
-| `FR-WEB-HR-13` | Bảng phân ca theo tháng: lập, sửa, xoá; thêm/bớt CBNV trong bảng | Must |
+| `FR-WEB-HR-13` | Bảng phân ca theo tháng: lập, xoá; thêm/bớt CBNV trong bảng. **Không sửa tham số bảng đã lập** — xem 8.4 | Must |
 
 ### 8.1. Luồng tạo nhân viên trực tiếp (Luồng B)
 
@@ -752,7 +752,7 @@ Việc xếp lịch được tổ chức theo **bảng phân ca** — đơn vị
 ```
 Danh sách bảng phân ca          →   Chi tiết một bảng
   lọc: tháng, phòng ban              lưới: người × ngày trong tháng
-  thêm / sửa / xoá bảng              lọc: khoảng ngày (trong tháng), phòng ban (trong phạm vi bảng)
+  lập / xoá bảng                     lọc: khoảng ngày (trong tháng), phòng ban (trong phạm vi bảng)
                                      phân ca hàng loạt · thêm CBNV · bỏ CBNV
 ```
 
@@ -769,16 +769,40 @@ Danh sách bảng phân ca          →   Chi tiết một bảng
 
 > ⚠ **Một người, một tháng, một bảng.** `shift_assignment` chỉ cho phép **một ca mỗi người mỗi ngày**; hai bảng cùng tháng sẽ tranh nhau ghi vào cùng ô, bảng lưu sau đè bảng lưu trước, và màn chi tiết của bảng kia hiển thị ca mà nó không hề xếp. Ràng buộc đặt ở **tầng database**, không chỉ ở service — hai request lập bảng chạy song song đều thấy "chưa ai giữ" rồi cùng ghi.
 
-**Phân ca hàng loạt** trong bảng đi theo thứ tự người dùng quyết định: **phòng ban → ca → khoảng ngày → áp dụng cho ai**. Trường cuối là hai lựa chọn loại trừ:
+**Một ngày xếp được NHIỀU ca**, điều kiện duy nhất là **khung giờ các ca không giao nhau**. Ca sáng 08:00–12:00 và ca chiều 13:00–17:00 nằm chung một ngày là hợp lệ; chạm đầu–cuối (12:00 và 12:00) cũng hợp lệ. Ca **linh hoạt** không khai giờ nên bị coi là chiếm trọn ngày — không biết nó chạy từ mấy giờ thì không thể khẳng định nó không đè lên ca khác.
+
+Phép kiểm tra soi cả **ngày trước và ngày sau**, không chỉ đúng ngày đang xếp: ca đêm 22:00–06:00 của hôm trước còn chạy tới 6 giờ sáng hôm nay, nên ca sáng 05:00 hôm nay là trùng giờ dù hai lượt nằm ở hai `workDate` khác nhau.
+
+> ⚠ **Giới hạn đã biết: máy tính công vẫn chỉ đọc MỘT ca — ca sớm nhất trong ngày.** Các ca sau chưa được cộng vào giờ công. Lịch vẫn lưu đúng để tra cứu và để xếp người. Màn chi tiết hiện cảnh báo đếm số ngày đang có nhiều hơn một ca, để không ai tưởng đã tính đủ. Cộng dồn nhiều ca vào tính công là thay đổi khác hẳn về phạm vi (chia lượt quẹt theo ca, đi muộn/về sớm từng ca, OT từng ca) — chưa làm.
+
+**Phân ca hàng loạt là THÊM ca, không thay ca cũ.** Ngày nào đã có ca trùng giờ thì ô đó bị bỏ qua và **báo lại cụ thể ngày nào vướng ca nào** — không huỷ cả lượt xếp, vì một ngày vướng không phải lý do để bỏ cả tháng. Muốn thay ca thì **Xoá phân ca** trước rồi xếp lại.
+
+**Không sửa được tham số của bảng đã lập.** Giao diện chỉ có *lập* và *xoá*. Phạm vi (phòng ban, ca, kỳ) chốt lúc lập đã kéo theo danh sách thành viên và toàn bộ lịch đã xếp; sửa nó về sau chỉ đổi bộ lọc chứ không đổi hai thứ kia, và hai thứ lệch nhau thì đọc như một lỗi. Muốn đổi phạm vi: xoá bảng rồi lập lại. Thêm/bớt người thì dùng **Thêm CBNV** / **Bỏ khỏi bảng** trong màn chi tiết — đó là thao tác trên dữ liệu thật, không phải trên bộ lọc.
+
+**Phân ca hàng loạt** trong bảng đi theo thứ tự người dùng quyết định: **phòng ban → ca → những ngày nào (khoảng ngày, rồi lọc thứ trong tuần) → áp dụng cho ai**. "Chỉ áp dụng cho các thứ" là phần thu hẹp của khoảng ngày nên đứng liền sau nó, trước khi chuyển sang chọn người. Trường cuối là hai lựa chọn loại trừ:
 
 - **Toàn bộ CBNV** — mọi người thuộc phòng ban đã chọn, *kể cả người ở trang sau của lưới*.
 - **Từng CBNV** — chọn thủ công; chỉ khi chọn mục này mới hiện combo chọn nhiều người.
 
 > Phân biệt này quan trọng hơn vẻ ngoài của nó. Nút "chọn tất cả" kiểu cũ chỉ chọn được những người **đang hiển thị**, nên người dùng tưởng đã xếp cho cả phòng 40 người mà thực ra chỉ 25 người đầu — và 15 người còn lại không có lịch cho tới lúc chốt lương.
 
+> **Lưới của một bảng chỉ hiện lịch do CHÍNH bảng đó xếp.** Bảng vừa lập ra là lưới **trắng**, kể cả khi tháng đó đã có sẵn lịch ca — dựng trước khi có phân hệ này, hoặc do hệ thống khác ghi thẳng. Hiện lẫn vào thì một bảng chưa ai xếp gì mở ra đã kín ca, và người dùng đọc thành "hệ thống tự ý phân ca".
+>
+> Mọi thao tác xếp ca trong màn chi tiết — kể cả sửa một ô đơn lẻ — đều gắn `scheduleId` của bảng, nếu không thì ô vừa xếp sẽ biến mất khỏi lưới ngay sau đó.
+>
+> ⚠ Đánh đổi có ý thức: lịch cũ **vẫn tồn tại và vẫn tính vào bảng công**, chỉ là không hiện ở lưới này. Xếp ca vào một ngày đã có lịch cũ sẽ **thay** ca thật của ngày đó (`upsert` theo cặp nhân viên–ngày, không sinh dòng thứ hai). Muốn nhìn toàn bộ lịch thật của một khoảng ngày thì xem lưới ngoài phạm vi bảng.
+
 **Xoá bảng** xoá luôn toàn bộ lịch ca của bảng đó, trong một transaction. Chặn theo **BR-07** khi tháng của bảng đã thuộc kỳ lương đã chốt. **Bỏ CBNV khỏi bảng** cũng xoá lịch ca của họ trong bảng — nếu không, bảng công cuối tháng vẫn tính theo ca cũ dù họ không còn nằm trong bảng nào.
 
 **Combo phòng ban hiển thị cây cha con** ở mọi màn (`DepartmentTreeSelect`). Danh sách phẳng đọc được khi công ty có sáu phòng ban; tới ba cấp thì "Tổ 1" và "Tổ 2" nằm cạnh nhau mà không cho biết chúng thuộc khối nào.
+
+> **Chọn một phòng ban luôn bao hàm cấp dưới của nó.** Combo nhiều phòng ban chọn theo cụm: tích một khối là tích luôn mọi phòng bên dưới, và khối chỉ hiện là đã tích khi mọi phòng con đều được tích. Mọi chỗ *dùng* phạm vi đó — lấy thành viên lúc lập bảng, lọc lưới chi tiết, đếm "Toàn bộ CBNV", lọc danh sách nhân viên — đều tính xuống hết cây.
+>
+> Không có luật này thì việc chọn cấp **cao nhất** lại cho phạm vi **hẹp nhất**: nhân viên gắn ở lá của cây, nút cha thường không có ai đứng trực tiếp (công ty mẫu: khối gốc 0 người, cả 4 người ở ba phòng con). Lập bảng cho cả công ty sẽ ra bảng rỗng, và không có lỗi nào được ném ra để giải thích.
+>
+> Riêng **bộ lọc tìm bảng** ở màn danh sách đi cả hai chiều: lọc theo một tổ phải thấy bảng lập cho khối chứa tổ đó, vì bảng ấy có người của tổ trong đó. Tìm khác với áp dụng — chiều lên chỉ dùng để *tìm*, không bao giờ dùng để *kéo người vào bảng*.
+>
+> Ở màn chi tiết, bộ lọc phòng ban chỉ cho chọn **các phòng ban đã chốt lúc lập bảng và cấp dưới của chúng**; tổ tiên vẫn hiện để cây giữ đúng hình nhưng bị khoá.
 
 ### 8.5. Tiêu chí chấp nhận
 
@@ -786,7 +810,7 @@ Danh sách bảng phân ca          →   Chi tiết một bảng
 - [ ] Employee code sinh ra không trùng trong cùng công ty, kể cả khi import 2 người trùng tên trong cùng file.
 - [ ] Nhân viên `TERMINATED` không đăng nhập được, token cũ bị từ chối ngay.
 - [ ] Xoá hồ sơ `PENDING_ACTIVATION` được, xoá hồ sơ `ACTIVE` bị chặn (chỉ được tạm ngưng/chấm dứt).
-- [ ] Tạo bảng phân ca cho phòng ban có 0 nhân viên → chặn tạo hoặc cảnh báo rõ ràng, không tạo bảng rỗng vô nghĩa.
+- [x] Tạo bảng phân ca cho phòng ban có 0 nhân viên → chặn tạo hoặc cảnh báo rõ ràng, không tạo bảng rỗng vô nghĩa. *(Web đếm trước và khoá nút Lưu; Backend chặn bằng `POL_SCHEDULE_NO_MEMBERS`.)*
 - [ ] "Thiết lập ca áp dụng" cho ca có khung giờ giao với ca đã gán trước đó trong cùng ngày → cảnh báo hoặc chặn chồng ca (6.5).
 - [ ] Xoá nhân viên khỏi bảng phân ca ngày 20 → bảng công các ngày 01–19 của nhân viên đó không đổi.
 - [ ] Thêm nhân viên mới vào bảng phân ca đã tồn tại → không tạo bảng phân ca trùng cho cùng phòng ban/tháng.

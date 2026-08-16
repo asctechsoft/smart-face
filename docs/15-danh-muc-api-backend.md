@@ -1484,7 +1484,8 @@ Mọi thao tác ghi đều có `@Audit` — hồ sơ nhân sự quyết định 
 | Query | Ghi chú |
 |---|---|
 | `status` | enum `EmployeeStatus`, **nhận nhiều giá trị** ngăn bằng dấu phẩy: `?status=ACTIVE,PENDING_ACTIVATION` |
-| `departmentId`, `branchId` | lọc |
+| `departmentId` | lọc — **bao gồm cả phòng ban cấp dưới** của id truyền lên |
+| `branchId` | lọc |
 | `q` | tìm theo tên / mã / SĐT |
 | `page`, `pageSize`, `sort` | chuẩn |
 
@@ -1496,6 +1497,8 @@ curl "http://localhost:3000/v1/admin/employees?status=ACTIVE,PENDING_ACTIVATION&
 > ⚠ **Ô chọn nhân viên đừng lọc `status=ACTIVE`.** `PENDING_ACTIVATION` là hồ sơ HR đã tạo nhưng người đó **chưa đăng nhập lần nào** — vẫn là nhân viên thật, vẫn đi làm, vẫn xin nghỉ được. Công ty **mới triển khai** thì toàn bộ nhân sự nằm ở trạng thái này, nên lọc `ACTIVE` cho ra ô chọn **rỗng trơn mà không có lỗi nào báo** — không phải 400, không phải danh sách trống có thông báo, chỉ là một ô gõ vào không ra gì.
 >
 > Dùng `?status=ACTIVE,PENDING_ACTIVATION` (phía Web là hằng `EMPLOYABLE_STATUSES`). `SUSPENDED` và `TERMINATED` cố ý nằm ngoài: tạm ngưng thì không phát sinh công, đã nghỉ việc thì không tạo chứng từ mới.
+
+> `departmentId` mở rộng xuống **toàn bộ cấp dưới** (`withDescendantDepartments`). Nhân viên gắn ở lá của cây phòng ban, nút cha thường không có ai đứng trực tiếp — khớp đúng một id thì chọn khối cha ra danh sách rỗng, và không có lỗi nào báo. Phạm vi của MANAGER **giao** với bộ lọc này chứ không ghi đè, nên bộ lọc vẫn chỉ thu hẹp, không bao giờ nới rộng.
 
 ---
 
@@ -1915,6 +1918,24 @@ curl -X POST http://localhost:3000/v1/admin/shift-assignments/bulk \
 | `from`–`to` nằm trong tháng của bảng | `POL_SCHEDULE_OUT_OF_PERIOD` |
 | nhân viên là thành viên của bảng | lọc bỏ, trả về trong `skippedEmployeeIds` |
 
+##### Nhiều ca một ngày
+
+Một `(nhân viên, ngày)` mang được **nhiều ca**, điều kiện duy nhất là **khung giờ không giao nhau**. Endpoint này **THÊM** ca chứ không thay ca cũ; xếp lại đúng ca đang có là ghi đè bình thường, không tính là tự đè lên chính nó.
+
+Ô nào trùng giờ thì **bỏ qua đúng ô đó** và báo về trong `conflicts` (tối đa 20 dòng đầu, `conflictCount` là tổng thật) — không huỷ cả lượt xếp, vì một ngày vướng không phải lý do để bỏ cả tháng:
+
+```json
+{ "assigned": 20, "employeeCount": 1, "dayCount": 22, "skippedEmployeeIds": [],
+  "conflicts": [{ "employeeId": "emp_01J...", "workDate": "2026-09-07", "shiftName": "Hành chính" }],
+  "conflictCount": 2 }
+```
+
+Phép so soi **cả ngày trước và ngày sau**: ca đêm 22:00–06:00 của hôm trước còn chạy tới 6 giờ sáng hôm nay. Ca **linh hoạt** không khai giờ nên bị coi là chiếm trọn ngày. Chạm đầu–cuối (12:00 và 12:00) **không** tính là giao. Logic nằm ở `shift-overlap.util.ts` — database không diễn đạt được ràng buộc này vì phải đọc khung giờ bên bảng `shift` và ca qua đêm còn tràn sang ngày sau; khoá duy nhất `(employeeId, workDate, shiftId)` chỉ chặn xếp trùng đúng một ca hai lần.
+
+> ⚠ **Máy tính công và chấm công vẫn chỉ đọc MỘT ca mỗi ngày** — `resolveShiftForDate` lấy ca có `startTime` **sớm nhất** (thứ tự tiền định, `NULL` xuống cuối nên ca linh hoạt chỉ được chọn khi không còn ca nào khác). Các ca sau chưa cộng vào giờ công. Web hiện cảnh báo đếm số ngày có nhiều hơn một ca.
+
+`POST /shift-assignments/clear` nhận thêm `shiftId` tuỳ chọn: chỉ xoá đúng ca đó, bỏ trống = xoá mọi ca trong khoảng. Cần từ khi một ngày mang nhiều ca — bỏ ca chiều mà kéo theo cả ca sáng là xoá mất phần việc người dùng không hề động tới.
+
 ---
 
 ### Bảng phân ca (`FR-WEB-HR-13`)
@@ -1925,11 +1946,13 @@ Bảng phân ca là **đơn vị công việc** của người xếp lịch ("b�
 
 Lọc theo `month` (`YYYY-MM-DD`, tự chuẩn hoá về ngày 01) và `departmentId`. MANAGER chỉ thấy bảng có chạm tới phòng ban mình quản lý.
 
+> `departmentId` ở đây mở rộng **cả hai chiều** trên cây phòng ban (`relatedDepartmentIds`): lọc theo một khối ra cả bảng lập riêng cho từng tổ bên dưới, lọc theo một tổ ra cả bảng lập cho khối chứa tổ đó — bảng ấy có người của tổ trong đó. Đây là bộ lọc *tìm*, nên rộng là đúng; các endpoint *áp dụng* phạm vi (lập bảng, lưới chi tiết) chỉ đi xuống.
+
 #### `POST /v1/admin/shift-schedules` — Lập bảng 🔒 📝audit
 
 | Trường | Ghi chú |
 |---|---|
-| `departmentIds` | bắt buộc, ≥1. **Toàn bộ CBNV đang làm việc** của các phòng này được đưa vào bảng, chưa xếp ca |
+| `departmentIds` | bắt buộc, ≥1. **Toàn bộ CBNV đang làm việc** của các phòng này **và cấp dưới của chúng** được đưa vào bảng, chưa xếp ca |
 | `shiftIds` | bắt buộc, ≥1. Phạm vi ca dùng được trong bảng |
 | `periodMonth` | ngày bất kỳ trong tháng, service chuẩn hoá về ngày 01 |
 | `name` | bỏ trống = `Bảng phân ca Tháng MM/YYYY` |
@@ -1951,6 +1974,10 @@ curl -X POST http://localhost:3000/v1/admin/shift-schedules \
 > bảng cùng tháng sẽ tranh nhau ghi vào cùng ô, bảng lưu sau đè bảng lưu trước —
 > và màn chi tiết của bảng kia hiển thị ca mà nó không hề xếp.
 
+> ⚠ **Không lập được bảng rỗng** (docs/04 mục 8.5). Phòng ban đã chọn — kể cả cấp dưới — không có CBNV `ACTIVE`/`PENDING_ACTIVATION` nào → `POL_SCHEDULE_NO_MEMBERS`, kèm tên các phòng ban trong `details.departments`. Bảng rỗng vẫn **giữ chỗ** cho tháng đó, nên người lập sau thấy "đã có bảng" mà lưới chi tiết trống trơn và không có gì giải thích.
+>
+> Web đếm trước bằng `_count.employees` của `GET /admin/departments` (đã lọc sẵn theo hai trạng thái trên, **chỉ đếm người đứng trực tiếp** ở phòng ban đó — muốn cả nhánh thì cộng theo cây) và khoá nút Lưu trước khi gọi API.
+
 #### `DELETE /v1/admin/shift-schedules/:id` 🔒 📝audit
 
 Xoá bảng **và toàn bộ lịch ca do nó xếp**, trong một transaction. Trả về `{ deleted, removedAssignments, removedMembers }`.
@@ -1967,6 +1994,12 @@ Cả hai nhận `{ "employeeIds": [...] }`. Bỏ CBNV **xoá luôn lịch ca c�
 > Dùng `POST .../remove` chứ không `DELETE`: danh sách id đi trong body, mà body của `DELETE` bị nhiều proxy và thư viện HTTP cắt bỏ âm thầm — request tới nơi với body rỗng sẽ bỏ nhầm không ai, hoặc tuỳ cách viết, bỏ hết cả bảng.
 
 `GET /v1/admin/shift-assignments` nhận thêm `scheduleId`: dòng của bảng khi đó là **thành viên đã chốt** của bảng, không phải "ai đang thuộc phòng ban này" — hai thứ đó lệch nhau ngay khi có người chuyển phòng giữa tháng.
+
+> Có `scheduleId` thì lịch trả về **chỉ gồm lượt do đúng bảng đó xếp** — bảng vừa lập luôn cho lưới trắng. Không lọc thì một tháng đã có lịch cũ (dựng trước khi có phân hệ này, hoặc do API ghi thẳng — dữ liệu thật có 88 lượt `scheduleId = null`) sẽ làm bảng chưa xếp gì hiện ra đầy ca, đọc thành "hệ thống tự ý phân ca". Bỏ trống `scheduleId` = xem lịch thật của cả khoảng ngày, không lọc.
+>
+> ⚠ Lịch cũ **vẫn tồn tại và vẫn tính vào bảng công**, chỉ là không hiện trong lưới của bảng. Xếp ca vào ngày đã có lịch cũ sẽ **thay** ca thật của ngày đó — `upsert` theo cặp (nhân viên, ngày), không sinh dòng thứ hai. Mỗi ô vẫn kèm `scheduleId` trong phản hồi để client kiểm chứng.
+>
+> `POST /shift-assignments/bulk` **luôn phải gửi `scheduleId`** khi thao tác từ trong một bảng, kể cả khi chỉ sửa một ô: thiếu nó thì lượt vừa xếp không thuộc bảng nào, xoá bảng không dọn được nó, và lần mở sau nó hiện lên như ca có sẵn.
 
 ---
 
@@ -2805,11 +2838,11 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | DELETE | `/shifts/:id` | HR/ADMIN 📝 | Xoá ca (soft) |
 | GET | `/shift-assignments` | MGR/HR/ADMIN | Bảng phân ca theo khoảng ngày (`FR-WEB-HR-03`) |
 | POST | `/shift-assignments/bulk` | MGR/HR/ADMIN 📝 | Phân ca hàng loạt |
-| POST | `/shift-assignments/clear` | MGR/HR/ADMIN 📝 | Xoá phân ca trong một khoảng ngày |
+| POST | `/shift-assignments/clear` | MGR/HR/ADMIN 📝 | Xoá phân ca trong một khoảng ngày (`shiftId` = chỉ xoá một ca) |
 | GET | `/shift-schedules` | MGR/HR/ADMIN | Danh sách bảng phân ca (`FR-WEB-HR-13`) |
 | GET | `/shift-schedules/:id` | MGR/HR/ADMIN | Chi tiết một bảng |
 | POST | `/shift-schedules` | MGR/HR/ADMIN 📝 | Lập bảng phân ca |
-| PATCH | `/shift-schedules/:id` | MGR/HR/ADMIN 📝 | Sửa tên / phạm vi |
+| PATCH | `/shift-schedules/:id` | MGR/HR/ADMIN 📝 | Sửa tên / phạm vi — **Web Quản lý không gọi** (xem docs/04 mục 8.4) |
 | DELETE | `/shift-schedules/:id` | HR/ADMIN 📝 | Xoá bảng **kèm toàn bộ lịch ca của nó** |
 | POST | `/shift-schedules/:id/members` | MGR/HR/ADMIN 📝 | Thêm CBNV vào bảng |
 | POST | `/shift-schedules/:id/members/remove` | MGR/HR/ADMIN 📝 | Bỏ CBNV **kèm lịch ca của họ trong bảng** |

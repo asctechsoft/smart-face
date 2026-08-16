@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Employee, EmployeeStatus, Prisma, SystemRole } from '@prisma/client';
+import { withDescendantDepartments } from 'src/common/utils';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
@@ -51,7 +52,8 @@ export interface DeviceBindingView {
 export interface EmployeeSearchFilter {
   /** Một hoặc nhiều trạng thái. Bỏ trống = mọi trạng thái chưa xoá mềm. */
   status?: EmployeeStatus[];
-  departmentId?: string;
+  /** Phòng ban đã chọn kèm cấp dưới — service gọi `expandDepartmentIds` trước. */
+  departmentIds?: string[];
   branchId?: string;
   /** Phạm vi phòng ban của MANAGER — do guard áp, không lấy từ query. */
   departmentScope: string[] | null;
@@ -124,10 +126,19 @@ export class EmployeeRepository extends BaseRepository {
     // Mảng rỗng KHÔNG được rơi vào `in: []` — Prisma dịch thành 0 dòng, tức là
     // gửi `?status=` (rỗng) sẽ trả về danh sách trắng thay vì bỏ qua bộ lọc.
     if (filter.status?.length) where.status = { in: filter.status };
-    if (filter.departmentId) where.departmentId = filter.departmentId;
     if (filter.branchId) where.branchId = filter.branchId;
-    // Phạm vi của MANAGER ghi đè bộ lọc do client gửi lên — thu hẹp, không mở rộng.
-    if (filter.departmentScope) where.departmentId = { in: filter.departmentScope };
+
+    // Phạm vi của MANAGER thu hẹp, không mở rộng. GIAO hai tập chứ không ghi đè:
+    // ghi đè thì một MANAGER lọc theo đúng một phòng trong quyền của mình vẫn
+    // nhận về cả phạm vi, tức là bộ lọc họ vừa chọn im lặng không có tác dụng.
+    const picked = filter.departmentIds?.length ? filter.departmentIds : null;
+    if (picked && filter.departmentScope) {
+      where.departmentId = { in: picked.filter((id) => filter.departmentScope?.includes(id)) };
+    } else if (picked) {
+      where.departmentId = { in: picked };
+    } else if (filter.departmentScope) {
+      where.departmentId = { in: filter.departmentScope };
+    }
     if (filter.q) {
       where.OR = [
         { fullName: { contains: filter.q, mode: 'insensitive' } },
@@ -264,6 +275,17 @@ export class EmployeeRepository extends BaseRepository {
       where: { companyId, deletedAt: null },
       select: { id: true, name: true },
     });
+  }
+
+  /** Phòng ban đã chọn kèm toàn bộ cấp dưới — xem `withDescendantDepartments`. */
+  async expandDepartmentIds(companyId: string, departmentIds: string[]): Promise<string[]> {
+    if (departmentIds.length === 0) return [];
+
+    const all = await this.db().department.findMany({
+      where: { companyId, deletedAt: null },
+      select: { id: true, parentId: true },
+    });
+    return withDescendantDepartments(all, departmentIds);
   }
 
   // ===========================================================================

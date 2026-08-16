@@ -498,6 +498,17 @@ export class ClearShiftAssignmentDto {
   @ApiProperty({ example: '2026-08-31' })
   @IsDateString()
   to!: string;
+
+  /**
+   * Chỉ xoá đúng ca này. Bỏ trống = xoá MỌI ca trong khoảng.
+   *
+   * Cần từ khi một ngày mang được nhiều ca: bỏ ca chiều mà kéo theo cả ca sáng
+   * là xoá mất phần việc người dùng không hề động tới.
+   */
+  @ApiPropertyOptional({ description: 'Chỉ xoá đúng ca này; bỏ trống = xoá mọi ca trong khoảng' })
+  @IsOptional()
+  @IsString()
+  shiftId?: string;
 }
 
 // =============================================================================

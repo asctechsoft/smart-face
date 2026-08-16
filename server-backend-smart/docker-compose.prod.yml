@@ -2,7 +2,7 @@
 #  Môi trường `production` trên VPS — dùng cùng Dockerfile với dev, khác ở:
 #    - Không expose Postgres/Redis/MinIO ra host (chỉ nội bộ trong network này).
 #    - Mọi secret đọc từ file `.env` cạnh file này (KHÔNG commit vào git,
-#      tạo một lần trên VPS — xem docs/DEPLOY.md).
+#      tạo một lần trên VPS — xem docs/18-huong-dan-deploy-vps.md mục 3).
 #    - restart: unless-stopped để tự phục hồi khi VPS reboot / container chết.
 #
 #  Chạy:  docker compose -f docker-compose.prod.yml up -d --build
@@ -90,7 +90,8 @@ services:
       WORKER_ENABLED: 'false'
     ports:
       # ⚠ Chưa có Nginx/TLS phía trước — API đang lộ HTTP thẳng ra internet.
-      #   Xem khuyến nghị thêm reverse proxy + Let's Encrypt trong docs/DEPLOY.md.
+      #   Cách bịt (đổi thành '127.0.0.1:3000:3000' + thêm service nginx):
+      #   docs/18-huong-dan-deploy-vps.md mục 7.
       - '3000:3000'
     command: sh -c "npx prisma migrate deploy && node dist/main"
 

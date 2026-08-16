@@ -1,8 +1,9 @@
 name: Deploy Backend (VPS)
 
 # Tự động deploy server-backend-smart lên VPS mỗi khi nhánh main thay đổi
-# trong thư mục đó. Xem server-backend-smart/docs/DEPLOY.md để biết cách
-# cấu hình VPS lần đầu và các secret cần khai trong GitHub.
+# trong thư mục đó. Xem docs/18-huong-dan-deploy-vps.md để biết cách cấu hình
+# VPS lần đầu (mục 2), file .env bắt buộc (mục 3) và các secret cần khai trong
+# GitHub (mục 8).
 on:
   push:
     branches: [main]
@@ -51,7 +52,7 @@ jobs:
             cd "$DEPLOY_DIR/server-backend-smart"
 
             if [ ! -f .env ]; then
-              echo "Thieu server-backend-smart/.env tren VPS - xem docs/DEPLOY.md, dung deploy." >&2
+              echo "Thieu server-backend-smart/.env tren VPS - xem docs/18-huong-dan-deploy-vps.md muc 3, dung deploy." >&2
               exit 1
             fi
 

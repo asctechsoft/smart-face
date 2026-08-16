@@ -4,7 +4,10 @@ import { Alert, Button, DatePicker, Drawer, Radio, Select } from 'antd';
 import { toUserMessage } from '@/lib/errors/api-error';
 import { toWorkDate } from '@/lib/utils/date';
 import { toDayjs } from '@/lib/utils/dayjs';
-import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
+import {
+  DepartmentTreeSelect,
+  useDepartmentDescendants,
+} from '@/components/DepartmentTreeSelect';
 import { useShifts } from '@/features/policy/policy.api';
 import {
   useBulkAssignShifts,
@@ -104,9 +107,17 @@ export function BulkAssignDrawer({
     setEmployeeIds(preselectedIds);
   }, [open, preselectedIds, defaultRange.from, defaultRange.to, allowedDepartmentIds]);
 
-  /** Nhân viên thuộc phòng ban đang chọn — nguồn cho cả hai nhánh "toàn bộ" và "từng người". */
-  const scoped = departmentId
-    ? employees.filter((employee) => employee.department?.id === departmentId)
+  /**
+   * Nhân viên thuộc phòng ban đang chọn — nguồn cho cả hai nhánh "toàn bộ" và
+   * "từng người".
+   *
+   * Tính theo cả CẤP DƯỚI của phòng ban đã chọn: người gắn ở lá của cây, nên so
+   * bằng `=== departmentId` thì chọn một khối cho ra "0 người" và ô "Toàn bộ
+   * CBNV" đếm sai ngay trước mắt người dùng.
+   */
+  const inScope = useDepartmentDescendants(departmentId ? [departmentId] : undefined);
+  const scoped = inScope
+    ? employees.filter((employee) => employee.department && inScope.has(employee.department.id))
     : employees;
 
   const shiftOptions = (shifts.data ?? []).filter(
@@ -142,6 +153,19 @@ export function BulkAssignDrawer({
         toast.warning(
           `Bỏ qua ${result.skippedEmployeeIds.length} nhân viên`,
           'Những người này không thuộc bảng, hoặc ngoài phạm vi phòng ban bạn quản lý.',
+        );
+      }
+      // Trùng giờ thì bỏ qua đúng ô đó chứ không huỷ cả lượt xếp — nhưng phải
+      // nói ra ngày nào vướng ca nào, nếu không người dùng đọc con số "đã xếp"
+      // rồi tưởng cả tháng đã kín.
+      if (result.conflictCount > 0) {
+        const sample = result.conflicts
+          .slice(0, 3)
+          .map((item) => `${item.workDate} (trùng ${item.shiftName})`)
+          .join(', ');
+        toast.warning(
+          `${result.conflictCount} ô không xếp được vì trùng giờ`,
+          `${sample}${result.conflictCount > 3 ? '…' : ''}. Hai ca trong cùng một ngày phải có khung giờ không giao nhau.`,
         );
       }
       onDone();
@@ -262,39 +286,12 @@ export function BulkAssignDrawer({
           </Field>
         </div>
 
-        <Field label="Áp dụng cho">
-          <Radio.Group
-            value={coverage}
-            onChange={(event) => setCoverage(event.target.value as Coverage)}
-            style={{ display: 'grid', gap: 8 }}
-          >
-            <Radio value="ALL">
-              Toàn bộ CBNV
-              <span className="sf-body-sm sf-text-variant" style={{ marginLeft: 8 }}>
-                ({scoped.length} người
-                {departmentId ? ' trong phòng ban đã chọn' : ' trong bảng'})
-              </span>
-            </Radio>
-            <Radio value="PICK">Từng CBNV</Radio>
-          </Radio.Group>
-
-          {coverage === 'PICK' ? (
-            <Select
-              mode="multiple"
-              style={{ width: '100%', marginTop: 8 }}
-              placeholder="Chọn nhân viên"
-              value={employeeIds}
-              onChange={setEmployeeIds}
-              optionFilterProp="label"
-              options={scoped.map((employee) => ({
-                value: employee.id,
-                label: `${employee.fullName} · ${employee.employeeCode}`,
-              }))}
-              aria-label="Danh sách nhân viên được phân ca"
-            />
-          ) : null}
-        </Field>
-
+        {/*
+          Thứ tự các trường bám theo trình tự người dùng quyết định: phòng nào →
+          ca nào → những NGÀY nào (khoảng ngày rồi lọc thứ trong tuần) → cho ai.
+          "Chỉ áp dụng cho các thứ" là phần thu hẹp của khoảng ngày ngay phía
+          trên nó, nên phải đứng liền sau, trước khi chuyển sang chọn người.
+        */}
         <Field label="Chỉ áp dụng cho các thứ">
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {ORDINAL_WEEKDAYS.map((day) => {
@@ -332,11 +329,44 @@ export function BulkAssignDrawer({
           </Hint>
         </Field>
 
+        <Field label="Áp dụng cho">
+          <Radio.Group
+            value={coverage}
+            onChange={(event) => setCoverage(event.target.value as Coverage)}
+            style={{ display: 'grid', gap: 8 }}
+          >
+            <Radio value="ALL">
+              Toàn bộ CBNV
+              <span className="sf-body-sm sf-text-variant" style={{ marginLeft: 8 }}>
+                ({scoped.length} người
+                {departmentId ? ' trong phòng ban đã chọn' : ' trong bảng'})
+              </span>
+            </Radio>
+            <Radio value="PICK">Từng CBNV</Radio>
+          </Radio.Group>
+
+          {coverage === 'PICK' ? (
+            <Select
+              mode="multiple"
+              style={{ width: '100%', marginTop: 8 }}
+              placeholder="Chọn nhân viên"
+              value={employeeIds}
+              onChange={setEmployeeIds}
+              optionFilterProp="label"
+              options={scoped.map((employee) => ({
+                value: employee.id,
+                label: `${employee.fullName} · ${employee.employeeCode}`,
+              }))}
+              aria-label="Danh sách nhân viên được phân ca"
+            />
+          ) : null}
+        </Field>
+
         <Alert
           type="info"
           showIcon
-          message="Phân ca đè lên lịch cũ"
-          description="Ngày nào đã có ca khác sẽ bị thay bằng ca chọn ở đây. Bảng công của những ngày ĐÃ TÍNH không tự đổi theo — muốn áp dụng, chạy lại tính công cho khoảng đó ở màn Kỳ lương."
+          message="Xếp thêm ca, không thay ca cũ"
+          description="Một ngày mang được nhiều ca miễn giờ không giao nhau. Ngày nào đã có ca trùng giờ sẽ bị bỏ qua và báo lại cụ thể — muốn thay ca thì dùng Xoá phân ca trước rồi xếp lại. Bảng công của những ngày ĐÃ TÍNH không tự đổi theo; muốn áp dụng thì chạy lại tính công ở màn Kỳ lương."
         />
       </div>
 

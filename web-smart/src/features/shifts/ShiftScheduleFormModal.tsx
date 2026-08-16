@@ -1,11 +1,29 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, DatePicker, Input, Modal, Select } from 'antd';
 import { Field, useToast } from '@/components/ui';
-import { DepartmentTreeMultiSelect } from '@/components/DepartmentTreeSelect';
+import {
+  DepartmentTreeMultiSelect,
+  useDepartmentAncestors,
+  withAncestorDepartments,
+  withDescendantDepartments,
+} from '@/components/DepartmentTreeSelect';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { useDepartments } from '@/features/shared/org.api';
 import { useShifts } from '@/features/policy/policy.api';
 import { dayjs } from '@/lib/utils/dayjs';
-import { useCreateShiftSchedule, useUpdateShiftSchedule, type ShiftSchedule } from './shifts.api';
+import { useCreateShiftSchedule } from './shifts.api';
+
+/**
+ * Ca có dùng được cho phạm vi phòng ban này không.
+ *
+ * `null` = chưa chọn phòng ban nào, khi đó hiện mọi ca: danh sách rỗng ở bước
+ * đầu đọc như "công ty chưa khai ca nào" và làm người dùng đi tìm nhầm chỗ.
+ * Ca không khai phòng ban nào là ca dùng chung, luôn hợp lệ.
+ */
+function shiftFits(shift: { departmentIds: string[] }, scope: Set<string> | null): boolean {
+  if (!scope) return true;
+  return shift.departmentIds.length === 0 || shift.departmentIds.some((id) => scope.has(id));
+}
 
 /** "Bảng phân ca Tháng 08/2026" — khớp đúng chuỗi Backend tự sinh khi bỏ trống tên. */
 export function defaultScheduleName(periodMonth: string): string {
@@ -14,12 +32,17 @@ export function defaultScheduleName(periodMonth: string): string {
 }
 
 /**
- * Tham số lập bảng phân ca — FR-WEB-HR-13.
+ * Tham số LẬP bảng phân ca — FR-WEB-HR-13.
  *
  * Ba trường đầu là PHẠM VI của bảng, chốt một lần tại đây: mọi thao tác trong
  * màn chi tiết (lọc, phân ca hàng loạt) chỉ chạy trong phạm vi này. Nhờ vậy
  * người xếp lịch không phải chọn lại phòng ban và ca ở từng bước, và cũng không
  * vô tình xếp ca của phòng khác vào bảng của mình.
+ *
+ * Chỉ dùng để LẬP MỚI. Sửa tham số của một bảng đã lập không có ở giao diện:
+ * phạm vi đã chốt kéo theo danh sách thành viên và toàn bộ lịch đã xếp, nên nới
+ * hay thu hẹp nó sau đó chỉ đổi bộ lọc chứ không đổi dữ liệu — hai thứ lệch
+ * nhau đọc như một lỗi. Muốn đổi phạm vi thì xoá bảng và lập lại.
  *
  * Combo ca **lọc theo phòng ban đã chọn**: danh mục ca có trường "Phòng ban áp
  * dụng", và hiện cả những ca không dành cho phòng này chỉ tạo cơ hội chọn nhầm.
@@ -27,19 +50,16 @@ export function defaultScheduleName(periodMonth: string): string {
  */
 export function ShiftScheduleFormModal({
   open,
-  editing,
   onClose,
 }: {
   open: boolean;
-  /** Có giá trị = sửa bảng đã có. Kỳ lập bảng khi đó không đổi được. */
-  editing: ShiftSchedule | null;
   onClose: () => void;
 }) {
   const toast = useToast();
   const showError = useErrorToast();
+  const departments = useDepartments();
   const shifts = useShifts();
   const create = useCreateShiftSchedule();
-  const update = useUpdateShiftSchedule();
 
   const [departmentIds, setDepartmentIds] = useState<string[]>([]);
   const [shiftIds, setShiftIds] = useState<string[]>([]);
@@ -50,59 +70,59 @@ export function ShiftScheduleFormModal({
 
   useEffect(() => {
     if (!open) return;
-    if (editing) {
-      setDepartmentIds(editing.departmentIds);
-      setShiftIds(editing.shiftIds);
-      setPeriodMonth(editing.periodMonth);
-      setName(editing.name);
-      setNameTouched(true);
-    } else {
-      const month = dayjs().format('YYYY-MM-01');
-      setDepartmentIds([]);
-      setShiftIds([]);
-      setPeriodMonth(month);
-      setName(defaultScheduleName(month));
-      setNameTouched(false);
-    }
-  }, [open, editing]);
+    const month = dayjs().format('YYYY-MM-01');
+    setDepartmentIds([]);
+    setShiftIds([]);
+    setPeriodMonth(month);
+    setName(defaultScheduleName(month));
+    setNameTouched(false);
+  }, [open]);
 
   /**
-   * Ca hợp lệ cho các phòng ban đang chọn.
-   *
-   * Chưa chọn phòng ban nào thì hiện tất cả — danh sách rỗng ở bước đầu đọc như
-   * "công ty chưa khai ca nào", sai và làm người dùng đi tìm nhầm chỗ.
+   * Ca hợp lệ cho các phòng ban đang chọn — đối chiếu với cả cấp TRÊN của
+   * chúng, vì ca khai cho toàn công ty đương nhiên dùng được cho một tổ trong
+   * công ty đó.
    */
-  const shiftOptions = (shifts.data ?? []).filter(
-    (shift) =>
-      departmentIds.length === 0 ||
-      shift.departmentIds.length === 0 ||
-      shift.departmentIds.some((id) => departmentIds.includes(id)),
-  );
+  const shiftScope = useDepartmentAncestors(departmentIds);
+  const shiftOptions = (shifts.data ?? []).filter((shift) => shiftFits(shift, shiftScope));
 
   function changeMonth(next: string) {
     setPeriodMonth(next);
     if (!nameTouched) setName(defaultScheduleName(next));
   }
 
-  const canSave = departmentIds.length > 0 && shiftIds.length > 0 && Boolean(name.trim());
+  /**
+   * Số CBNV sẽ được đưa vào bảng, đếm TRƯỚC khi bấm Lưu.
+   *
+   * Không có con số này thì phòng ban rỗng vẫn lập được bảng, và người dùng chỉ
+   * phát hiện khi mở lưới chi tiết ra thấy trống — không có gì trên màn hình
+   * giải thích vì sao. Backend cũng từ chối (`POL_SCHEDULE_NO_MEMBERS`), nhưng
+   * biết trước lúc chọn vẫn hơn biết sau khi bấm.
+   */
+  const memberPreview = useMemo(() => {
+    const all = departments.data ?? [];
+    const byId = new Map(all.map((d) => [d.id, d]));
+    return withDescendantDepartments(all, departmentIds).reduce(
+      (total, id) => total + (byId.get(id)?._count?.employees ?? 0),
+      0,
+    );
+  }, [departments.data, departmentIds]);
+
+  const canSave =
+    departmentIds.length > 0 && shiftIds.length > 0 && Boolean(name.trim()) && memberPreview > 0;
 
   async function submit() {
     try {
-      if (editing) {
-        await update.mutateAsync({ id: editing.id, name: name.trim(), departmentIds, shiftIds });
-        toast.success('Đã lưu bảng phân ca');
-      } else {
-        const created = await create.mutateAsync({
-          departmentIds,
-          shiftIds,
-          periodMonth,
-          name: name.trim(),
-        });
-        toast.success(
-          `Đã lập ${created.name}`,
-          `${created.memberCount} nhân viên được đưa vào bảng, chưa xếp ca.`,
-        );
-      }
+      const created = await create.mutateAsync({
+        departmentIds,
+        shiftIds,
+        periodMonth,
+        name: name.trim(),
+      });
+      toast.success(
+        `Đã lập ${created.name}`,
+        `${created.memberCount} nhân viên được đưa vào bảng, chưa xếp ca.`,
+      );
       onClose();
     } catch (caught) {
       showError(caught);
@@ -113,10 +133,10 @@ export function ShiftScheduleFormModal({
     <Modal
       open={open}
       onCancel={onClose}
-      title={editing ? `Sửa ${editing.name}` : 'Lập bảng phân ca'}
-      okText={editing ? 'Lưu' : 'Lập bảng'}
+      title="Lập bảng phân ca"
+      okText="Lập bảng"
       cancelText="Huỷ bỏ"
-      okButtonProps={{ loading: create.isPending || update.isPending, disabled: !canSave }}
+      okButtonProps={{ loading: create.isPending, disabled: !canSave }}
       width={640}
       destroyOnClose
       onOk={() => void submit()}
@@ -130,21 +150,38 @@ export function ShiftScheduleFormModal({
               setDepartmentIds(ids);
               // Bỏ ca không còn hợp lệ với phòng ban vừa chọn, thay vì để lại
               // một lựa chọn mà chính form này không cho chọn lại.
+              //
+              // Phạm vi phải tính từ `ids` — tham số của chính sự kiện này —
+              // chứ không từ `shiftScope`: state vừa `set` ở dòng trên chỉ có
+              // giá trị mới ở lần render sau.
+              const scope = ids.length
+                ? new Set(withAncestorDepartments(departments.data ?? [], ids))
+                : null;
               setShiftIds((prev) =>
                 prev.filter((id) => {
                   const shift = (shifts.data ?? []).find((s) => s.id === id);
-                  if (!shift) return false;
-                  return (
-                    ids.length === 0 ||
-                    shift.departmentIds.length === 0 ||
-                    shift.departmentIds.some((d) => ids.includes(d))
-                  );
+                  return shift ? shiftFits(shift, scope) : false;
                 }),
               );
             }}
             placeholder="Chọn một hoặc nhiều phòng ban"
           />
-          <Hint>Toàn bộ CBNV đang làm việc của các phòng ban này sẽ được đưa vào bảng.</Hint>
+          {departmentIds.length === 0 ? (
+            <Hint>
+              Toàn bộ CBNV đang làm việc của các phòng ban này — kể cả các phòng ban cấp dưới — sẽ
+              được đưa vào bảng.
+            </Hint>
+          ) : memberPreview > 0 ? (
+            <Hint>
+              Sẽ đưa <strong>{memberPreview} CBNV</strong> đang làm việc vào bảng (đã tính cả phòng
+              ban cấp dưới), chưa xếp ca gì.
+            </Hint>
+          ) : (
+            <p className="sf-body-sm" style={{ margin: '4px 0 0', color: 'var(--sf-error)' }}>
+              Các phòng ban này chưa có CBNV nào đang làm việc — bảng lập ra sẽ trống và không xếp
+              được ca cho ai. Chọn phòng ban khác, hoặc thêm nhân viên vào phòng ban trước.
+            </p>
+          )}
         </Field>
 
         <Field label="Ca làm việc được dùng" htmlFor="sf-shifts" required>
@@ -178,13 +215,9 @@ export function ShiftScheduleFormModal({
             allowClear={false}
             format="MM/YYYY"
             style={{ width: '100%' }}
-            disabled={Boolean(editing)}
             value={dayjs(periodMonth)}
             onChange={(date) => date && changeMonth(date.format('YYYY-MM-01'))}
           />
-          {editing ? (
-            <Hint>Kỳ lập bảng không đổi được — lịch ca đã xếp gắn với đúng tháng này.</Hint>
-          ) : null}
         </Field>
 
         <Field label="Tên bảng phân ca" htmlFor="sf-name" required>
@@ -198,21 +231,12 @@ export function ShiftScheduleFormModal({
           />
         </Field>
 
-        {editing ? (
-          <Alert
-            type="warning"
-            showIcon
-            message="Thu hẹp phạm vi không tự bỏ người ra khỏi bảng"
-            description="Bỏ bớt phòng ban ở đây chỉ đổi bộ lọc của màn chi tiết. Muốn bỏ hẳn ai đó khỏi bảng thì dùng chức năng Bỏ khỏi bảng trong màn chi tiết — thao tác đó xoá luôn lịch ca của họ."
-          />
-        ) : (
-          <Alert
-            type="info"
-            showIcon
-            message="Mỗi người mỗi tháng chỉ thuộc một bảng"
-            description="Nếu có ai đó đã nằm trong bảng khác của cùng tháng, hệ thống sẽ báo tên cụ thể và không lập bảng."
-          />
-        )}
+        <Alert
+          type="info"
+          showIcon
+          message="Mỗi người mỗi tháng chỉ thuộc một bảng"
+          description="Nếu có ai đó đã nằm trong bảng khác của cùng tháng, hệ thống sẽ báo tên cụ thể và không lập bảng."
+        />
       </div>
     </Modal>
   );

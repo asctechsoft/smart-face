@@ -98,6 +98,117 @@ describe('Bảng phân ca', () => {
   });
 
   /**
+   * docs/04 mục 8.5 — "không tạo bảng rỗng vô nghĩa".
+   *
+   * Bảng rỗng không báo lỗi gì mà vẫn GIỮ CHỖ: tháng đó phòng ban đó coi như đã
+   * có bảng, người lập mở lưới chi tiết ra thấy trống trơn và không có gì trên
+   * màn hình giải thích. Đây là đúng tình huống đã xảy ra với phòng "Kinh doanh"
+   * (0 nhân viên) trên dữ liệu thật.
+   */
+  describe('không lập bảng rỗng', () => {
+    const repositoryWith = (employeeIds: string[]) => ({
+      findShift: jest.fn().mockResolvedValue({ id: 'shift_hc' }),
+      expandDepartmentIds: jest.fn().mockResolvedValue(['dept_kd']),
+      findAssignableEmployeeIdsInDepartments: jest.fn().mockResolvedValue(employeeIds),
+      findDepartmentNames: jest.fn().mockResolvedValue(['Kinh doanh']),
+      findMembersTakenInMonth: jest.fn().mockResolvedValue([]),
+    });
+
+    const create = (repository: object) =>
+      new PolicyAdminService(repository as never, {} as never, {} as never).createShiftSchedule(
+        'cmp_1',
+        { departmentIds: ['dept_kd'], shiftIds: ['shift_hc'], periodMonth: '2026-08-01' } as never,
+        'usr_1',
+        null,
+      );
+
+    it('từ chối khi phòng ban không có ai đang làm việc', async () => {
+      await expect(create(repositoryWith([]))).rejects.toMatchObject({
+        code: 'POL_SCHEDULE_NO_MEMBERS',
+      });
+    });
+
+    /** Id trần không nói được gì với người đang đứng trước màn hình. */
+    it('nêu tên phòng ban trong lỗi', async () => {
+      await expect(create(repositoryWith([]))).rejects.toMatchObject({
+        details: { departments: ['Kinh doanh'] },
+      });
+    });
+
+    /**
+     * Khối cha có 0 người đứng TRỰC TIẾP nhưng có người ở phòng con vẫn phải lập
+     * được — chặn nhầm ở đây thì không ai lập nổi bảng cho cả công ty.
+     */
+    it('không chặn nhầm khi người nằm ở phòng ban cấp dưới', async () => {
+      const repository = repositoryWith(['emp_1']);
+      // Đi tiếp tới bước ghi rồi ngã ở đó vì transaction không được mock — điều
+      // cần khẳng định là luật "bảng rỗng" KHÔNG chặn, nên soi đúng dấu vết của
+      // nhánh đó thay vì so kiểu lỗi cuối cùng.
+      await create(repository).catch(() => undefined);
+      expect(repository.findDepartmentNames).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Lưới của một bảng CHỈ hiện lịch do chính bảng đó xếp.
+   *
+   * Một tháng có thể đã có lịch ca dựng từ trước khi có phân hệ bảng phân ca
+   * (dữ liệu thật: 88 lượt `scheduleId = null`). Lấy theo khoảng ngày mà không
+   * lọc theo bảng thì một bảng vừa lập xong, chưa ai xếp gì, mở ra đã kín ca —
+   * đọc thành "hệ thống tự ý phân ca".
+   */
+  describe('lưới chỉ hiện lịch của chính bảng', () => {
+    const repositoryFor = (query: { scheduleId?: string }) => {
+      const repository = {
+        findShiftSchedule: jest.fn().mockResolvedValue(schedule()),
+        findScheduleMemberIds: jest.fn().mockResolvedValue(['emp_1']),
+        searchAssignableEmployees: jest
+          .fn()
+          .mockResolvedValue({ items: [{ id: 'emp_1' }], total: 1 }),
+        findShiftAssignments: jest.fn().mockResolvedValue([]),
+        listHolidays: jest.fn().mockResolvedValue([]),
+        expandDepartmentIds: jest.fn().mockResolvedValue([]),
+      };
+      const board = new PolicyAdminService(
+        repository as never,
+        {} as never,
+        {} as never,
+      ).getShiftBoard(
+        'cmp_1',
+        { from: '2026-08-01', to: '2026-08-31', page: 1, pageSize: 25, ...query } as never,
+        null,
+      );
+      return { repository, board };
+    };
+
+    it('lọc lịch theo đúng bảng đang mở', async () => {
+      const { repository, board } = repositoryFor({ scheduleId: 'sch_1' });
+      await board;
+      // Tham số cuối là `scheduleId` — đây chính là chốt giữ cho lưới trắng.
+      expect(repository.findShiftAssignments).toHaveBeenCalledWith(
+        'cmp_1',
+        ['emp_1'],
+        expect.any(Date),
+        expect.any(Date),
+        'sch_1',
+      );
+    });
+
+    /** Màn xem lịch chung không gắn bảng nào thì vẫn phải thấy toàn bộ lịch. */
+    it('không lọc khi xem ngoài phạm vi một bảng', async () => {
+      const { repository, board } = repositoryFor({});
+      await board;
+      expect(repository.findShiftAssignments).toHaveBeenCalledWith(
+        'cmp_1',
+        ['emp_1'],
+        expect.any(Date),
+        expect.any(Date),
+        undefined,
+      );
+    });
+  });
+
+  /**
    * `TransformInterceptor` nhận diện phản hồi phân trang bằng `instanceof`, nên
    * trả về một object CÙNG HÌNH DẠNG `{ items, meta }` là không đủ — cả cụm sẽ
    * chui vào `data` và phía Web nhận một object ở chỗ nó chờ một mảng, làm

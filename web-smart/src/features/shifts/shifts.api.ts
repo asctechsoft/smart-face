@@ -17,6 +17,11 @@ export interface ShiftAssignmentCell {
   shiftId: string;
   /** `YYYY-MM-DD` theo lịch công ty — Backend đã quy đổi, KHÔNG phải ISO datetime. */
   workDate: string;
+  /**
+   * Bảng phân ca đã xếp lượt này. `null` = lịch có sẵn từ trước khi có bảng,
+   * hoặc do API xếp thẳng — **không phải** việc bảng đang mở đã làm.
+   */
+  scheduleId: string | null;
 }
 
 export interface ShiftBoard {
@@ -106,14 +111,10 @@ export function useCreateShiftSchedule() {
   });
 }
 
-export function useUpdateShiftSchedule() {
-  const invalidate = useInvalidateBoard();
-  return useMutation({
-    mutationFn: ({ id, ...payload }: { id: string } & Partial<CreateSchedulePayload>) =>
-      api.patch<ShiftSchedule>(`/admin/shift-schedules/${id}`, payload),
-    onSuccess: () => void invalidate(),
-  });
-}
+// Cố ý KHÔNG có binding cho `PATCH /admin/shift-schedules/:id`. Endpoint vẫn
+// tồn tại phía Backend, nhưng Web không cho sửa tham số của bảng đã lập: phạm vi
+// đã chốt kéo theo danh sách thành viên và toàn bộ lịch đã xếp, nên sửa nó về
+// sau chỉ đổi bộ lọc chứ không đổi dữ liệu — hai thứ lệch nhau đọc như một lỗi.
 
 export function useDeleteShiftSchedule() {
   const invalidate = useInvalidateBoard();
@@ -155,6 +156,12 @@ export interface BulkAssignResult {
   employeeCount: number;
   dayCount: number;
   skippedEmployeeIds: string[];
+  /**
+   * Những ô không xếp được vì giờ ca giao với ca đã có. Tối đa 20 dòng đầu —
+   * `conflictCount` mới là tổng thật.
+   */
+  conflicts: { employeeId: string; workDate: string; shiftName: string }[];
+  conflictCount: number;
 }
 
 /**
@@ -196,7 +203,13 @@ export function useBulkAssignShifts() {
 export function useClearShiftAssignments() {
   const invalidate = useInvalidateBoard();
   return useMutation({
-    mutationFn: (payload: { employeeIds: string[]; from: string; to: string }) =>
+    mutationFn: (payload: {
+      employeeIds: string[];
+      from: string;
+      to: string;
+      /** Chỉ xoá đúng ca này. Bỏ trống = xoá mọi ca trong khoảng. */
+      shiftId?: string;
+    }) =>
       api.post<{ deleted: number; employeeCount: number }>(
         '/admin/shift-assignments/clear',
         payload,

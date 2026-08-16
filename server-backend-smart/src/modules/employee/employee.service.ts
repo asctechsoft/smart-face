@@ -69,7 +69,11 @@ export class EmployeeService {
   async list(companyId: string, query: EmployeeQueryDto, departmentScope: string[] | null) {
     const { items, total } = await this.employees.search(companyId, {
       status: query.status,
-      departmentId: query.departmentId,
+      // Lọc theo một khối phải ra người của mọi tổ bên dưới khối đó: nhân viên
+      // gắn ở lá của cây, nút cha thường không có ai đứng trực tiếp.
+      departmentIds: query.departmentId
+        ? await this.employees.expandDepartmentIds(companyId, [query.departmentId])
+        : undefined,
       branchId: query.branchId,
       departmentScope,
       q: query.q,
