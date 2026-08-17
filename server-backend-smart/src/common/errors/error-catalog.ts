@@ -538,6 +538,51 @@ export const ERROR_CATALOG = {
     retryable: false,
   },
 
+  // --- Bảng chấm công (FR-WEB-ATT-08) ---------------------------------------
+  ATT_SHEET_NOT_FOUND: {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Không tìm thấy bảng chấm công.',
+    messageEn: 'Attendance sheet not found.',
+    retryable: false,
+  },
+  /**
+   * Cùng lý do với `POL_SCHEDULE_EMPLOYEE_TAKEN`, ở tầng chấm công: hai bảng
+   * cùng chứa một người trong cùng kỳ nghĩa là cùng một ngày công được rà soát
+   * và chốt hai lần ở hai nơi.
+   */
+  ATT_SHEET_EMPLOYEE_TAKEN: {
+    status: HttpStatus.CONFLICT,
+    message: 'Có nhân viên đã nằm trong một bảng chấm công khác của tháng này.',
+    messageEn: 'Some employees already belong to another attendance sheet for this month.',
+    hint: 'Mỗi người mỗi tháng chỉ thuộc một bảng chấm công. Bỏ họ khỏi bảng cũ, hoặc chọn phòng ban khác.',
+    retryable: true,
+  },
+  ATT_SHEET_NO_MEMBERS: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Không tìm thấy CBNV nào để đưa vào bảng chấm công.',
+    messageEn: 'No employees found for this attendance sheet.',
+    hint: 'Lập bảng phân ca cho tháng và phòng ban này trước, hoặc kiểm tra lại phòng ban đã chọn có nhân sự đang làm việc không.',
+    retryable: true,
+  },
+  ATT_SHEET_OUT_OF_PERIOD: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Khoảng ngày nằm ngoài kỳ của bảng chấm công.',
+    messageEn: 'The date range falls outside the attendance sheet period.',
+    hint: 'Bảng chấm công chỉ hiển thị đúng tháng đã lập.',
+    retryable: true,
+  },
+  /**
+   * Bảng đã chốt là dữ liệu đã bàn giao cho tính lương. Sửa thành viên hay hiệu
+   * chỉnh công sau đó làm số liệu lệch khỏi bản kế toán đã nhận.
+   */
+  ATT_SHEET_CLOSED: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Bảng chấm công đã chốt nên không sửa được.',
+    messageEn: 'This attendance sheet is closed.',
+    hint: 'Mở lại bảng trước khi sửa, nếu kỳ lương của tháng đó chưa chốt.',
+    retryable: false,
+  },
+
   // ==========================================================================
   //  FRAUD_ — Chống gian lận
   // ==========================================================================

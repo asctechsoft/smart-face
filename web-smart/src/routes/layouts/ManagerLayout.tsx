@@ -8,7 +8,7 @@ import { NotificationBell } from '@/features/notifications/NotificationBell';
 import { SettingsMenu } from './SettingsMenu';
 import { useAuth } from '@/lib/auth/auth-context';
 import { hasPermission } from '@/lib/rbac/permissions';
-import { NAV_GROUPS } from '@/routes/nav-items';
+import { NAV_GROUPS, hasNestedNavDestination } from '@/routes/nav-items';
 import { documentTitleFor, resolvePageTitle } from '@/routes/page-title';
 import { ROLE_LABEL } from '@/config/constants';
 import { initials } from '@/lib/utils/format';
@@ -86,8 +86,19 @@ export function ManagerLayout() {
                     {/* NavLink tự đặt `aria-current="page"` khi khớp route. CSS ở
                         global.css bám vào chính thuộc tính đó để tô nền amber
                         (docs/16 mục 11.15) — trạng thái hiển thị và trạng thái
-                        trình đọc màn hình đọc lên là MỘT, không thể lệch nhau. */}
-                    <NavLink to={item.to} className="sf-nav-item" end={item.to === '/dashboard'}>
+                        trình đọc màn hình đọc lên là MỘT, không thể lệch nhau.
+
+                        `end` bật khi có lối vào khác nằm bên dưới mục này: nếu
+                        không, `/requests` sáng lên cả lúc đang ở
+                        `/requests/settings`, trong khi trang hiện ra lại là mục
+                        của popover bánh răng. Trang chi tiết KHÔNG có lối vào
+                        riêng (`/attendance/:id`, `/shifts/:id`) vẫn tô sáng mục
+                        cha như cũ — xem `hasNestedNavDestination`. */}
+                    <NavLink
+                      to={item.to}
+                      className="sf-nav-item"
+                      end={hasNestedNavDestination(item.to)}
+                    >
                       {({ isActive }) => (
                         <>
                           <Icon name={item.icon} size={18} fill={isActive} />

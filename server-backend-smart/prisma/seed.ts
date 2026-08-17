@@ -367,6 +367,7 @@ async function main(): Promise<void> {
       code: 'ANNUAL_LEAVE',
       name: 'Xin nghỉ phép',
       deductFrom: 'ANNUAL_LEAVE',
+      isPaidLeave: true,
       unit: 'DAY',
       requiresAttachment: false,
       // 1 cấp thường; > 3 ngày thì thêm cấp HR.
@@ -414,6 +415,8 @@ async function main(): Promise<void> {
       code: 'BUSINESS_TRIP',
       name: 'Công tác',
       deductFrom: 'NONE',
+      // Đi công tác là ngày ĐI LÀM, chỉ là làm ở chỗ khác.
+      isPaidLeave: true,
       unit: 'DAY',
       requiresAttachment: true,
       steps: [{ order: 1, approverRole: 'DIRECT_MANAGER', condition: null }],
@@ -422,6 +425,7 @@ async function main(): Promise<void> {
       code: 'SICK_LEAVE',
       name: 'Nghỉ ốm',
       deductFrom: 'NONE',
+      isPaidLeave: true,
       unit: 'DAY',
       requiresAttachment: true,
       steps: [
@@ -460,6 +464,7 @@ async function main(): Promise<void> {
         code: type.code,
         name: type.name,
         deductFrom: type.deductFrom,
+        isPaidLeave: type.isPaidLeave ?? false,
         unit: type.unit,
         requiresAttachment: type.requiresAttachment,
         requiresPreApproval: type.requiresPreApproval ?? false,

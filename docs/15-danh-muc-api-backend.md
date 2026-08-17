@@ -20,7 +20,7 @@
 | [6](#6-cá-nhân--công-ty) | Cá nhân & Công ty | `/v1/me`, `/v1/company` | App |
 | [7](#7-đơn-từ) | Đơn từ | `/v1/requests` | App + Web |
 | [8](#8-thông-báo) | Thông báo | `/v1/notifications` | App + Web |
-| [9](#9-web-quản-lý--chấm-công) | Chấm công (Quản lý) | `/v1/admin/attendance`, `/v1/jobs` | Web Quản lý |
+| [9](#9-web-quản-lý--chấm-công) | Chấm công (Quản lý) | `/v1/admin/attendance`, `/v1/admin/attendance-sheets`, `/v1/jobs` | Web Quản lý |
 | [10](#10-web-quản-lý--nhân-sự) | Nhân sự | `/v1/admin/employees` | Web Quản lý |
 | [11](#11-web-quản-lý--chính-sách) | Chính sách, ca, lễ, chi nhánh, phòng ban | `/v1/admin` | Web Quản lý |
 | [12](#12-web-quản-lý--tính-công--lương) | Tính công & Lương | `/v1/admin/payroll` | Web Quản lý |
@@ -1442,9 +1442,126 @@ curl -X POST http://localhost:3000/v1/admin/attendance/export \
 
 ---
 
+### Bảng chấm công `/v1/admin/attendance-sheets` (`FR-WEB-ATT-08`, `FR-WEB-ATT-09`)
+
+Song sinh với `/v1/admin/shift-schedules`: danh sách bảng theo tháng × phòng ban là cửa vào, mở một bảng ra mới tới lưới người × ngày.
+
+Bảng **không sở hữu số liệu nào**. Công vẫn ở `attendance_daily`, lịch ca vẫn ở `shift_assignment`, đơn từ vẫn ở `leave_request` — bảng chỉ khai báo phạm vi rồi đọc ba nguồn đó. Vì vậy `DELETE` một bảng không mất bản ghi công nào.
+
+#### `GET /v1/admin/attendance-sheets` — Danh sách 🔒
+
+Lọc `month` (`YYYY-MM-DD`, tự chuẩn hoá về ngày 01) và `departmentId`. Lọc theo một tổ ra cả bảng lập cho khối chứa tổ đó, và ngược lại.
+
+#### `POST /v1/admin/attendance-sheets` — Lập bảng 🔒 📝audit
+
+**Làm gì:** chốt danh sách CBNV của kỳ. Nguồn theo thứ tự ưu tiên: (1) thành viên các **bảng phân ca** cùng tháng chạm tới phòng ban đã chọn; (2) CBNV đang làm việc của các phòng ban đó, khi tháng chưa lập phân ca nào.
+
+Cả hai nguồn đều giao lại với phòng ban đã chọn (kèm cấp dưới) và với phạm vi quyền của người lập.
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/attendance-sheets \
+  -H "Authorization: Bearer $HR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{ "departmentIds": ["dep_01J..."], "periodMonth": "2026-08-01",
+        "name": "Bảng chấm công Tháng 08/2026" }'
+```
+```json
+{ "success": true,
+  "data": { "id": "ash_01J...", "name": "Bảng chấm công Tháng 08/2026",
+            "periodMonth": "2026-08-01", "departmentIds": ["dep_01J..."],
+            "shiftScheduleIds": ["sch_01J..."], "status": "DRAFT",
+            "memberCount": 24 } }
+```
+
+`shiftScheduleIds` rỗng nghĩa là bảng dựng từ danh sách phòng ban, không từ phân ca — Web hiển thị khác nhau vì hai nguồn có mức tin cậy khác nhau.
+
+Lỗi: `ATT_SHEET_NO_MEMBERS` (422), `ATT_SHEET_EMPLOYEE_TAKEN` (409, kèm tên người và tên bảng đang giữ họ).
+
+#### `GET /v1/admin/attendance-sheets/:id/board` — Lưới người × ngày 🔒
+
+**Làm gì:** trả **bốn nguồn trong một lượt gọi** — thành viên, lịch ca đã xếp, công đã tính, đơn từ chạm vào kỳ — cộng ngày lễ. Tách thành bốn endpoint thì có khoảnh khắc chỉ vài phần về tới nơi, mà trên bảng công "ô trống" và "chưa tải xong" trông giống hệt nhau.
+
+Phân trang theo **NGƯỜI**, không theo bản ghi. Bỏ trống `from`/`to` = trọn kỳ của bảng.
+
+```bash
+curl "http://localhost:3000/v1/admin/attendance-sheets/ash_01J.../board?from=2026-08-01&to=2026-08-31&pageSize=25" \
+  -H "Authorization: Bearer $HR_TOKEN"
+```
+```json
+{ "success": true,
+  "data": { "from": "2026-08-01", "to": "2026-08-31",
+            "employees": [{ "id": "emp_01J...", "fullName": "Nguyễn Văn Đức",
+                            "employeeCode": "ducnv.amobi", "status": "ACTIVE",
+                            "department": { "id": "dep_01J...", "name": "Kho" } }],
+            "assignments": [{ "employeeId": "emp_01J...", "shiftId": "shf_01J...",
+                              "workDate": "2026-08-03", "scheduleId": "sch_01J..." }],
+            "dailies": [{ "employeeId": "emp_01J...", "workDate": "2026-08-03",
+                          "firstCheckInAt": "2026-08-03T01:02:00Z",
+                          "lastCheckOutAt": "2026-08-03T10:35:00Z",
+                          "workedMinutes": 513, "lateMinutes": 0, "otMinutes": 0,
+                          "standardDays": "1.000", "status": "ON_TIME",
+                          "appliedRequestIds": [] }],
+            "requests": [{ "id": "req_01J...", "employeeId": "emp_01J...",
+                           "status": "APPROVED", "startDate": "2026-08-06",
+                           "endDate": "2026-08-06", "quantity": "1.00",
+                           "requestTypeCode": "ANNUAL_LEAVE",
+                           "requestTypeName": "Nghỉ phép năm",
+                           "unit": "DAY", "deductFrom": "ANNUAL_LEAVE" }],
+            "holidays": [{ "name": "Quốc khánh", "date": "2026-09-02" }] },
+  "meta": { "page": 1, "pageSize": 25, "total": 24 } }
+```
+
+`requests` gồm cả `PENDING` — đơn chờ duyệt CHƯA vào công, nhưng người rà bảng cần thấy nó trước khi chốt. `startDate`/`endDate` là **ngày làm việc** đã quy đổi theo timezone công ty; đừng cắt chuỗi từ `startAt`.
+
+Lỗi: `ATT_SHEET_NOT_FOUND` (404), `ATT_SHEET_OUT_OF_PERIOD` (422).
+
+#### `POST /v1/admin/attendance-sheets/:id/members` — Thêm CBNV 🔒 📝audit
+#### `POST /v1/admin/attendance-sheets/:id/members/remove` — Bỏ CBNV 🔒 📝audit
+
+`POST .../remove` chứ không `DELETE`: danh sách id nằm trong body, mà body của `DELETE` bị nhiều proxy cắt bỏ âm thầm. Bỏ CBNV chỉ bỏ khỏi phạm vi rà soát — công của họ không bị đụng tới.
+
+Lỗi: `ATT_SHEET_CLOSED` (422) khi bảng đã chốt.
+
+#### `POST /v1/admin/attendance-sheets/:id/recalculate` — Cập nhật bảng công 🔒 📝audit → `202`
+
+**Làm gì:** tính lại `attendance_daily` cho **đúng thành viên** của bảng và **đúng
+kỳ** của bảng. Cần thiết vì đó là bảng đã tính: đơn duyệt ngược, sửa cấu hình ca,
+hay xếp lại phân ca đều KHÔNG tự kích hoạt tính lại.
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/attendance-sheets/ash_01J.../recalculate \
+  -H "Authorization: Bearer $HR_TOKEN"
+```
+```json
+{ "success": true,
+  "data": { "jobId": "job_01J...", "statusUrl": "/v1/jobs/job_01J...", "employeeCount": 24 } }
+```
+
+Hỏi tiến độ qua `GET /v1/jobs/:id` (`kind = ATTENDANCE_SHEET_RECALCULATE`) cho tới
+khi `status` là `COMPLETED` hoặc `FAILED`.
+
+Job **idempotent** (`NFR-REL-06`). Ngày thuộc kỳ lương đã chốt bị **bỏ qua, không
+ghi đè** (`BR-07`). Bảng rỗng vẫn trả về một job đã ở trạng thái kết thúc, không
+phải lỗi — client đang chờ một `jobId` để hỏi tiến độ.
+
+⚠ Không có Redis (`REDIS_ENABLED=false`) thì job vẫn chạy, **nội tuyến và tách
+khỏi request**, vẫn ghi tiến độ vào bản ghi job — khác hẳn xuất Excel (đánh hỏng
+ngay). Một nút bấm vô dụng ở mọi môi trường chưa bật dịch vụ nền thì không đáng có.
+
+#### `POST /v1/admin/attendance-sheets/:id/close` — Chốt bảng 🔒 📝audit
+#### `POST /v1/admin/attendance-sheets/:id/reopen` — Mở lại 🔒 📝audit
+
+Chốt khoá việc **sửa thành viên**, không khoá số liệu — kỳ lương mới làm việc đó (`BR-07`). `reopen` bị từ chối với `PAY_PERIOD_CLOSED` nếu kỳ lương phủ lên tháng của bảng đã chốt.
+
+#### `DELETE /v1/admin/attendance-sheets/:id` 🔒 📝audit
+
+Xoá mềm khung rà soát. Không đụng `attendance_daily`, `attendance_log` hay đơn từ.
+
+---
+
 ### `GET /v1/jobs/:id` — Trạng thái job chạy nền 🔒
 
-**Làm gì:** hỏi tiến độ job và lấy link tải khi xong. Dùng chung cho **mọi** loại job dài, phân biệt bằng `kind`: `ATTENDANCE`, `PAYROLL`, `PAYROLL_RECALCULATE`.
+**Làm gì:** hỏi tiến độ job và lấy link tải khi xong. Dùng chung cho **mọi** loại job dài, phân biệt bằng `kind`: `ATTENDANCE`, `PAYROLL`, `PAYROLL_RECALCULATE`, `ATTENDANCE_SHEET_RECALCULATE`.
 
 ```bash
 curl http://localhost:3000/v1/jobs/job_01J... -H "Authorization: Bearer $HR_TOKEN"
@@ -2805,6 +2922,16 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | GET | `/v1/admin/attendance/:id` | MGR/HR/ADMIN | Chi tiết một lượt |
 | POST | `/v1/admin/attendance/adjust` | HR/ADMIN 📝 | Hiệu chỉnh công |
 | POST | `/v1/admin/attendance/export` | MGR/HR/ADMIN | Xuất Excel → `202` |
+| GET | `/v1/admin/attendance-sheets` | MGR/HR/ADMIN | Danh sách bảng chấm công (`FR-WEB-ATT-08`) |
+| GET | `/v1/admin/attendance-sheets/:id` | MGR/HR/ADMIN | Chi tiết một bảng |
+| GET | `/v1/admin/attendance-sheets/:id/board` | MGR/HR/ADMIN | Lưới người × ngày (`FR-WEB-ATT-09`) |
+| POST | `/v1/admin/attendance-sheets` | MGR/HR/ADMIN 📝 | Lập bảng — lấy CBNV từ bảng phân ca cùng tháng |
+| DELETE | `/v1/admin/attendance-sheets/:id` | HR/ADMIN 📝 | Xoá bảng — **không mất số liệu công** |
+| POST | `/v1/admin/attendance-sheets/:id/members` | MGR/HR/ADMIN 📝 | Thêm CBNV vào bảng |
+| POST | `/v1/admin/attendance-sheets/:id/members/remove` | MGR/HR/ADMIN 📝 | Bỏ CBNV khỏi bảng |
+| POST | `/v1/admin/attendance-sheets/:id/recalculate` | MGR/HR/ADMIN 📝 | Cập nhật bảng công → `202` (`FR-WEB-ATT-10`) |
+| POST | `/v1/admin/attendance-sheets/:id/close` | HR/ADMIN 📝 | Chốt bảng |
+| POST | `/v1/admin/attendance-sheets/:id/reopen` | HR/ADMIN 📝 | Mở lại bảng đã chốt |
 | GET | `/v1/jobs/:id` | MGR/HR/ADMIN | Trạng thái job export |
 
 ### Web Quản lý — Nhân sự `/v1/admin/employees`
@@ -2911,6 +3038,19 @@ sinh và hạn.
 | POST | `/` | HR/ADMIN 📝 | Tạo loại đơn |
 | PATCH | `/:id` | HR/ADMIN 📝 | Sửa loại đơn (mã khoá sau khi có đơn phát sinh) |
 | PUT | `/:id/approval-flow` | HR/ADMIN 📝 | Thay toàn bộ luồng duyệt |
+
+#### `deductFrom` và `isPaidLeave` là HAI trường khác nhau
+
+| Trường | Trả lời câu hỏi | Ảnh hưởng tới |
+|---|---|---|
+| `deductFrom` | Đơn này trừ vào **quỹ** nào (`NONE` / `ANNUAL_LEAVE` / `UNPAID` / `OT_CREDIT` / `MAKEUP_CREDIT`) | Số dư phép năm, sổ công bù |
+| `isPaidLeave` | Ngày nghỉ đó có vào **bảng công** không | `standardDays` của `attendance_daily` → bảng lương |
+
+Không suy trường này từ trường kia. `deductFrom = 'NONE'` đang gộp **Công tác**
+(đủ công) với **Xin ra ngoài** / **Về sớm** (không phải một ngày công), nên suy
+diễn sẽ sai ở một trong hai. Xem công thức tính công ở docs/04 mục 7.3.
+
+Mặc định `isPaidLeave = false`: loại đơn khai thiếu thì không tự dưng được trả lương.
 
 ### Web Quản lý — Báo cáo & Gian lận & Audit
 | Method | Đường dẫn | Quyền | Mô tả |

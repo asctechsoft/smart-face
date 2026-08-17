@@ -96,6 +96,23 @@ export function RequestTypesPage() {
       render: (value: string) => DEDUCT_FROM_LABEL[value] ?? value,
     },
     {
+      // Cột riêng, không gộp vào "Ràng buộc": đây là thứ quyết định bảng công và
+      // bảng lương, không phải một điều kiện lúc gửi đơn. Và nó KHÁC "Trừ vào
+      // quỹ" ngay cạnh — Công tác không trừ quỹ nào nhưng vẫn đủ công.
+      title: 'Tính công',
+      dataIndex: 'isPaidLeave',
+      key: 'isPaidLeave',
+      width: 150,
+      render: (value: boolean) =>
+        value ? (
+          <StatusBadge tone="teal" soft>
+            Nghỉ hưởng lương
+          </StatusBadge>
+        ) : (
+          <span className="sf-text-muted">Không tính công</span>
+        ),
+    },
+    {
       title: 'Ràng buộc',
       key: 'constraints',
       width: 220,

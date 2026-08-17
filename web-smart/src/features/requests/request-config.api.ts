@@ -44,6 +44,8 @@ export interface RequestTypeConfig {
   code: string;
   name: string;
   deductFrom: string;
+  /** Nghỉ theo đơn này có được tính công không — engine tính công đọc đúng cờ này. */
+  isPaidLeave: boolean;
   unit: string;
   requiresAttachment: boolean;
   requiresPreApproval: boolean;
@@ -58,6 +60,7 @@ export interface UpsertRequestTypePayload {
   code: string;
   name: string;
   deductFrom?: string;
+  isPaidLeave?: boolean;
   unit?: string;
   requiresAttachment?: boolean;
   requiresPreApproval?: boolean;

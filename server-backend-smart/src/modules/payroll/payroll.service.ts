@@ -131,11 +131,24 @@ export class PayrollService {
    * Ném lại lỗi sau khi đã ghi FAILED: BullMQ cần thấy exception mới thử lại
    * theo `DEFAULT_JOB_OPTIONS`. Phía nội tuyến tự nuốt bằng `.catch`.
    */
-  async runTrackedRecalculate(companyId: string, jobId: string, from: Date, to: Date) {
+  async runTrackedRecalculate(
+    companyId: string,
+    jobId: string,
+    from: Date,
+    to: Date,
+    /**
+     * Giới hạn vào một tập nhân viên. Bỏ trống = toàn công ty.
+     *
+     * Bảng chấm công dùng tham số này để chỉ tính lại đúng thành viên của bảng:
+     * tính lại cả công ty khi người dùng chỉ muốn làm mới một phòng là đẩy tải
+     * gấp hàng chục lần lên đúng bảng lớn nhất hệ thống.
+     */
+    employeeIds?: string[],
+  ) {
     await this.payrolls.markJobProcessing(jobId);
 
     try {
-      const result = await this.runRecalculateRange(companyId, from, to, undefined, (percent) =>
+      const result = await this.runRecalculateRange(companyId, from, to, employeeIds, (percent) =>
         this.payrolls.setJobProgress(jobId, percent),
       );
       await this.payrolls.markJobDone(jobId);
@@ -526,8 +539,23 @@ export class PayrollService {
     to: Date,
     employeeIds?: string[],
     onProgress?: (percent: number) => Promise<void>,
-  ): Promise<{ calculated: number; skippedLockedDays: number }> {
+  ): Promise<{ calculated: number; skippedLockedDays: number; employeeCount: number }> {
     const employees = await this.payrolls.findCalculableEmployeeIds(companyId, employeeIds);
+
+    /**
+     * Không có ai để tính là một SỰ KIỆN, không phải một lượt chạy thành công.
+     *
+     * Đây chính là cách một lỗi thật đã lọt qua: bộ lọc trạng thái loại hết nhân
+     * viên, vòng lặp không chạy lần nào, job báo `DONE` 100% — và người dùng bấm
+     * nút, nhận thông báo thành công, rồi tự hỏi vì sao bảng công không đổi.
+     * Một dòng cảnh báo ở đây là thứ rẻ nhất biến câu hỏi đó thành câu trả lời.
+     */
+    if (employees.length === 0) {
+      this.logger.warn(
+        `Tính lại ${formatWorkDate(from)}..${formatWorkDate(to)} không có nhân viên nào trong phạm vi` +
+          `${employeeIds?.length ? ` (đã lọc theo ${employeeIds.length} id)` : ''} — không ghi bản ghi công nào.`,
+      );
+    }
 
     const closedPeriods = await this.payrolls.findClosedPeriodsInRange(companyId, from, to);
 
@@ -568,7 +596,7 @@ export class PayrollService {
       );
     }
 
-    return { calculated, skippedLockedDays };
+    return { calculated, skippedLockedDays, employeeCount: employees.length };
   }
 
   /** Ngày có bản ghi chấm công nhưng chưa có bảng công — dùng cho job quét đêm. */

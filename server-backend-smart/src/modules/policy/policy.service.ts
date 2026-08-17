@@ -207,6 +207,17 @@ export class PolicyService {
     return holiday;
   }
 
+  /**
+   * Hệ số ngày lễ mà một ca khai riêng cho đúng ngày lễ đó.
+   *
+   * `null` = chưa khai riêng, gọi dùng `shift.holidayFactor` chung. Tách thành
+   * lượt đọc riêng thay vì `include` vào `resolveShiftForDate` — xem chú thích
+   * ở `PolicyRepository.findShiftHolidayFactor`.
+   */
+  async getShiftHolidayFactor(shiftId: string, holidayId: string): Promise<number | null> {
+    return this.policies.findShiftHolidayFactor(shiftId, holidayId);
+  }
+
   assertValidTime(value: string | null | undefined): void {
     if (value && !isValidTimeOfDay(value)) {
       throw new AppException('POL_INVALID_TIME_FORMAT', { value });

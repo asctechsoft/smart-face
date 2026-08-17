@@ -1,10 +1,14 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { AttendanceAdminController, ExportJobController } from './attendance-admin.controller';
 import { AttendanceAdminService } from './attendance-admin.service';
+import { AttendanceSheetController } from './attendance-sheet.controller';
+import { AttendanceSheetRepository } from './attendance-sheet.repository';
+import { AttendanceSheetService } from './attendance-sheet.service';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceRepository } from './attendance.repository';
 import { AttendanceService } from './attendance.service';
 import { FraudModule } from '../fraud/fraud.module';
+import { PayrollModule } from '../payroll/payroll.module';
 
 /**
  * Chấm công — nghiệp vụ lõi của toàn hệ thống.
@@ -13,6 +17,7 @@ import { FraudModule } from '../fraud/fraud.module';
  *
  * - `AttendanceController`      — App Nhân viên tự chấm công cho chính mình.
  * - `AttendanceAdminController` — Web Quản lý xem/hiệu chỉnh công của người khác.
+ * - `AttendanceSheetController` — bảng chấm công theo tháng × phòng ban, lưới người × ngày.
  * - `ExportJobController`       — tra trạng thái job xuất Excel chạy nền.
  *
  * `forwardRef` với FraudModule là bắt buộc: chấm công gọi sang chống gian lận để
@@ -20,10 +25,40 @@ import { FraudModule } from '../fraud/fraud.module';
  * công để so sánh hành vi. Hai module tham chiếu vòng, không có forwardRef thì
  * Nest không dựng được đồ thị phụ thuộc và chết ngay lúc khởi động.
  */
+/*
+ * `PayrollModule` phải qua `forwardRef`, dù payroll KHÔNG gọi ngược về đây.
+ *
+ * Vòng phụ thuộc đi đường vòng qua chống gian lận:
+ *
+ *     AttendanceModule → PayrollModule → FraudModule → AttendanceModule
+ *
+ * Ở tầng ES module, một trong ba binding sẽ còn `undefined` vào lúc Nest đọc
+ * mảng `imports`, và ứng dụng chết ngay khi khởi động với thông báo "module at
+ * index [1] is undefined" — không phải lỗi biên dịch, nên TypeScript không bắt được.
+ *
+ * Attendance cần PayrollModule cho nút "Cập nhật bảng công": nó gọi
+ * `PayrollService.runTrackedRecalculate` để tính lại đúng thành viên của bảng.
+ */
 @Module({
-  imports: [forwardRef(() => FraudModule)],
-  controllers: [AttendanceController, AttendanceAdminController, ExportJobController],
-  providers: [AttendanceRepository, AttendanceService, AttendanceAdminService],
-  exports: [AttendanceRepository, AttendanceService, AttendanceAdminService],
+  imports: [forwardRef(() => FraudModule), forwardRef(() => PayrollModule)],
+  controllers: [
+    AttendanceController,
+    AttendanceAdminController,
+    AttendanceSheetController,
+    ExportJobController,
+  ],
+  providers: [
+    AttendanceRepository,
+    AttendanceService,
+    AttendanceAdminService,
+    AttendanceSheetRepository,
+    AttendanceSheetService,
+  ],
+  exports: [
+    AttendanceRepository,
+    AttendanceService,
+    AttendanceAdminService,
+    AttendanceSheetService,
+  ],
 })
 export class AttendanceModule {}

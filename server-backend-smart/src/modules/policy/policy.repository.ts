@@ -939,6 +939,22 @@ export class PolicyRepository extends BaseRepository {
     });
   }
 
+  /**
+   * Hệ số riêng mà một ca khai cho ĐÚNG một ngày lễ. `null` = dùng `holidayFactor` chung.
+   *
+   * Là truy vấn riêng chứ không `include` vào `resolveShiftForDate`: engine giải
+   * ca cho MỌI nhân viên MỌI ngày, còn ngày lễ chỉ có khoảng chục ngày một năm.
+   * Nối thêm một bảng vào lượt đọc nóng nhất hệ thống để phục vụ 3% số ngày là
+   * trả giá sai chỗ.
+   */
+  async findShiftHolidayFactor(shiftId: string, holidayId: string): Promise<number | null> {
+    const row = await this.db().shiftHolidayFactor.findUnique({
+      where: { shiftId_holidayId: { shiftId, holidayId } },
+      select: { factor: true },
+    });
+    return row ? Number(row.factor) : null;
+  }
+
   async listHolidays(companyId: string, year?: number): Promise<Holiday[]> {
     const where: Prisma.HolidayWhereInput = { companyId };
     if (year) {

@@ -62,6 +62,21 @@ export class UpsertRequestTypeDto {
   @IsIn(DEDUCT_FROM)
   deductFrom?: string;
 
+  /**
+   * Trả lời câu hỏi KHÁC với `deductFrom`, nên là trường riêng.
+   *
+   * `deductFrom` nói trừ vào QUỸ nào; cờ này nói ngày nghỉ đó có vào BẢNG CÔNG
+   * không. Suy cái này từ cái kia là sai cả hai chiều: `NONE` đang gộp "Công
+   * tác" (đủ công) với "Xin ra ngoài" (không phải một ngày công).
+   */
+  @ApiPropertyOptional({
+    description: 'Nghỉ theo đơn này có được tính công không (VD: phép năm, công tác)',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isPaidLeave?: boolean;
+
   @ApiPropertyOptional({ enum: REQUEST_UNITS, default: 'DAY' })
   @IsOptional()
   @IsIn(REQUEST_UNITS)

@@ -18,6 +18,47 @@ interface PunchPair {
   checkOut: Date | null;
 }
 
+/**
+ * Phần cấu hình ca mà phép quy đổi công cần tới.
+ *
+ * Khai theo HÌNH DẠNG chứ không dùng thẳng `Shift` của Prisma: hàm quy đổi là
+ * logic thuần, và ràng nó vào kiểu sinh ra từ schema sẽ kéo cả bảng `shift` vào
+ * mỗi unit test chỉ để kiểm một phép nhân.
+ */
+interface DayFactorShift {
+  id: string;
+  workDayCredit: Prisma.Decimal | number;
+  normalDayFactor: Prisma.Decimal | number;
+  weeklyRestFactor: Prisma.Decimal | number;
+  holidayFactor: Prisma.Decimal | number;
+}
+
+/**
+ * Từng mảnh cấu thành công của một ngày.
+ *
+ * Trả về đủ mảnh chứ không chỉ tổng, vì tất cả đi vào `breakdown` — khi nhân
+ * viên khiếu nại "sao ngày này chỉ có 0.5 công", câu trả lời phải tra được từ
+ * dữ liệu đã lưu, không phải bằng cách chạy lại engine trong đầu.
+ */
+interface DayCreditBreakdown {
+  standardDays: number;
+  /** `shift.workDayCredit` — ca hôm đó đáng mấy công. */
+  dayCredit: number;
+  /** Hệ số của loại ngày: thường / cuối tuần / lễ. */
+  dayFactor: number;
+  workedRatio: number;
+  workedDays: number;
+  holidayDays: number;
+  leaveDays: number;
+  /** Trần công của ngày = `dayCredit × dayFactor`. */
+  cap: number;
+}
+
+/** Làm tròn 3 chữ số — khớp `Decimal(5,3)` của cột `standardDays`. */
+function round3(value: number): number {
+  return Math.round((value + Number.EPSILON) * 1000) / 1000;
+}
+
 export interface DailyCalculationResult {
   employeeId: string;
   workDate: Date;
@@ -152,10 +193,7 @@ export class PayrollEngineService {
 
     const rawShortfall = exempt
       ? 0
-      : Math.max(
-          0,
-          result.requiredMinutes - result.rawWorkedMinutes - result.leaveCreditMinutes,
-        );
+      : Math.max(0, result.requiredMinutes - result.rawWorkedMinutes - result.leaveCreditMinutes);
 
     const threshold = await this.policy.getNumber(companyId, PolicyKeys.MAKEUP_MIN_DEBT_MINUTES);
     const shortfall = rawShortfall >= threshold ? rawShortfall : 0;
@@ -285,12 +323,18 @@ export class PayrollEngineService {
     // Đơn nghỉ phép có lương tính đủ công cho phần được nghỉ.
     const leaveCredit = this.leaveCreditMinutes(approvedRequests, minutesPerDay);
 
-    const standardDays =
-      minutesPerDay > 0
-        ? Math.round(((countedMinutes + leaveCredit) / minutesPerDay) * 1000) / 1000
-        : 0;
-
     const requiredMinutes = shift?.requiredMinutes ?? minutesPerDay;
+
+    const dayCredit = await this.resolveDayCredit({
+      companyId,
+      shift,
+      holiday,
+      workDate,
+      countedMinutes,
+      requiredMinutes,
+      approvedRequests,
+    });
+    const standardDays = dayCredit.standardDays;
 
     // --- Trạng thái ngày --------------------------------------------------------
     const status = this.resolveStatus({
@@ -303,7 +347,12 @@ export class PayrollEngineService {
       requiredMinutes,
       isHoliday: Boolean(holiday),
       isWeekendDay: isWeekend(workDate),
-      hasLeaveRequest: approvedRequests.some((request) => request.deductFrom !== 'NONE'),
+      // `isPaidLeave` cộng vào chứ không thay thế: Công tác có `deductFrom = NONE`
+      // nên điều kiện cũ bỏ sót nó, và một ngày công tác không có lượt chấm nào
+      // sẽ bị gắn ABSENT thay vì ON_LEAVE.
+      hasLeaveRequest: approvedRequests.some(
+        (request) => request.isPaidLeave || request.deductFrom !== 'NONE',
+      ),
       hasShift: Boolean(shift),
     });
 
@@ -355,6 +404,9 @@ export class PayrollEngineService {
         leaveCreditMinutes: leaveCredit,
         roundingMinutes,
         minutesPerStandardDay: minutesPerDay,
+        // Từng mảnh của phép quy đổi công — nguồn duy nhất để giải trình
+        // "vì sao ngày này ra chừng đó công" khi có khiếu nại.
+        dayCredit,
         overtime: otResult,
         voidedLogIds: [...voidedIds],
         timeOverrides: [...timeOverrides.entries()].map(([id, date]) => ({
@@ -492,10 +544,13 @@ export class PayrollEngineService {
   }
 
   /**
-   * Nghỉ phép có lương được tính công; nghỉ không lương thì không.
+   * Nghỉ có lương được tính công; nghỉ không lương thì không.
    *
-   * Phân biệt qua `deductFrom`: `ANNUAL_LEAVE` trừ vào quỹ phép năm nên vẫn được
-   * trả lương, còn nghỉ không lương / nghỉ việc riêng thì không cộng phút nào.
+   * Phân biệt qua `RequestType.isPaidLeave` — KHÔNG suy từ `deductFrom`. Hai
+   * trường trả lời hai câu hỏi khác nhau: `deductFrom` nói trừ vào QUỸ nào,
+   * `isPaidLeave` nói ngày đó có vào bảng công không. Suy từ `deductFrom` sai cả
+   * hai chiều, vì `NONE` đang gộp "Công tác" (đủ công) với "Xin ra ngoài"
+   * (không phải một ngày công).
    *
    * `find` (lấy đơn ĐẦU TIÊN) chứ không cộng dồn nhiều đơn: một ngày chỉ nghỉ
    * được tối đa một ngày công. Có hai đơn phép cùng ngày thì đó là lỗi dữ liệu
@@ -503,12 +558,119 @@ export class PayrollEngineService {
    * sẽ biến lỗi đó thành 2 ngày công được trả cho 1 ngày nghỉ.
    */
   private leaveCreditMinutes(
-    requests: Array<{ deductFrom: string; isHalfDay: boolean }>,
+    requests: Array<{ isPaidLeave: boolean; isHalfDay: boolean }>,
     minutesPerDay: number,
   ): number {
-    const paidLeave = requests.find((request) => request.deductFrom === 'ANNUAL_LEAVE');
+    const paidLeave = requests.find((request) => request.isPaidLeave);
     if (!paidLeave) return 0;
     return paidLeave.isHalfDay ? Math.round(minutesPerDay / 2) : minutesPerDay;
+  }
+
+  /**
+   * Quy đổi một ngày ra CÔNG HƯỞNG LƯƠNG — docs/04 mục 7.3.
+   *
+   * Công thức, và lý do từng mảnh tồn tại:
+   *
+   * ```
+   *   ngày công  = shift.workDayCredit         (ca hôm đó đáng mấy công)
+   *   hệ số ngày = normal | weeklyRest | holiday, theo LOẠI NGÀY
+   *
+   *   công đi làm  = min(1, giờ làm / giờ ca) × ngày công × hệ số ngày
+   *   công nghỉ lễ = ngày lễ ? ngày công : 0                    (hệ số 1)
+   *   công theo đơn= đơn có lương ? (nửa ngày ? 0.5 : 1) × ngày công : 0
+   *
+   *   công không do đi làm = max(công nghỉ lễ, công theo đơn)
+   *   TỔNG = min(công không do đi làm + công đi làm, ngày công × hệ số ngày)
+   * ```
+   *
+   * ## Vì sao hệ số ngày CHỈ nhân vào phần đi làm
+   *
+   * Điều 98 BLLĐ: nghỉ lễ hưởng NGUYÊN lương (hệ số 1); 300% chỉ dành cho người
+   * THẬT SỰ đi làm ngày lễ. Nhân hệ số vào ngày lễ không ai đi làm là trả gấp ba
+   * cho một ngày cả công ty nghỉ.
+   *
+   * ## Vì sao `max` chứ không cộng ở phần không đi làm
+   *
+   * Nghỉ phép rơi đúng vào ngày lễ thì đó vẫn là MỘT ngày. Cộng hai khoản lại
+   * cho ra 2 công cho một ngày không ai làm gì.
+   *
+   * ## Vì sao có trần
+   *
+   * Đơn duyệt ngược quá khứ (BR-REQ-03) cho một ngày người đó đã đi làm đủ sẽ
+   * cộng thành 2 công. Trần chặn đúng trường hợp đó, còn phần làm thêm ngoài ca
+   * vẫn được trả qua `otMinutes × otMultiplier` như cũ — không mất đi đâu.
+   *
+   * ## Vì sao công theo đơn cần "có nghĩa vụ làm việc"
+   *
+   * Đơn nghỉ từ thứ Hai tới Chủ nhật phủ lên cả hai ngày cuối tuần. Không có
+   * điều kiện này thì mỗi đơn nghỉ một tuần lại đẻ thêm 2 công cho hai ngày vốn
+   * đã không phải đi làm.
+   */
+  private async resolveDayCredit(params: {
+    companyId: string;
+    shift: DayFactorShift | null;
+    holiday: { id: string } | null;
+    workDate: Date;
+    countedMinutes: number;
+    requiredMinutes: number;
+    approvedRequests: Array<{ isPaidLeave: boolean; isHalfDay: boolean }>;
+  }): Promise<DayCreditBreakdown> {
+    const { shift, holiday, workDate, countedMinutes, requiredMinutes, approvedRequests } = params;
+
+    // Không có ca thì không có bảng hệ số nào để tra — 1 ngày làm việc = 1 công.
+    const dayCredit = shift ? Number(shift.workDayCredit) : 1;
+    const dayFactor = await this.resolveDayFactor(shift, holiday, workDate);
+
+    // Trần 1 ca: làm 10 tiếng cho ca 8 tiếng vẫn là 1 công, phần dôi ra đi vào OT.
+    const workedRatio =
+      requiredMinutes > 0 ? Math.min(1, Math.max(0, countedMinutes / requiredMinutes)) : 0;
+
+    // Ngày lễ: phần công nền đã tính hệ số 1 ở `holidayDays`, nên phần đi làm chỉ
+    // được cộng THÊM phần chênh. Không trừ đi 1 thì làm đủ ngày lễ ra 1 + 3 = 4 công.
+    const workedFactor = holiday ? Math.max(0, dayFactor - 1) : dayFactor;
+    const workedDays = workedRatio * dayCredit * workedFactor;
+
+    const holidayDays = holiday ? dayCredit : 0;
+
+    const hasWorkObligation = Boolean(shift) || (!isWeekend(workDate) && !holiday);
+    const paidLeave = approvedRequests.find((request) => request.isPaidLeave);
+    const leaveDays =
+      paidLeave && hasWorkObligation ? (paidLeave.isHalfDay ? 0.5 : 1) * dayCredit : 0;
+
+    const idleDays = Math.max(holidayDays, leaveDays);
+    const cap = dayCredit * dayFactor;
+
+    return {
+      standardDays: round3(Math.min(idleDays + workedDays, cap)),
+      dayCredit,
+      dayFactor,
+      workedRatio: round3(workedRatio),
+      workedDays: round3(workedDays),
+      holidayDays: round3(holidayDays),
+      leaveDays: round3(leaveDays),
+      cap: round3(cap),
+    };
+  }
+
+  /**
+   * Hệ số của LOẠI NGÀY, lấy từ danh mục ca.
+   *
+   * Ngày lễ ưu tiên hệ số khai riêng cho đúng ngày đó (`ShiftHolidayFactor`)
+   * trước khi rơi về `holidayFactor` chung — Tết và Giỗ tổ không nhất thiết cùng
+   * một mức, và đó chính là lý do bảng khai riêng tồn tại.
+   */
+  private async resolveDayFactor(
+    shift: DayFactorShift | null,
+    holiday: { id: string } | null,
+    workDate: Date,
+  ): Promise<number> {
+    if (!shift) return 1;
+
+    if (holiday) {
+      const override = await this.policy.getShiftHolidayFactor(shift.id, holiday.id);
+      return override ?? Number(shift.holidayFactor);
+    }
+    return isWeekend(workDate) ? Number(shift.weeklyRestFactor) : Number(shift.normalDayFactor);
   }
 
   /**

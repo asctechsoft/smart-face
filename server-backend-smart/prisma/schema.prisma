@@ -58,16 +58,17 @@ model Company {
   suspendedAt   DateTime?
   suspendReason String?
 
-  branches       Branch[]
-  departments    Department[]
-  employees      Employee[]
-  userAccounts   UserAccount[]
-  policies       CompanyPolicy[]
-  shifts         Shift[]
-  shiftSchedules ShiftSchedule[]
-  holidays       Holiday[]
-  requestTypes   RequestType[]
-  payrollPeriods PayrollPeriod[]
+  branches         Branch[]
+  departments      Department[]
+  employees        Employee[]
+  userAccounts     UserAccount[]
+  policies         CompanyPolicy[]
+  shifts           Shift[]
+  shiftSchedules   ShiftSchedule[]
+  attendanceSheets AttendanceSheet[]
+  holidays         Holiday[]
+  requestTypes     RequestType[]
+  payrollPeriods   PayrollPeriod[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -325,6 +326,7 @@ model Employee {
   shiftAssignments  ShiftAssignment[]
   makeupRecords     MakeupWorkRecord[]
   scheduleMembers   ShiftScheduleMember[]
+  attendanceSheets  AttendanceSheetMember[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -690,6 +692,82 @@ model ShiftScheduleMember {
   @@map("shift_schedule_member")
 }
 
+/// Bảng chấm công của MỘT tháng cho MỘT nhóm phòng ban — FR-WEB-ATT-08.
+///
+/// Song sinh với `ShiftSchedule` và cố ý như vậy: người dùng nghĩ theo đơn vị
+/// "bảng chấm công tháng 8 phòng Kho", giống hệt cách họ nghĩ về phân ca.
+///
+/// Bảng này KHÔNG lưu số liệu công. Công vẫn nằm ở `AttendanceDaily` (tính lại
+/// được bất cứ lúc nào — ADR-08); lịch ca vẫn nằm ở `ShiftAssignment`; đơn từ
+/// vẫn nằm ở `LeaveRequest`. Cái nó lưu là PHẠM VI: kỳ nào, phòng ban nào, ai
+/// có tên trong bảng. Chép số liệu xuống đây là tạo ra bản sao thứ hai lệch
+/// khỏi bản gốc ngay lần tính lại tiếp theo.
+model AttendanceSheet {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+  name      String
+
+  /// Kỳ của bảng. LUÔN là ngày 01 của tháng — service tự chuẩn hoá.
+  periodMonth DateTime @db.Date
+
+  /// Phạm vi chốt lúc lập bảng. Màn chi tiết chỉ lọc trong đây.
+  departmentIds String[] @default([])
+
+  /// Các bảng phân ca đã cấp thành viên và lịch ca cho bảng này.
+  ///
+  /// Lưu id trần, KHÔNG khoá ngoại: bảng phân ca xoá đi thì bảng chấm công vẫn
+  /// phải mở được — nó là chứng từ của một kỳ đã qua, không phải một khung nhìn
+  /// của phân ca. Mảng chứ không một giá trị: một tháng có thể có nhiều bảng
+  /// phân ca cho các phòng ban khác nhau, và bảng chấm công gộp chúng lại.
+  shiftScheduleIds String[] @default([])
+
+  /// `DRAFT` = đang rà soát, còn hiệu chỉnh được.
+  /// `CLOSED` = đã chốt để chuyển sang tính lương; hiệu chỉnh phải mở lại bảng.
+  status    String    @default("DRAFT")
+  closedAt  DateTime?
+  closedBy  String?
+
+  createdBy String?
+
+  members AttendanceSheetMember[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([companyId, periodMonth])
+  @@map("attendance_sheet")
+}
+
+/// Một CBNV có tên trong bảng chấm công.
+///
+/// Chốt lúc lập bảng, y như `ShiftScheduleMember` và vì cùng một lý do: người
+/// chuyển phòng giữa tháng vẫn phải có công của tháng đó ở đúng bảng đã lập,
+/// không được lặng lẽ biến mất khi phòng ban của họ đổi.
+model AttendanceSheetMember {
+  id      String          @id @default(cuid())
+  sheetId String
+  sheet   AttendanceSheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  /// Bản sao của `sheet.periodMonth` — tồn tại DUY NHẤT để ràng buộc bên dưới
+  /// chạy được ở tầng database.
+  periodMonth DateTime @db.Date
+
+  createdAt DateTime @default(now())
+
+  /// Một người, một tháng, một bảng chấm công. Hai bảng cùng chứa một người
+  /// trong cùng kỳ nghĩa là cùng một ngày công được rà soát và chốt hai lần ở
+  /// hai nơi, và không có cách nào biết bảng nào là bảng thật.
+  @@unique([employeeId, periodMonth])
+  @@unique([sheetId, employeeId])
+  @@index([sheetId])
+  @@map("attendance_sheet_member")
+}
+
 model Holiday {
   id             String    @id @default(cuid())
   companyId      String
@@ -1009,6 +1087,15 @@ model RequestType {
   name                String
   /// Trừ vào đâu: "ANNUAL_LEAVE" | "NONE" | "UNPAID" | "OT_CREDIT" | "MAKEUP_CREDIT"
   deductFrom          String  @default("NONE")
+  /// Nghỉ theo đơn loại này có ĐƯỢC TÍNH CÔNG không.
+  ///
+  /// Tách hẳn khỏi `deductFrom`, vì hai câu hỏi khác nhau: `deductFrom` nói trừ
+  /// vào QUỸ nào, cờ này nói ngày đó có vào BẢNG CÔNG không. `NONE` đang gộp cả
+  /// "Công tác" (đủ công) lẫn "Xin ra ngoài" (không phải một ngày công), nên suy
+  /// từ nó ra là tính công sai cho một trong hai.
+  ///
+  /// Mặc định `false`: loại đơn khai thiếu thì KHÔNG tự dưng được trả lương.
+  isPaidLeave         Boolean @default(false)
   /// "DAY" | "HALF_DAY" | "HOUR"
   unit                String  @default("DAY")
   requiresAttachment  Boolean @default(false)

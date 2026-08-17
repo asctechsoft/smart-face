@@ -34,6 +34,7 @@ describe('PayrollEngineService', () => {
     findHoliday: jest.Mock;
     getNumber: jest.Mock;
     getBoolean: jest.Mock;
+    getShiftHolidayFactor: jest.Mock;
   };
 
   const officeShift = {
@@ -48,6 +49,11 @@ describe('PayrollEngineService', () => {
     lateToleranceMinutes: 5,
     earlyLeaveToleranceMinutes: 0,
     segments: [],
+    // Ngày công của ca và hệ số theo loại ngày — đầu vào của phép quy đổi công.
+    workDayCredit: 1,
+    normalDayFactor: 1,
+    weeklyRestFactor: 2,
+    holidayFactor: 3,
   };
 
   const nightShift = {
@@ -87,6 +93,8 @@ describe('PayrollEngineService', () => {
         .mockImplementation((_companyId: string, key: string) =>
           Promise.resolve(POLICY_DEFAULTS[key] === true),
         ),
+      // Mặc định không ca nào khai hệ số riêng cho một ngày lễ cụ thể.
+      getShiftHolidayFactor: jest.fn().mockResolvedValue(null),
     };
 
     // Sổ công làm bù được kiểm tra riêng ở `makeup.service.spec.ts`. Ở đây chỉ
@@ -323,6 +331,7 @@ describe('PayrollEngineService', () => {
         isHalfDay: false,
         code: 'ANNUAL_LEAVE',
         deductFrom: 'ANNUAL_LEAVE',
+        isPaidLeave: true,
         unit: 'DAY',
       },
     ]);
@@ -341,6 +350,7 @@ describe('PayrollEngineService', () => {
         isHalfDay: true,
         code: 'ANNUAL_LEAVE',
         deductFrom: 'ANNUAL_LEAVE',
+        isPaidLeave: true,
         unit: 'DAY',
       },
     ]);
@@ -357,6 +367,7 @@ describe('PayrollEngineService', () => {
         isHalfDay: false,
         code: 'UNPAID_LEAVE',
         deductFrom: 'UNPAID',
+        isPaidLeave: false,
         unit: 'DAY',
       },
     ]);
@@ -366,10 +377,210 @@ describe('PayrollEngineService', () => {
   });
 
   it('ngày lễ không có chấm công → HOLIDAY', async () => {
-    policy.findHoliday.mockResolvedValue({ name: 'Quốc khánh', otMultiplier: 3.0 });
+    policy.findHoliday.mockResolvedValue({ id: 'hol_1', name: 'Quốc khánh', otMultiplier: 3.0 });
 
     const result = await calc('2026-09-02');
     expect(result.status).toBe(DailyStatus.HOLIDAY);
+  });
+
+  // =========================================================================
+  //  Quy đổi công hưởng lương (ngày công × hệ số ngày)
+  //
+  //  Ca mẫu: 08:00–17:30 nghỉ trưa 60' → 8h30 công, workDayCredit = 1,
+  //  hệ số thường 1 / cuối tuần 2 / lễ 3.
+  // =========================================================================
+
+  /** Một ngày làm đúng ca hành chính, dùng lại cho nhiều test bên dưới. */
+  const fullOfficeDay = (date: string) =>
+    punches(
+      [AttendanceType.CHECK_IN, `${date}T01:00:00Z`],
+      [AttendanceType.CHECK_OUT, `${date}T10:30:00Z`],
+    );
+
+  it('đi làm đủ ca ngày thường → đúng 1 công', async () => {
+    payrolls.findCountablePunches.mockResolvedValue(fullOfficeDay('2026-08-03'));
+
+    const result = await calc('2026-08-03');
+    expect(result.standardDays).toBe(1);
+  });
+
+  // Trần là chốt chống trả gấp đôi. Trước đây công = phút làm / 480 nên nán lại
+  // một tiếng đã thành 1.13 công — cộng cả tháng ra vài ngày công không ai duyệt.
+  // Phần dôi ra vẫn được trả, nhưng qua OT (có đơn duyệt trước, có hệ số riêng).
+  it('làm quá giờ ca vẫn chỉ 1 công — phần dôi ra thuộc về OT', async () => {
+    payrolls.findCountablePunches.mockResolvedValue(
+      punches(
+        [AttendanceType.CHECK_IN, '2026-08-03T01:00:00Z'],
+        [AttendanceType.CHECK_OUT, '2026-08-03T13:00:00Z'], // ở lại tới 20:00
+      ),
+    );
+
+    const result = await calc('2026-08-03');
+    expect(result.standardDays).toBe(1);
+  });
+
+  it('đi làm đủ ca ngày Chủ nhật → 2 công (hệ số nghỉ tuần)', async () => {
+    payrolls.findCountablePunches.mockResolvedValue(fullOfficeDay('2026-08-02'));
+
+    const result = await calc('2026-08-02');
+    expect(result.standardDays).toBe(2);
+  });
+
+  it('đi làm đủ ca ngày lễ → 3 công (hệ số ngày lễ)', async () => {
+    policy.findHoliday.mockResolvedValue({ id: 'hol_1', name: 'Quốc khánh', otMultiplier: 3.0 });
+    payrolls.findCountablePunches.mockResolvedValue(fullOfficeDay('2026-09-02'));
+
+    const result = await calc('2026-09-02');
+    expect(result.standardDays).toBe(3);
+  });
+
+  // Điều 98 BLLĐ: nghỉ lễ hưởng NGUYÊN lương, còn 300% chỉ dành cho người thật
+  // sự đi làm ngày lễ. Nhân hệ số vào ngày cả công ty nghỉ là trả gấp ba cho
+  // một ngày không ai làm gì.
+  it('ngày lễ KHÔNG đi làm → 1 công, không nhân hệ số 3', async () => {
+    policy.findHoliday.mockResolvedValue({ id: 'hol_1', name: 'Quốc khánh', otMultiplier: 3.0 });
+
+    const result = await calc('2026-09-02');
+    expect(result.standardDays).toBe(1);
+  });
+
+  // Đi làm nửa buổi ngày lễ mà ra ít công hơn ở nhà thì không ai đi làm ngày lễ.
+  it('đi làm một phần ngày lễ vẫn không thấp hơn mức nghỉ nguyên ngày', async () => {
+    policy.findHoliday.mockResolvedValue({ id: 'hol_1', name: 'Quốc khánh', otMultiplier: 3.0 });
+    payrolls.findCountablePunches.mockResolvedValue(
+      punches(
+        [AttendanceType.CHECK_IN, '2026-09-02T01:00:00Z'],
+        [AttendanceType.CHECK_OUT, '2026-09-02T05:15:00Z'], // ~nửa ca
+      ),
+    );
+
+    const result = await calc('2026-09-02');
+    expect(result.standardDays).toBeGreaterThan(1);
+  });
+
+  it('hệ số khai riêng cho một ngày lễ thắng hệ số lễ chung của ca', async () => {
+    policy.findHoliday.mockResolvedValue({ id: 'hol_tet', name: 'Tết', otMultiplier: 3.0 });
+    policy.getShiftHolidayFactor.mockResolvedValue(4);
+    payrolls.findCountablePunches.mockResolvedValue(fullOfficeDay('2026-02-17'));
+
+    const result = await calc('2026-02-17');
+    expect(policy.getShiftHolidayFactor).toHaveBeenCalledWith('shift_office', 'hol_tet');
+    expect(result.standardDays).toBe(4);
+  });
+
+  // Công tác có `deductFrom = 'NONE'` nên điều kiện cũ (suy từ deductFrom) bỏ
+  // sót nó hoàn toàn: cả tuần đi công tác bị tính 0 công và gắn ABSENT.
+  it('đơn công tác đã duyệt được tính đủ công dù không trừ quỹ nào', async () => {
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
+      {
+        id: 'req_trip',
+        quantity: 1,
+        isHalfDay: false,
+        code: 'BUSINESS_TRIP',
+        deductFrom: 'NONE',
+        isPaidLeave: true,
+        unit: 'DAY',
+      },
+    ]);
+
+    const result = await calc('2026-08-03');
+    expect(result.standardDays).toBe(1);
+    expect(result.status).toBe(DailyStatus.ON_LEAVE);
+  });
+
+  // `deductFrom = 'NONE'` cũng là "Xin ra ngoài" và "Về sớm". Suy đơn có lương
+  // từ trường đó sẽ biến một tiếng ra ngoài thành trọn một ngày công.
+  it('đơn xin ra ngoài KHÔNG phải nghỉ có lương nên không tự sinh công', async () => {
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
+      {
+        id: 'req_out',
+        quantity: 2,
+        isHalfDay: false,
+        code: 'GO_OUT',
+        deductFrom: 'NONE',
+        isPaidLeave: false,
+        unit: 'HOUR',
+      },
+    ]);
+
+    const result = await calc('2026-08-03');
+    expect(result.standardDays).toBe(0);
+  });
+
+  // BR-REQ-03 cho phép duyệt đơn ngược quá khứ. Không có trần thì một đơn duyệt
+  // muộn cho ngày người đó ĐÃ đi làm đủ sẽ cộng thành 2 công.
+  it('đơn duyệt ngược cho ngày đã đi làm đủ vẫn bị chặn ở 1 công', async () => {
+    payrolls.findCountablePunches.mockResolvedValue(fullOfficeDay('2026-08-03'));
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
+      {
+        id: 'req_late',
+        quantity: 1,
+        isHalfDay: false,
+        code: 'ANNUAL_LEAVE',
+        deductFrom: 'ANNUAL_LEAVE',
+        isPaidLeave: true,
+        unit: 'DAY',
+      },
+    ]);
+
+    const result = await calc('2026-08-03');
+    expect(result.standardDays).toBe(1);
+  });
+
+  // Đơn nghỉ thứ Hai → Chủ nhật phủ lên cả hai ngày cuối tuần. Không chặn thì
+  // mỗi đơn nghỉ một tuần lại đẻ thêm 2 công cho hai ngày vốn không phải đi làm.
+  it('đơn nghỉ phủ lên cuối tuần KHÔNG có ca thì không sinh công', async () => {
+    policy.resolveShiftForDate.mockResolvedValue(null);
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
+      {
+        id: 'req_week',
+        quantity: 7,
+        isHalfDay: false,
+        code: 'ANNUAL_LEAVE',
+        deductFrom: 'ANNUAL_LEAVE',
+        isPaidLeave: true,
+        unit: 'DAY',
+      },
+    ]);
+
+    const result = await calc('2026-08-02'); // Chủ nhật
+    expect(result.standardDays).toBe(0);
+  });
+
+  // Ngược lại: Chủ nhật CÓ xếp ca là ngày phải đi làm, nghỉ ngày đó là nghỉ thật.
+  it('đơn nghỉ phủ lên cuối tuần CÓ xếp ca vẫn được tính công', async () => {
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
+      {
+        id: 'req_sun',
+        quantity: 1,
+        isHalfDay: false,
+        code: 'ANNUAL_LEAVE',
+        deductFrom: 'ANNUAL_LEAVE',
+        isPaidLeave: true,
+        unit: 'DAY',
+      },
+    ]);
+
+    const result = await calc('2026-08-02');
+    expect(result.standardDays).toBe(1);
+  });
+
+  it('ca 0.5 ngày công thì nghỉ nguyên ngày cũng chỉ được 0.5 công', async () => {
+    policy.resolveShiftForDate.mockResolvedValue({ ...officeShift, workDayCredit: 0.5 });
+    payrolls.findApprovedRequestsInRange.mockResolvedValue([
+      {
+        id: 'req_half_shift',
+        quantity: 1,
+        isHalfDay: false,
+        code: 'ANNUAL_LEAVE',
+        deductFrom: 'ANNUAL_LEAVE',
+        isPaidLeave: true,
+        unit: 'DAY',
+      },
+    ]);
+
+    const result = await calc('2026-08-03');
+    expect(result.standardDays).toBe(0.5);
   });
 
   // =========================================================================
@@ -415,7 +626,7 @@ describe('PayrollEngineService', () => {
   });
 
   it('OT ngày lễ dùng hệ số 3.0 (NFR-LEGAL-05)', async () => {
-    policy.findHoliday.mockResolvedValue({ name: 'Quốc khánh', otMultiplier: 3.0 });
+    policy.findHoliday.mockResolvedValue({ id: 'hol_1', name: 'Quốc khánh', otMultiplier: 3.0 });
     payrolls.findCountablePunches.mockResolvedValue(
       punches(
         [AttendanceType.CHECK_IN, '2026-09-02T01:00:00Z'],

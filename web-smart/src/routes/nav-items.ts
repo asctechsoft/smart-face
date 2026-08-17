@@ -112,3 +112,26 @@ export const SETTINGS_ITEMS: NavItem[] = [
     permission: 'audit.view',
   },
 ];
+
+/** Mọi đích điều hướng CÓ LỐI VÀO — sidenav cộng popover bánh răng. */
+const ALL_NAV_ITEMS: NavItem[] = [...NAV_GROUPS.flatMap((group) => group.items), ...SETTINGS_ITEMS];
+
+/**
+ * Mục này có đích điều hướng nào khác nằm BÊN TRONG nó không.
+ *
+ * Dùng để quyết định `end` của `NavLink`. Mặc định `NavLink` khớp theo TIỀN TỐ,
+ * nên `/requests` sáng lên cả khi đang ở `/requests/settings` — và người dùng
+ * thấy "Đơn từ" trên sidenav được tô trong lúc màn hình hiện ra là "Loại đơn và
+ * luồng duyệt". Hai chỗ nói hai điều khác nhau về cùng một trang.
+ *
+ * Không chuyển hết sang khớp TUYỆT ĐỐI: `/attendance/:id` và `/shifts/:id` là
+ * trang chi tiết NẰM TRONG chính mục đó, và ở đó việc tô sáng mục cha là đúng.
+ * Ranh giới thật sự là "bên dưới đây có một lối vào khác không" — có thì mục này
+ * dừng khớp tiền tố, nhường cho mục cụ thể hơn.
+ *
+ * So sánh kèm dấu `/` chứ không `startsWith(to)` trần: nếu không thì một đường
+ * dẫn tương lai kiểu `/requests-archive` cũng bị tính là nằm trong `/requests`.
+ */
+export function hasNestedNavDestination(to: string): boolean {
+  return ALL_NAV_ITEMS.some((item) => item.to !== to && item.to.startsWith(`${to}/`));
+}

@@ -17,6 +17,7 @@ export type Permission =
   | 'attendance.view'
   | 'attendance.adjust'
   | 'attendance.export'
+  | 'attendance.sheet'
   | 'request.view'
   | 'request.approve'
   | 'request.create_on_behalf'
@@ -51,6 +52,17 @@ const MATRIX: Record<Permission, SystemRole[]> = {
   // Quản lý KHÔNG được sửa công — chỉ Kế toán/HR và Admin công ty.
   'attendance.adjust': [SYSTEM_ADMIN, COMPANY_ADMIN, HR_PAYROLL],
   'attendance.export': [SYSTEM_ADMIN, COMPANY_ADMIN, MANAGER, HR_PAYROLL],
+  /**
+   * Lập và tổ chức BẢNG chấm công — khác hẳn `attendance.adjust`.
+   *
+   * Lập bảng, thêm/bớt người trong bảng chỉ đổi PHẠM VI rà soát, không đổi một
+   * con số công nào. Quản lý phải làm được việc này cho phòng mình (cùng ranh
+   * giới với `shift.assign`), trong khi sửa công vẫn là việc của Kế toán/HR.
+   *
+   * Gộp hai thứ vào `attendance.adjust` sẽ khoá Quản lý khỏi chính bảng của
+   * phòng họ; gộp vào `attendance.view` thì ai xem được cũng lập được bảng.
+   */
+  'attendance.sheet': [SYSTEM_ADMIN, COMPANY_ADMIN, MANAGER, HR_PAYROLL],
 
   'request.view': [SYSTEM_ADMIN, COMPANY_ADMIN, MANAGER, HR_PAYROLL],
   'request.approve': [SYSTEM_ADMIN, COMPANY_ADMIN, MANAGER, HR_PAYROLL],

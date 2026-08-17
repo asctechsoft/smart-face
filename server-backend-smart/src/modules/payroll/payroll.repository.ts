@@ -29,6 +29,8 @@ export interface ApprovedRequestRow {
   code: string;
   deductFrom: string;
   unit: string;
+  /** Nghỉ theo đơn này có được tính công không — xem `RequestType.isPaidLeave`. */
+  isPaidLeave: boolean;
   isHalfDay: boolean;
   quantity: number;
 }
@@ -272,7 +274,11 @@ export class PayrollRepository extends BaseRepository {
         startAt: { lt: dayEnd },
         endAt: { gte: dayStart },
       },
-      include: { requestType: { select: { code: true, deductFrom: true, unit: true } } },
+      include: {
+        requestType: {
+          select: { code: true, deductFrom: true, unit: true, isPaidLeave: true },
+        },
+      },
     });
 
     return requests.map((request) => ({
@@ -280,6 +286,7 @@ export class PayrollRepository extends BaseRepository {
       code: request.requestType.code,
       deductFrom: request.requestType.deductFrom,
       unit: request.requestType.unit,
+      isPaidLeave: request.requestType.isPaidLeave,
       isHalfDay: request.isHalfDay,
       quantity: Number(request.quantity),
     }));
@@ -378,13 +385,28 @@ export class PayrollRepository extends BaseRepository {
     });
   }
 
-  /** Nhân viên đưa vào lượt tính lại — hồ sơ chưa kích hoạt thì chưa có công. */
+  /**
+   * Nhân viên đưa vào lượt tính lại công.
+   *
+   * ⚠ KHÔNG lọc theo `status`, và đó là chốt đã trả giá một lần rồi.
+   *
+   * Trước đây hàm này loại `PENDING_ACTIVATION` với lý do "hồ sơ chưa kích hoạt
+   * thì chưa có công". Lý do đó sai: `PENDING_ACTIVATION` là hồ sơ HR đã tạo
+   * nhưng người đó chưa đăng nhập App lần nào — họ vẫn đi làm, vẫn có ca, vẫn
+   * gửi được đơn nghỉ (xem `EMPLOYABLE_STATUSES` phía Web). Với một công ty vừa
+   * triển khai thì TOÀN BỘ nhân sự nằm ở trạng thái này, nên lượt tính lại quét
+   * qua danh sách RỖNG, không ghi dòng nào, mà vẫn báo hoàn tất 100%.
+   *
+   * `TERMINATED` cũng phải có mặt: người nghỉ việc giữa tháng vẫn có công của
+   * những ngày đã đi làm, và đó chính là kỳ cần chốt lương lần cuối cho họ.
+   *
+   * Lọc duy nhất còn lại là `deletedAt` — hồ sơ đã xoá thì không còn gì để tính.
+   */
   async findCalculableEmployeeIds(companyId: string, employeeIds?: string[]): Promise<string[]> {
     const rows = await this.db().employee.findMany({
       where: {
         companyId,
         deletedAt: null,
-        status: { not: EmployeeStatus.PENDING_ACTIVATION },
         ...(employeeIds?.length ? { id: { in: employeeIds } } : {}),
       },
       select: { id: true },

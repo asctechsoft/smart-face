@@ -20,6 +20,8 @@ export interface AttendanceDaily {
   lateMinutes: number;
   earlyLeaveMinutes: number;
   otMinutes: number;
+  /** Hệ số OT áp cho ngày — `Decimal(4,2)`, tới tay client là chuỗi hoặc số. */
+  otMultiplier?: string | number | null;
   makeupMinutes: number;
   standardDays: string | number;
   status: string;
@@ -27,7 +29,8 @@ export interface AttendanceDaily {
   appliedRequestIds: string[];
   calculatedAt: string;
   breakdown?: Record<string, unknown> | null;
-  employee: EmployeeRef | null;
+  /** Lưới bảng chấm công trả về dòng công KHÔNG kèm nhân viên — dòng đã mang tên rồi. */
+  employee?: EmployeeRef | null;
 }
 
 export interface FraudFlagRef {

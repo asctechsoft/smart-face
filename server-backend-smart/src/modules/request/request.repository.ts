@@ -99,6 +99,8 @@ export interface RequestTypeWriteInput {
   code: string;
   name: string;
   deductFrom: string;
+  /** Nghỉ theo loại đơn này có được tính công không — xem `RequestType.isPaidLeave`. */
+  isPaidLeave: boolean;
   unit: string;
   requiresAttachment: boolean;
   requiresPreApproval: boolean;

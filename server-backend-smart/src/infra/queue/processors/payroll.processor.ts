@@ -64,12 +64,28 @@ export class PayrollProcessor extends WorkerHost {
   }
 
   private async recalculateRange(job: Job) {
-    const { companyId, from, to, employeeIds } = job.data as {
+    const { companyId, from, to, employeeIds, jobId } = job.data as {
       companyId: string;
       from: string;
       to: string;
       employeeIds?: string[];
+      /** Bản ghi `export_job` để client hỏi tiến độ. Job nội bộ không có. */
+      jobId?: string;
     };
+
+    // Có `jobId` nghĩa là người dùng đang NGỒI CHỜ trước một thanh tiến độ (nút
+    // "Cập nhật bảng công"). Chạy qua nhánh có theo dõi để họ thấy phần trăm và
+    // thấy lỗi, thay vì một job im lặng không biết bao giờ xong.
+    if (jobId) {
+      return this.payroll.runTrackedRecalculate(
+        companyId,
+        jobId,
+        parseWorkDate(from),
+        parseWorkDate(to),
+        employeeIds,
+      );
+    }
+
     return this.payroll.runRecalculateRange(
       companyId,
       parseWorkDate(from),

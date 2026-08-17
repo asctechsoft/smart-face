@@ -20,9 +20,14 @@ import { EmptyState } from '@/components/EmptyState';
 const DashboardPage = lazy(() =>
   import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
 );
-const AttendanceListPage = lazy(() =>
-  import('@/features/attendance/AttendanceListPage').then((m) => ({
-    default: m.AttendanceListPage,
+const AttendanceSheetListPage = lazy(() =>
+  import('@/features/attendance/AttendanceSheetListPage').then((m) => ({
+    default: m.AttendanceSheetListPage,
+  })),
+);
+const AttendanceSheetPage = lazy(() =>
+  import('@/features/attendance/AttendanceSheetPage').then((m) => ({
+    default: m.AttendanceSheetPage,
   })),
 );
 const RequestListPage = lazy(() =>
@@ -103,7 +108,9 @@ export function AppRouter() {
             </Route>
 
             <Route element={<RequirePermission permission="attendance.view" />}>
-              <Route path="/attendance" element={<AttendanceListPage />} />
+              {/* Danh sách bảng chấm công là cửa vào; lưới người × ngày nằm trong một bảng. */}
+              <Route path="/attendance" element={<AttendanceSheetListPage />} />
+              <Route path="/attendance/:id" element={<AttendanceSheetPage />} />
             </Route>
 
             <Route element={<RequirePermission permission="request.view" />}>

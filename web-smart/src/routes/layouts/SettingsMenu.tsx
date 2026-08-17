@@ -4,7 +4,7 @@ import { Button, Popover } from 'antd';
 import { Icon } from '@/components/Icon';
 import { useAuth } from '@/lib/auth/auth-context';
 import { hasPermission } from '@/lib/rbac/permissions';
-import { SETTINGS_ITEMS } from '@/routes/nav-items';
+import { SETTINGS_ITEMS, hasNestedNavDestination } from '@/routes/nav-items';
 
 /**
  * Popover "Thiết lập" — bánh răng đứng ngay cạnh chuông thông báo.
@@ -44,7 +44,15 @@ export function SettingsMenu() {
           <ul className="sf-nav-list">
             {visible.map((item) => (
               <li key={item.key}>
-                <NavLink to={item.to} className="sf-nav-item" onClick={() => setOpen(false)}>
+                {/* Cùng quy tắc `end` với sidenav — xem `hasNestedNavDestination`.
+                    Hôm nay không mục nào ở đây có trang con, nhưng để mặc định
+                    thì mục đầu tiên có trang con sẽ lặp lại đúng lỗi này. */}
+                <NavLink
+                  to={item.to}
+                  className="sf-nav-item"
+                  end={hasNestedNavDestination(item.to)}
+                  onClick={() => setOpen(false)}
+                >
                   {({ isActive }) => (
                     <>
                       <Icon name={item.icon} size={18} fill={isActive} />

@@ -48,6 +48,8 @@ Bảng phân quyền theo PA mục 3.9, mở rộng chi tiết theo module để
 | Xem chấm công | ✓ | ✓ | Phòng ban | ✓ | Cá nhân |
 | Xem ảnh/GPS lượt chấm công | ✓ | ✓ | Phòng ban | ✓ | Cá nhân |
 | Sửa/bổ sung công thủ công | ✓ | ✓ | ✗ | ✓ | ✗ |
+| Lập bảng chấm công, thêm/bớt CBNV trong bảng | ✓ | ✓ | Phòng ban | ✓ | ✗ |
+| Chốt / mở lại bảng chấm công | ✓ | ✓ | ✗ | ✓ | ✗ |
 | Duyệt đơn từ | ✓ | ✓ | Phòng ban | Theo cấu hình | ✗ |
 | Cấu hình chính sách công ty | ✓ | ✓ | ✗ | ✗ | ✗ |
 | Cấu hình quy tắc tính công/OT | ✓ | ✓ | ✗ | ✓ | ✗ |
@@ -118,24 +120,193 @@ Bảng phân quyền theo PA mục 3.9, mở rộng chi tiết theo module để
 | `FR-WEB-ATT-05` | Xuất danh sách chấm công ra Excel/PDF theo bộ lọc tuỳ chọn | Must |
 | `FR-WEB-ATT-06` | Hiển thị cờ nghi vấn gian lận trên từng dòng | Must |
 | `FR-WEB-ATT-07` | Chặn sửa dữ liệu thuộc kỳ lương đã chốt (`BR-07`) | Must |
+| `FR-WEB-ATT-08` | Lập **bảng chấm công** theo tháng × phòng ban; thành viên lấy từ bảng phân ca tương ứng | Must |
+| `FR-WEB-ATT-09` | Lưới người × ngày: ca được xếp, giờ chấm vào/ra, đơn từ trong tháng, tổng công của kỳ | Must |
+| `FR-WEB-ATT-10` | Nút **Cập nhật bảng công**: tính lại công cả kỳ cho thành viên trong bảng | Must |
+| `FR-WEB-ATT-11` | Dashboard tình hình chấm công trên đầu lưới, kiêm chú thích màu | Should |
 
-### 3.1. Màn hình danh sách
+### 3.1. Bảng chấm công — đơn vị làm việc của màn hình này
+
+Chấm công KHÔNG còn là một danh sách phẳng theo ngày. Nó tổ chức theo **bảng
+chấm công**, song sinh với bảng phân ca (mục 8) và cố ý như vậy: người dùng nghĩ
+theo đơn vị "bảng chấm công tháng 8 phòng Kho", và hai màn hình đọc được bằng
+cùng một phản xạ.
+
+Lý do đổi: danh sách phẳng trả lời được "ngày 12/08 ai đi muộn" nhưng không trả
+lời được câu hỏi thật sự của kế toán cuối tháng — "phòng Kho tháng 8 công thế
+nào, còn ai thiếu gì không". Muốn biết phải đọc 30 trang rồi tự cộng trong đầu.
+
+**Nguồn dữ liệu khi lập bảng** (theo thứ tự ưu tiên):
+
+1. **Bảng phân ca của cùng tháng** chạm tới các phòng ban đã chọn — nguồn đúng
+   nhất, vì ai đã được xếp lịch ca thì chắc chắn phát sinh công trong tháng.
+2. **CBNV đang làm việc của các phòng ban** — chỉ dùng khi tháng đó chưa lập bảng
+   phân ca nào. Không có lịch ca riêng thì công vẫn tính theo ca mặc định công ty,
+   nên bỏ trắng những người này là bỏ sót công thật.
+
+Bảng KHÔNG sở hữu số liệu nào. Công vẫn ở `AttendanceDaily`, lịch ca vẫn ở
+`ShiftAssignment`, đơn từ vẫn ở `LeaveRequest` — bảng chỉ khai báo phạm vi (kỳ
+nào, phòng ban nào, ai) rồi đọc ba nguồn đó. Vì vậy **xoá bảng chấm công không
+mất số liệu gì**, khác hẳn xoá bảng phân ca.
+
+| Mã | Quy tắc |
+|---|---|
+| `BR-SHEET-01` | Mỗi người mỗi tháng chỉ thuộc **một** bảng chấm công (ràng buộc ở tầng database). |
+| `BR-SHEET-02` | Thành viên được **chốt** lúc lập bảng; người chuyển phòng giữa tháng vẫn ở nguyên bảng đã lập. |
+| `BR-SHEET-03` | Lưới chỉ hiển thị trong đúng kỳ của bảng; ngày ngoài kỳ bị từ chối (`ATT_SHEET_OUT_OF_PERIOD`). |
+| `BR-SHEET-04` | Bảng `CLOSED` khoá việc thêm/bớt thành viên. Số liệu công vẫn tính lại được tới khi kỳ lương chốt. |
+| `BR-SHEET-05` | Mở lại bảng bị từ chối nếu kỳ lương phủ lên tháng đó đã chốt (`BR-07`). |
+
+### 3.2. Màn hình lưới người × ngày
+
+Mỗi ô có **hai tầng** thông tin, cố ý xếp chồng chứ không gộp: tầng trên là ca
+ĐƯỢC XẾP (kế hoạch, từ bảng phân ca), tầng dưới là giờ chấm vào–ra THỰC TẾ. Nền
+ô nói mức độ khớp giữa hai tầng. Gộp lại thành một con số thì mất đúng thứ đang
+cần tìm: người có ca mà không chấm công, và người chấm công mà không có ca.
 
 ```
-Bộ lọc: [Phòng ban ▾] [Khoảng ngày] [Trạng thái ▾] [Có cờ nghi vấn ☐] [Tìm nhân viên...]
+Bộ lọc: [Từ ngày] [Đến ngày] [Phòng ban ▾] [Tìm nhân viên...]
 
-┌────────────┬──────────┬───────┬───────┬────────┬──────────┬──────┬────────┐
-│ Nhân viên  │ Mã NV    │ Ngày  │ Vào   │ Ra     │ Tổng giờ │ T.thái│ Cờ    │
-├────────────┼──────────┼───────┼───────┼────────┼──────────┼──────┼────────┤
-│ Nguyễn V.Đ │ducnv.amo │ 03/08 │ 08:02 │ 17:35  │ 8h33     │ ✓    │        │
-│ Trần T.M   │mattt.amo │ 03/08 │ 08:47 │ 17:30  │ 7h43     │ Muộn │        │
-│ Lê V.H     │hulv.amo  │ 03/08 │ 07:58 │ —      │ —        │Thiếu │        │
-│ Phạm T.A   │anpt.amo  │ 03/08 │ 08:05 │ 17:32  │ 8h27     │ ✓    │ 🚩 GPS │
-└────────────┴──────────┴───────┴───────┴────────┴──────────┴──────┴────────┘
-                                                     [Xuất Excel] [Xuất PDF]
+┌──────────────┬───────┬───────┬───────┬───────┬───────┬──────────────┐
+│ Nhân viên    │ T2 03 │ T3 04 │ T4 05 │ T5 06 │ T6 07 │ Tổng kỳ      │
+├──────────────┼───────┼───────┼───────┼───────┼───────┼──────────────┤
+│ ☐ Nguyễn V.Đ │  HC   │  HC   │  HC   │  HC   │  HC   │ 21.5 công    │
+│   Kho        │ 08:02 │ 08:47 │ 07:58 │   ·   │ 08:05 │ 168h · muộn  │
+│              │ 17:35 │ 17:30 │ 17:32 │   ·   │ 17:32 │ 45p · OT 4h  │
+│              │ ĐỦ    │ THIẾU │ ĐỦ    │ ĐƠN   │ ĐỦ    │              │
+├──────────────┼───────┼───────┼───────┼───────┼───────┼──────────────┤
+│ ☐ Trần T.M   │  CĐ   │  CĐ   │   —   │  CĐ   │  CĐ   │ 19.0 công    │
+│   Kho        │ 22:01 │ 22:05 │   ·   │ 21:58 │ 22:03 │ 152h         │
+│              │ 06:03 │ 06:00 │   ·   │ 06:02 │ 06:01 │              │
+└──────────────┴───────┴───────┴───────┴───────┴───────┴──────────────┘
+
+Nền ô: Đủ công · Thiếu công · Không chấm công · Nghỉ không tính công · Ngày lễ · Cuối tuần
 ```
 
-### 3.2. Màn hình chi tiết một lượt chấm công
+#### Dashboard tình hình — đặt TRÊN lưới
+
+Hàng ô thống kê đứng ngay trên lưới, mỗi loại một ô: số ngày và tỉ lệ. Nó **đồng
+thời là chú thích màu** — nền mỗi ô thống kê chính là nền của ô tương ứng trên
+lưới, nên không cần một bảng chú thích thứ hai.
+
+```
+┌──────────────┬──────────────┬──────────────┬──────────────┐
+│ ⛔ Không chấm│ 🕐 Thiếu công│ ✓ Đủ công    │ 📅 Nghỉ không│
+│    công      │              │              │    tính công │
+│  12 ngày·4%  │  8 ngày·3%   │ 240 ngày·82% │  5 ngày·2%   │
+└──────────────┴──────────────┴──────────────┴──────────────┘
+```
+
+Ba lý do cho hình dạng này:
+
+- **Trên chứ không dưới.** Lưới cuộn ngang và dài; chú thích nằm dưới thì phải
+  cuộn qua hết bảng mới đọc được thứ cần biết để đọc chính bảng đó.
+- **Ô thống kê, không phải biểu đồ.** Sáu con số rời rạc không có trục chung nào
+  để so; một biểu đồ cột ở đây chỉ thêm mực chứ không thêm nghĩa.
+- **Thứ tự theo mức cần xử lý**, không theo bảng chữ cái: *Không chấm công* đứng
+  đầu vì đó là thứ phải sửa trước khi chốt.
+
+Màu không đứng một mình (docs/16 mục 14.2 điều 1): mỗi ô có ô màu + biểu tượng +
+nhãn chữ + con số. Con số mặc **màu chữ thường**, không mặc màu trạng thái — màu
+là việc của ô vuông bên cạnh.
+
+⚠ Mực trên các ô này ghim vào nấc ramp cố định (`--sf-neutral-900/600`), KHÔNG
+dùng `--sf-on-surface`. Nền tone là màu sáng cố định mà khối `prefers-color-scheme:
+dark` không định nghĩa lại, trong khi `--sf-on-surface` thì có — dùng token ngữ
+nghĩa ở đây là chữ trắng trên nền sáng ngay khi bật chế độ tối.
+
+Con số đếm trên **trang đang hiển thị** (mặc định 25 CBNV), không phải cả bảng —
+phạm vi được ghi rõ ngay cạnh tiêu đề để không ai đọc nhầm thành toàn bảng.
+
+**Nền ô trả lời đúng MỘT câu hỏi: ngày này đủ công chưa?** Đó là câu người rà
+công quét cả bảng để tìm, và một kênh màu chỉ chuyển tải được một câu hỏi.
+
+Hệ quả quan trọng: **nghỉ phép có lương nguyên ngày tô "Đủ công"**, không tô màu
+riêng cho đơn — vì nó đúng là đủ công. Thông tin "ngày này nghỉ theo đơn" không
+mất đi: ô vẫn đóng dấu **ĐƠN**, `aria-label` vẫn đọc số đơn liên quan, và chi tiết
+ô liệt kê từng đơn. Dùng màu để nói *nguồn gốc* của công thì mất chỗ để nói *đủ
+hay thiếu* — mà thiếu công mới là thứ phải sửa trước khi chốt.
+
+Vì vậy nền "Nghỉ không tính công" chỉ còn dành cho nghỉ **không** hưởng lương:
+0 công nhưng có lý do chính đáng, khác hẳn vắng mặt không phép.
+
+Mốc "đủ" là **ngày công của ca** (`workDayCredit`), không phải hằng số 1: ca nửa
+ngày thì 0.5 công đã là đủ.
+
+| Nền | Nghĩa |
+|---|---|
+| Đủ công | `standardDays ≥ workDayCredit` — do đi làm, do đơn có lương, hoặc cả hai |
+| Thiếu công | Có công nhưng chưa đạt một ngày công của ca |
+| Không chấm công | Có ca, không lượt chấm nào, không đơn — ô cần rà trước khi chốt |
+| Nghỉ không tính công | Có đơn nhưng 0 công (nghỉ không lương) |
+| Ngày lễ | Giữ riêng vì hệ số OT của ngày đó khác hẳn |
+| Cuối tuần | Không có ca và không ai đi làm |
+
+Nền ô **không phải kênh thông tin duy nhất** (docs/16 mục 14.2 điều 1): mỗi ô có
+`aria-label` đọc ra tên người, ngày, ca, giờ chấm, phân loại và số đơn liên quan.
+
+Bấm vào một ô mở chi tiết: thông tin ca (giờ ca, số giờ công), giờ chấm vào–ra,
+**số công hưởng lương** (`standardDays` do máy tính công trả về) đặt cạnh **số
+công đi làm thực tế** (quy đổi từ giờ làm trên số giờ công của ca), giờ tăng ca
+kèm hệ số, và toàn bộ đơn từ chạm vào ngày đó. Hai con số công cố ý đứng cạnh
+nhau: một người nghỉ phép cả tháng vẫn có 22 công hưởng lương và 0 công đi làm —
+gộp thành một ô thì không ai phát hiện được điều đó khi liếc bảng.
+
+Đơn từ hiển thị cả `PENDING`, phân biệt rõ với "đã tính vào công"
+(`appliedRequestIds`): đơn chờ duyệt CHƯA vào công, và duyệt sau khi chốt bảng là
+phải tính lại cả kỳ.
+
+**Ô cuối tuần không có ca thì không nhắc tới đơn.** Một đơn nghỉ từ thứ Hai tới
+Chủ nhật phủ lên cả thứ Bảy và Chủ nhật, nhưng hai ngày đó vốn đã không đi làm —
+tô chúng thành "nghỉ theo đơn" là nói rằng người ta tiêu phép vào ngày nghỉ tuần,
+và làm cả dải ô cuối tuần trong tháng đổi màu vì một cái đơn duy nhất. Ô đó hiện
+nền "Cuối tuần" và bỏ dấu ĐƠN; đơn vẫn còn nguyên trong chi tiết ô khi bấm vào.
+
+Hai ngoại lệ giữ nguyên thông tin: **ngày lễ** rơi vào cuối tuần (hệ số OT 300%
+phải nhìn thấy được), và cuối tuần mà người đó **thật sự có chấm công** — khi ấy
+ô hiển thị theo giờ làm thực tế như ngày thường.
+
+#### Nút "Cập nhật bảng công" (`FR-WEB-ATT-10`)
+
+`AttendanceDaily` là bảng **đã tính** (ADR-08). Nó chỉ đổi khi có gì đó kích hoạt
+tính lại: một lượt chấm công mới, một hiệu chỉnh (`BR-ADJ-04`), hoặc job chạy
+đêm. **Ba việc KHÔNG tự kích hoạt nó**, mà cả ba đều hay xảy ra ngay trước lúc
+chốt công:
+
+- Đơn từ duyệt ngược cho ngày đã qua (`BR-REQ-03`).
+- Sửa cấu hình ca, hệ số ngày, hoặc `isPaidLeave` của một loại đơn.
+- Xếp lại ca trong bảng phân ca của tháng.
+
+Không có nút này thì người rà công nhìn thấy số cũ mà **không có cách nào biết
+nó cũ** — đó là kiểu sai nguy hiểm nhất của một bảng công.
+
+Chạy nền và trả `202` + `jobId`: một bảng 50 người × 31 ngày là 1550 lượt tính,
+giữ kết nối HTTP suốt thời gian đó sẽ chạm timeout của proxy trước khi xong. Giao
+diện hiện thanh tiến độ và **tự làm mới lưới khi job xong** — làm mới ngay lúc
+bấm chỉ tải lại đúng những con số cũ rồi đứng im, và người dùng kết luận nút
+không hoạt động.
+
+Job **idempotent** (`NFR-REL-06`) nên bấm nhiều lần vô hại. Ngày thuộc kỳ lương
+đã chốt bị **bỏ qua, không ghi đè** (`BR-07`). Bảng đã chốt vẫn cập nhật được số
+liệu — chốt bảng khoá việc sửa *thành viên*, không khoá số liệu.
+
+Quyền: `attendance.sheet` (gồm Quản lý), không phải `attendance.adjust` — tính
+lại không sửa gì thủ công, nó chạy lại đúng luật đã cấu hình trên dữ liệu đã có.
+
+**Phạm vi tính lại KHÔNG lọc theo trạng thái nhân viên.** Chốt này đã trả giá một
+lần: lượt tính lại từng loại `PENDING_ACTIVATION` với lý do "hồ sơ chưa kích hoạt
+thì chưa có công". Lý do đó sai — đó là hồ sơ HR đã tạo nhưng người ta chưa đăng
+nhập App lần nào; họ vẫn đi làm, vẫn có ca, vẫn gửi đơn nghỉ. Với công ty vừa
+triển khai thì **toàn bộ** nhân sự nằm ở trạng thái này, nên lượt tính lại quét
+qua danh sách rỗng, không ghi dòng nào, mà vẫn báo hoàn tất 100%.
+
+`TERMINATED` cũng phải có mặt: người nghỉ việc giữa tháng vẫn có công của những
+ngày đã đi làm, và đó chính là kỳ cần chốt lương lần cuối cho họ. Lọc duy nhất
+còn lại là hồ sơ đã xoá.
+
+### 3.3. Màn hình chi tiết một lượt chấm công
+
+Mở từ nút "Xem từng lượt chấm công" trong chi tiết ô của lưới.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -160,7 +331,7 @@ Bộ lọc: [Phòng ban ▾] [Khoảng ngày] [Trạng thái ▾] [Có cờ nghi
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 3.3. Quy tắc hiệu chỉnh công thủ công
+### 3.4. Quy tắc hiệu chỉnh công thủ công
 
 | Mã | Quy tắc |
 |---|---|
@@ -171,12 +342,28 @@ Bộ lọc: [Phòng ban ▾] [Khoảng ngày] [Trạng thái ▾] [Có cờ nghi
 | `BR-ADJ-05` | Không cho hiệu chỉnh dữ liệu thuộc kỳ lương đã chốt. Muốn sửa phải mở lại kỳ (thao tác riêng, có log). |
 | `BR-ADJ-06` | Nhân viên xem được lịch sử hiệu chỉnh liên quan tới mình (minh bạch, giảm khiếu nại). |
 
-### 3.4. Tiêu chí chấp nhận
+### 3.5. Tiêu chí chấp nhận
 
 - [ ] Quản lý phòng ban A không xem được chấm công của phòng ban B.
 - [ ] Sửa giờ vào từ 08:47 thành 08:00 tạo bản ghi điều chỉnh, bản ghi gốc vẫn còn nguyên và xem được.
 - [ ] Xuất Excel 5000 dòng không làm treo trình duyệt — xử lý qua queue, trả link tải.
 - [ ] Ảnh chấm công truy cập qua presigned URL hết hạn sau 5 phút, không phải link công khai vĩnh viễn.
+- [ ] Lập bảng chấm công tháng 8 phòng Kho kéo đúng tập CBNV mà bảng phân ca tháng 8 của phòng đó đang phủ.
+- [ ] Tháng chưa có bảng phân ca thì bảng chấm công vẫn lập được, và ghi rõ nguồn là "Từ phòng ban".
+- [ ] Một người đã nằm trong bảng chấm công khác của cùng tháng bị từ chối kèm tên cụ thể, không phải lỗi ràng buộc thô của database.
+- [ ] Đơn nghỉ phép đã duyệt phủ lên ô làm ô đó KHÔNG bị tô như vắng mặt.
+- [ ] Nghỉ phép **có lương** nguyên ngày tô nền **Đủ công** và vẫn hiện dấu ĐƠN trên ô.
+- [ ] Nghỉ **không lương** nguyên ngày tô nền "Nghỉ không tính công", không phải "Đủ công".
+- [ ] Ca có `workDayCredit = 0.5`: làm đủ ca đó tô **Đủ công**, không phải "Thiếu công".
+- [ ] Con số trên dashboard khớp chính xác số ô cùng màu đếm được trên lưới.
+- [ ] Đổi bộ lọc khoảng ngày hoặc sang trang khác → dashboard cập nhật theo, và ghi đúng phạm vi đang đếm.
+- [ ] Đơn nghỉ từ thứ Hai tới Chủ nhật KHÔNG làm ô thứ Bảy/Chủ nhật (không ca) đổi màu hay hiện dấu ĐƠN.
+- [ ] Ngày lễ rơi vào thứ Bảy vẫn hiện nền ngày lễ, không bị nuốt thành ô cuối tuần.
+- [ ] Xoá bảng chấm công không làm mất bản ghi công nào — lập lại bảng thấy lại đúng số liệu cũ.
+- [ ] Duyệt một đơn nghỉ cho ngày đã qua, bấm **Cập nhật bảng công** → ô ngày đó đổi màu và số công đổi theo.
+- [ ] Bấm Cập nhật hai lần liên tiếp cho cùng dữ liệu ra kết quả giống hệt (idempotent).
+- [ ] Cập nhật bảng của tháng đã chốt lương → số liệu giữ nguyên, job vẫn báo `COMPLETED`.
+- [ ] Công ty mà **toàn bộ** nhân sự còn ở `PENDING_ACTIVATION` vẫn tính ra công — không phải bảng trắng.
 
 ---
 
@@ -522,12 +709,51 @@ Trạng thái ĐÃ CHỐT:            KHOÁ hoàn toàn — không chấm, khôn
 ### 7.3. Công thức tính (khung cấu hình)
 
 ```
-CÔNG CHUẨN
+CÔNG HƯỞNG LƯƠNG (standardDays)
   workedMinutes = Σ (thời lượng các cặp vào/ra hợp lệ trong ca)
                   - thời gian nghỉ trưa (nếu ca có)
-                  - thời gian ra ngoài không được tính công
-  standardDays  = làm tròn(workedMinutes / phútMộtCôngChuẩn, quy tắc làm tròn)
+                  + phút làm bù đã ghi nhận
 
+  ngàyCông  = shift.workDayCredit            ← ca hôm đó đáng mấy công
+  hệSốNgày  = ngày lễ    → shift.holidayFactor (hoặc hệ số khai riêng cho lễ đó)
+              cuối tuần  → shift.weeklyRestFactor
+              ngày thường→ shift.normalDayFactor
+
+  côngĐiLàm   = min(1, workedMinutes / giờCa) × ngàyCông × hệSốĐiLàm
+                hệSốĐiLàm = ngày lễ ? (hệSốNgày − 1) : hệSốNgày
+  côngNghỉLễ  = ngày lễ ? ngàyCông : 0                        ← hệ số 1
+  côngTheoĐơn = đơn có isPaidLeave ? (nửa ngày ? 0.5 : 1) × ngàyCông : 0
+                chỉ tính khi ngày đó CÓ nghĩa vụ làm việc
+
+  standardDays = min( max(côngNghỉLễ, côngTheoĐơn) + côngĐiLàm,
+                      ngàyCông × hệSốNgày )
+```
+
+**Bốn chốt của công thức trên, và lý do từng cái tồn tại:**
+
+| Chốt | Vì sao |
+|---|---|
+| Hệ số ngày CHỈ nhân vào phần đi làm | Điều 98 BLLĐ: nghỉ lễ hưởng **nguyên** lương; 300% chỉ dành cho người THẬT SỰ đi làm ngày lễ. Nhân hệ số vào ngày cả công ty nghỉ là trả gấp ba cho một ngày không ai làm gì. |
+| Ngày lễ đi làm lấy `hệSốNgày − 1` | Phần công nền đã tính hệ số 1 ở `côngNghỉLễ`. Không trừ đi 1 thì làm đủ ngày lễ ra 1 + 3 = 4 công. |
+| `max` chứ không cộng ở phần không đi làm | Nghỉ phép rơi đúng ngày lễ vẫn là MỘT ngày. Cộng hai khoản cho ra 2 công cho một ngày không ai làm gì. |
+| Trần `ngàyCông × hệSốNgày` | BR-REQ-03 cho duyệt đơn ngược quá khứ. Đơn duyệt muộn cho ngày người đó đã đi làm đủ sẽ cộng thành 2 công. Phần làm thêm ngoài ca không mất đi — nó được trả qua `otMinutes × hệSốOT`. |
+
+**"Đơn được hưởng lương" đọc từ `RequestType.isPaidLeave`, KHÔNG suy từ `deductFrom`.**
+Hai trường trả lời hai câu hỏi khác nhau: `deductFrom` nói trừ vào **quỹ** nào,
+`isPaidLeave` nói ngày đó có vào **bảng công** không. Suy từ `deductFrom` sai cả
+hai chiều — `NONE` đang gộp "Công tác" (đủ công) với "Xin ra ngoài" (không phải
+một ngày công). Bật/tắt trong *Loại đơn và luồng duyệt*.
+
+**`côngTheoĐơn` chỉ tính khi ngày đó có nghĩa vụ làm việc** (có xếp ca, hoặc là
+ngày thường không phải lễ). Đơn nghỉ thứ Hai → Chủ nhật phủ lên cả hai ngày cuối
+tuần; không có chốt này thì mỗi đơn nghỉ một tuần lại đẻ thêm 2 công cho hai
+ngày vốn không phải đi làm.
+
+Mọi mảnh trên được ghi vào `AttendanceDaily.breakdown.dayCredit` để giải trình
+"con số này ra từ đâu" khi có khiếu nại — màn chi tiết ô của bảng chấm công đọc
+thẳng từ đó, không tính lại.
+
+```
 ĐI MUỘN
   lateMinutes = max(0, checkInAt - shiftStart - phútTrễChoPhép)
   → tính vi phạm nếu lateMinutes > 0
@@ -559,6 +785,14 @@ PHẠT
 - [ ] Ca đêm 22:00–06:00 được tính vào đúng ngày bắt đầu ca, không tách thành 2 ngày công.
 - [ ] Sau khi chốt kỳ, thử chấm công vào ngày thuộc kỳ đó → bị chặn với `ATT_PERIOD_LOCKED`.
 - [ ] Mở lại kỳ đã chốt yêu cầu nhập lý do và ghi audit log.
+- [ ] Đi làm đủ ca ngày thường ra **đúng 1 công**, dù ở lại thêm 2 tiếng (phần dôi ra vào OT).
+- [ ] Đơn nghỉ phép nguyên ngày đã duyệt ra **đủ công** của ca hôm đó.
+- [ ] Đơn công tác (`deductFrom = NONE`, `isPaidLeave = true`) ra **đủ công**, không phải 0 công.
+- [ ] Đơn xin ra ngoài (`deductFrom = NONE`, `isPaidLeave = false`) **không** tự sinh công.
+- [ ] Ngày lễ không đi làm ra **1 công**; đi làm đủ ca ngày lễ ra **3 công**.
+- [ ] Làm nửa ca ngày lễ vẫn ra **nhiều hơn** mức nghỉ nguyên ngày.
+- [ ] Đơn duyệt ngược cho ngày đã đi làm đủ vẫn bị chặn ở **1 công**, không thành 2.
+- [ ] Đơn nghỉ dài ngày phủ lên Chủ nhật **không có ca** thì ngày đó ra 0 công.
 
 ---
 

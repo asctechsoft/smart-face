@@ -38,6 +38,7 @@ export function RequestTypeFormModal({
     code: draft.code ?? existing?.code ?? '',
     name: draft.name ?? existing?.name ?? '',
     deductFrom: draft.deductFrom ?? existing?.deductFrom ?? 'NONE',
+    isPaidLeave: draft.isPaidLeave ?? existing?.isPaidLeave ?? false,
     unit: draft.unit ?? existing?.unit ?? 'DAY',
     requiresAttachment: draft.requiresAttachment ?? existing?.requiresAttachment ?? false,
     requiresPreApproval: draft.requiresPreApproval ?? existing?.requiresPreApproval ?? false,
@@ -155,6 +156,19 @@ export function RequestTypeFormModal({
             onChange={(days) => patch({ maxDaysPerRequest: days ?? undefined })}
           />
         </Field>
+
+        {/*
+          Đặt NGAY DƯỚI "Trừ vào quỹ nào" vì hai ô này hay bị hiểu là một. Chúng
+          trả lời hai câu khác nhau: quỹ nào bị trừ, và ngày đó có vào bảng công
+          không. "Công tác" không trừ quỹ nào nhưng vẫn là ngày làm việc đủ công;
+          "Xin ra ngoài" cũng không trừ quỹ nào và KHÔNG phải một ngày công.
+        */}
+        <ToggleRow
+          title="Nghỉ theo đơn này được tính công"
+          description="Bật cho nghỉ phép năm, công tác, nghỉ ốm hưởng lương: nghỉ nguyên ngày sẽ được tính đủ công của ca hôm đó. Tắt cho nghỉ không lương, xin ra ngoài, về sớm."
+          checked={Boolean(value.isPaidLeave)}
+          onChange={(isPaidLeave) => patch({ isPaidLeave })}
+        />
 
         <ToggleRow
           title="Bắt buộc có file minh chứng"

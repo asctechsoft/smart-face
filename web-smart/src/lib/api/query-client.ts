@@ -47,6 +47,12 @@ export const qk = {
   attendanceDetail: (id: string) => ['attendance', 'detail', id] as const,
   attendanceAdjustments: (employeeId: string) => ['attendance', 'adjustments', employeeId] as const,
 
+  // Bảng chấm công nằm dưới `attendance` để một lần hiệu chỉnh công là cả lưới
+  // lẫn chi tiết ngày cùng được làm mới bằng `invalidate(['attendance'])`.
+  attendanceSheets: (params: unknown) => ['attendance', 'sheets', params] as const,
+  attendanceSheet: (id: string) => ['attendance', 'sheet', id] as const,
+  attendanceSheetBoard: (params: unknown) => ['attendance', 'sheet-board', params] as const,
+
   requests: ['requests'] as const,
   requestList: (params: unknown) => ['requests', 'list', params] as const,
   requestPending: (params: unknown) => ['requests', 'pending', params] as const,
