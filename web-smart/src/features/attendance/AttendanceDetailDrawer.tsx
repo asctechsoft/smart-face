@@ -130,7 +130,20 @@ function AttendanceLogCard({ log, timezone }: { log: AttendanceLog; timezone: st
         />
       ) : null}
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 220px) 1fr', gap: 24 }}>
+      {/*
+        Cột ảnh GHIM 220px, cột nội dung `minmax(0, 1fr)`.
+
+        Trước đây là `minmax(0, 220px) 1fr`, và cả hai vế đều sai một cách âm
+        thầm. Vế phải `1fr` mang ngưỡng tối thiểu tự động bằng min-content của
+        nội dung bên trong; khi `DetailGrid` bung ra ba cột trường (3 × 200px +
+        khoảng cách = 632px) thì nó đòi nhiều hơn chỗ còn lại. Vế trái cho phép
+        co xuống tận 0, nên nó là bên chịu trận: cột ảnh bị bóp còn bằng chữ dài
+        nhất, nhãn xuống dòng từng tiếng một ("ẢNH / LÚC / CHẤM / CÔNG").
+
+        `minmax(0, 1fr)` gỡ ngưỡng tối thiểu đó, để cột nội dung co lại và tự
+        giảm số cột trường — đúng việc mà `auto-fit` sinh ra để làm.
+      */}
+      <div style={{ display: 'grid', gridTemplateColumns: '220px minmax(0, 1fr)', gap: 24 }}>
         {/* ── Ảnh chụp lúc chấm công ──────────────────────────────────── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span className="sf-label-md">Ảnh lúc chấm công</span>

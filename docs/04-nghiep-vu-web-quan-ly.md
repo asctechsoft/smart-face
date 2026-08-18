@@ -124,6 +124,10 @@ Bảng phân quyền theo PA mục 3.9, mở rộng chi tiết theo module để
 | `FR-WEB-ATT-09` | Lưới người × ngày: ca được xếp, giờ chấm vào/ra, đơn từ trong tháng, tổng công của kỳ | Must |
 | `FR-WEB-ATT-10` | Nút **Cập nhật bảng công**: tính lại công cả kỳ cho thành viên trong bảng | Must |
 | `FR-WEB-ATT-11` | Dashboard tình hình chấm công trên đầu lưới, kiêm chú thích màu | Should |
+| `FR-WEB-ATT-12` | **Theo dõi công việc trong ngày**: lưới người × giờ, trạng thái làm việc thời gian thực | Must |
+| `FR-WEB-ATT-13` | Phân biệt được người đang làm, đang ra ngoài, chưa đến, nghỉ theo đơn, quên chấm ra | Must |
+| `FR-WEB-ATT-14` | Nhắc chấm công tới danh sách CBNV chọn trên lưới theo dõi | Should |
+| `FR-WEB-ATT-15` | Duyệt/từ chối nhanh đơn xin ra ngoài ngay trên lưới theo dõi | Should |
 
 ### 3.1. Bảng chấm công — đơn vị làm việc của màn hình này
 
@@ -342,7 +346,86 @@ Mở từ nút "Xem từng lượt chấm công" trong chi tiết ô của lư�
 | `BR-ADJ-05` | Không cho hiệu chỉnh dữ liệu thuộc kỳ lương đã chốt. Muốn sửa phải mở lại kỳ (thao tác riêng, có log). |
 | `BR-ADJ-06` | Nhân viên xem được lịch sử hiệu chỉnh liên quan tới mình (minh bạch, giảm khiếu nại). |
 
-### 3.5. Tiêu chí chấp nhận
+### 3.5. Màn hình Theo dõi công việc (`FR-WEB-ATT-12`…`FR-WEB-ATT-15`)
+
+Màn hình riêng, có mục riêng trên sidenav (`/work-status`), **không** phải một tab
+của bảng chấm công. Lý do nằm ở chỗ nó phục vụ một người dùng khác, vào một thời
+điểm khác, để trả lời một câu hỏi khác:
+
+| | Bảng chấm công (mục 3.1–3.2) | Theo dõi công việc |
+|---|---|---|
+| Câu hỏi | "tháng này ai thiếu công" | "**bây giờ** ai đang ở đâu" |
+| Ai dùng | Kế toán, cuối tháng | Quản lý trực tiếp, trong ngày |
+| Trục ngang | NGÀY, cả tháng | GIỜ, trong đúng một ngày |
+| Nguồn | `attendance_daily` (đã tính) | `attendance_log` (thô) + `attendance_daily` |
+| Tập dòng | thành viên đã chốt của một bảng | mọi CBNV đang làm việc trong phạm vi quyền |
+
+Không nhồi được vào cùng một lưới: một ngày trong bảng chấm công là một ô rộng
+62px, và trong 62px đó không có chỗ nào để vẽ khoảng ra ngoài lúc 13:00–14:10 —
+mà chính khoảng đó là thứ người mở màn hình này đang tìm.
+
+#### Vì sao phải đọc bản ghi thô
+
+`attendance_daily` chỉ giữ **giờ vào đầu tiên** và **giờ ra cuối cùng**. Với hai
+con số đó, người đang ngồi làm và người vừa quẹt `BREAK_OUT` đi ra ngoài trông
+giống hệt nhau — cả hai đều là "vào 08:02, chưa ra". Vì vậy màn này đọc thẳng
+`attendance_log`, và bù lại bằng phạm vi đúng **một ngày**, tối đa 2000 CBNV mỗi
+lượt (vượt trần thì màn hình phải nói ra, không cắt im lặng).
+
+#### Bốn tầng của một dòng
+
+Mỗi dòng là một thanh trên trục giờ, xếp chồng bốn tầng — gộp lại thành một
+thanh sẽ mất đúng thứ cần tìm là khoảng **lệch** giữa kế hoạch và thực tế:
+
+1. **Ca được xếp** (nền nhạt) — đáng lẽ phải có mặt lúc nào. Khoảng nghỉ giữa ca
+   khoét sáng ra, để không ai đọc nhầm giờ nghỉ trưa thành vắng mặt.
+2. **Đơn từ** (nền xanh mòng két) — hôm nay được phép vắng lúc nào. Đơn **chờ
+   duyệt** vẽ gạch chéo chứ không tô đặc: nó chưa cho phép ai vắng mặt.
+3. **Thực tế đã làm** (thanh đậm) — cắt rời ở mỗi đoạn ra ngoài.
+4. **Mốc quẹt thẻ** (vạch dọc) — từng lượt một, kèm giờ, chi nhánh, phương thức.
+
+Cộng một vạch đỏ dọc đánh dấu "bây giờ", chỉ vẽ khi đang xem hôm nay.
+
+#### Mười một trạng thái
+
+Xếp theo mức độ **cần xử lý**, không theo bảng chữ cái:
+
+| Trạng thái | Khi nào |
+|---|---|
+| Chưa đến (quá giờ) | có ca, chưa quẹt lần nào, đã quá giờ vào ca + dung sai |
+| Vắng | ngày đã qua, có ca, không quẹt, không đơn nào che |
+| Quên chấm ra | đã quẹt vào, quá giờ tan ca > 90 phút mà chưa quẹt ra |
+| Đang ra ngoài | `BREAK_OUT` chưa có `BREAK_IN`, **hoặc** đang trong khoảng đơn `GO_OUT` đã duyệt |
+| Đang làm | đã quẹt vào, chưa quẹt ra, chưa quá giờ tan ca |
+| Đã về | đã quẹt ra |
+| Chưa đến | có ca, chưa tới giờ vào ca — chưa có gì bất thường |
+| Công tác | đơn `BUSINESS_TRIP` cả ngày đã duyệt — là ngày ĐI LÀM, chỉ là làm ở chỗ khác |
+| Nghỉ theo đơn | đơn nghỉ cả ngày đã duyệt |
+| Ngày lễ | — |
+| Không có ca | không được xếp ca và không có ca mặc định áp cho ngày |
+
+Ba quy tắc dễ hiểu nhầm:
+
+1. **Lượt quẹt thắng đơn từ.** Người có đơn nghỉ cả ngày mà vẫn tới quẹt thẻ hiện
+   "Đang làm", không phải "Nghỉ theo đơn" — giấu đi là giấu mất đúng cái bất
+   thường màn hình này sinh ra để tìm. Đơn vẫn hiện trên dòng thời gian.
+2. **Đơn chờ duyệt không che gì cả.** Chưa duyệt thì người đó vẫn phải có mặt.
+3. **Không được xếp ca thì áp ca mặc định** (`BR-ATT-04`). Bỏ bước này thì công ty
+   không dùng phân ca sẽ thấy cả màn hình ghi "Không có ca".
+
+#### Ba điều màn hình phải nói thật
+
+- **Dải thống kê đầu trang đếm trên TOÀN phạm vi bộ lọc**, không phải trang đang
+  xem, và nói rõ điều đó. Nó cũng **không** đổi theo bộ lọc trạng thái: bấm ô
+  "Chưa đến" để lọc mà chính ô đó tụt về số dòng đang hiện thì người dùng mất
+  luôn mốc so sánh vừa dùng để bấm.
+- **Chỉ tự làm mới khi đang xem hôm nay** (mỗi 60 giây). Ngày đã qua không đổi
+  nữa, làm mới chỉ khiến bảng nháy dưới tay người đang đọc.
+- **Nhắc chấm công gửi tới đúng danh sách đã chọn**, và hộp thoại liệt kê tên chứ
+  không chỉ đếm số: đây là thao tác chạm tới người thật và không có nút thu hồi.
+  Người ngoài phạm vi phòng ban bị bỏ qua và **đếm riêng** trong kết quả.
+
+### 3.6. Tiêu chí chấp nhận
 
 - [ ] Quản lý phòng ban A không xem được chấm công của phòng ban B.
 - [ ] Sửa giờ vào từ 08:47 thành 08:00 tạo bản ghi điều chỉnh, bản ghi gốc vẫn còn nguyên và xem được.
@@ -364,6 +447,21 @@ Mở từ nút "Xem từng lượt chấm công" trong chi tiết ô của lư�
 - [ ] Bấm Cập nhật hai lần liên tiếp cho cùng dữ liệu ra kết quả giống hệt (idempotent).
 - [ ] Cập nhật bảng của tháng đã chốt lương → số liệu giữ nguyên, job vẫn báo `COMPLETED`.
 - [ ] Công ty mà **toàn bộ** nhân sự còn ở `PENDING_ACTIVATION` vẫn tính ra công — không phải bảng trắng.
+
+Riêng màn Theo dõi công việc (mục 3.5):
+
+- [ ] Người quẹt `BREAK_OUT` lúc 13:00 chưa quẹt về hiện "Đang ra ngoài", kèm mốc bắt đầu; quẹt `BREAK_IN` xong quay lại "Đang làm".
+- [ ] Người có đơn `GO_OUT` đã duyệt 14:00–16:00 mà công ty không bắt quẹt cổng vẫn hiện "Đang ra ngoài" trong khoảng đó, và thôi khi hết giờ đơn.
+- [ ] Người đã quẹt ra về lúc 16:30 hiện "Đã về", **không** bị đơn ra ngoài tới 18:00 kéo về "Đang ra ngoài".
+- [ ] Người có đơn nghỉ cả ngày mà vẫn tới quẹt thẻ hiện "Đang làm", không phải "Nghỉ theo đơn".
+- [ ] Đơn **chờ duyệt** không làm ai thoát khỏi cảnh báo "Chưa đến (quá giờ)".
+- [ ] Ca đêm 22:00 → 06:00: lúc 02:00 hôm sau vẫn hiện "Đang làm", và trục giờ hiển thị 26:00 chứ không quay về 02:00.
+- [ ] Xem lại ngày hôm qua: người có ca mà không quẹt hiện "Vắng", không phải "Chưa đến"; trang **không** tự làm mới.
+- [ ] Dải thống kê giữ nguyên số khi bấm một ô để lọc — chỉ danh sách bên dưới thu hẹp.
+- [ ] Dải thống kê đếm trên cả phạm vi lọc, không chỉ trang đang xem, và ghi rõ điều đó.
+- [ ] `MANAGER` gửi nhắc nhở cho một người ngoài phòng ban mình: người đó bị bỏ qua, những người còn lại vẫn nhận, và số bị bỏ qua được báo lại.
+- [ ] Xuất Excel với phạm vi phòng ban giao ra rỗng cho file 0 dòng, **không** phải toàn công ty.
+- [ ] Công ty không dùng phân ca vẫn thấy ca mặc định trên mọi dòng, không phải cả màn hình "Không có ca".
 
 ---
 

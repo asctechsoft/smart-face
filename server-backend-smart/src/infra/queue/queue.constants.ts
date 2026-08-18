@@ -39,6 +39,8 @@ export const JOBS = {
   // export
   EXPORT_ATTENDANCE: 'export-attendance',
   EXPORT_PAYROLL: 'export-payroll',
+  /** Trạng thái làm việc của MỘT ngày — màn "Theo dõi công việc". */
+  EXPORT_WORK_STATUS: 'export-work-status',
 
   // ai-batch
   RANDOM_AUDIT: 'random-audit',

@@ -6,7 +6,9 @@ import { formatWorkDate, parseWorkDate } from 'src/common/utils';
 import { StorageService } from 'src/infra/storage/storage.service';
 import { JobsRepository } from '../jobs.repository';
 import { PayrollService } from 'src/modules/payroll/payroll.service';
+import { WorkStatusService } from 'src/modules/attendance/work-status.service';
 import type { AttendanceExportParams } from 'src/modules/attendance/attendance-admin.service';
+import type { WorkStatusExportParams } from 'src/modules/attendance/work-status.service';
 import { JOBS, QUEUES } from '../queue.constants';
 
 /**
@@ -26,6 +28,7 @@ export class ExportProcessor extends WorkerHost {
     private readonly jobs: JobsRepository,
     private readonly storage: StorageService,
     private readonly payroll: PayrollService,
+    private readonly workStatus: WorkStatusService,
   ) {
     super();
   }
@@ -41,16 +44,23 @@ export class ExportProcessor extends WorkerHost {
     try {
       const exportJob = await this.jobs.findExportJob(exportJobId);
 
+      // Rẽ nhánh theo TÊN JOB, không theo `kind` trong database: tên job là thứ
+      // BullMQ đã dùng để chọn hàng đợi, nên hai chỗ không thể lệch nhau.
       const result =
         job.name === JOBS.EXPORT_PAYROLL
           ? await this.exportPayroll(
               exportJob.companyId,
               exportJob.params as Record<string, string>,
             )
-          : await this.exportAttendance(
-              exportJob.companyId,
-              exportJob.params as unknown as AttendanceExportParams,
-            );
+          : job.name === JOBS.EXPORT_WORK_STATUS
+            ? await this.exportWorkStatus(
+                exportJob.companyId,
+                exportJob.params as unknown as WorkStatusExportParams,
+              )
+            : await this.exportAttendance(
+                exportJob.companyId,
+                exportJob.params as unknown as AttendanceExportParams,
+              );
 
       const key = this.storage.buildExportKey(exportJob.companyId, exportJobId, result.fileName);
       await this.storage.upload(
@@ -143,6 +153,58 @@ export class ExportProcessor extends WorkerHost {
       buffer,
       fileName: `bang-cong-${params.from ?? 'all'}-${params.to ?? 'all'}.xlsx`,
       rowCount: dailies.length,
+    };
+  }
+
+  /**
+   * Trạng thái làm việc của MỘT ngày.
+   *
+   * Gọi thẳng `WorkStatusService` chứ không dựng lại truy vấn ở đây: luật phân
+   * loại trạng thái ("chưa đến" / "đang ra ngoài" / "quên chấm ra") nằm trong
+   * `work-status.rules`, và một bản sao thứ hai của nó trong worker sẽ làm file
+   * Excel nói khác màn hình mà không ai biết bên nào đúng.
+   *
+   * Phạm vi phòng ban đã được chốt lúc nhận yêu cầu và nằm trong `params` —
+   * worker không có JWT nên không tự suy lại được.
+   */
+  private async exportWorkStatus(companyId: string, params: WorkStatusExportParams) {
+    if (!('departmentIds' in params)) {
+      throw new Error(
+        'Job export được tạo thiếu phạm vi phòng ban, không xác định được quyền. Vui lòng gửi lại yêu cầu xuất.',
+      );
+    }
+
+    const { workDate, rows } = await this.workStatus.exportRows(companyId, params);
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'SmartFace';
+    const sheet = workbook.addWorksheet(`Theo dõi ${workDate}`);
+
+    sheet.columns = [
+      { header: 'Mã NV', key: 'employeeCode', width: 18 },
+      { header: 'Họ và tên', key: 'fullName', width: 25 },
+      { header: 'Phòng ban', key: 'department', width: 20 },
+      { header: 'Ca', key: 'shift', width: 12 },
+      { header: 'Giờ ca', key: 'shiftTime', width: 16 },
+      { header: 'Trạng thái', key: 'state', width: 18 },
+      { header: 'Giờ vào', key: 'checkIn', width: 10 },
+      { header: 'Giờ ra', key: 'checkOut', width: 10 },
+      { header: 'Số phút làm', key: 'workedMinutes', width: 12 },
+      { header: 'Đi muộn (phút)', key: 'lateMinutes', width: 14 },
+      { header: 'Về sớm (phút)', key: 'earlyLeaveMinutes', width: 14 },
+      { header: 'OT (phút)', key: 'otMinutes', width: 10 },
+      { header: 'Đơn từ', key: 'requests', width: 30 },
+      { header: 'Cờ nghi vấn', key: 'hasFraudFlag', width: 12 },
+    ];
+    sheet.getRow(1).font = { bold: true };
+
+    for (const row of rows) sheet.addRow(row);
+
+    const buffer = Buffer.from(await workbook.xlsx.writeBuffer());
+    return {
+      buffer,
+      fileName: `theo-doi-cong-viec-${workDate}.xlsx`,
+      rowCount: rows.length,
     };
   }
 

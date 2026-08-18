@@ -20,6 +20,9 @@ import { EmptyState } from '@/components/EmptyState';
 const DashboardPage = lazy(() =>
   import('@/features/dashboard/DashboardPage').then((m) => ({ default: m.DashboardPage })),
 );
+const WorkStatusPage = lazy(() =>
+  import('@/features/work-status/WorkStatusPage').then((m) => ({ default: m.WorkStatusPage })),
+);
 const AttendanceSheetListPage = lazy(() =>
   import('@/features/attendance/AttendanceSheetListPage').then((m) => ({
     default: m.AttendanceSheetListPage,
@@ -108,6 +111,13 @@ export function AppRouter() {
             </Route>
 
             <Route element={<RequirePermission permission="attendance.view" />}>
+              {/* Theo dõi công việc: cùng dữ liệu chấm công nhưng trục GIỜ của
+                  một ngày, không phải trục NGÀY của một tháng. Route riêng ở gốc
+                  chứ không nằm dưới `/attendance`: nó không thuộc về bảng nào,
+                  và `hasNestedNavDestination` sẽ làm mục "Chấm công" trên sidenav
+                  ngừng sáng đúng lúc người dùng đang ở màn hình khác. */}
+              <Route path="/work-status" element={<WorkStatusPage />} />
+
               {/* Danh sách bảng chấm công là cửa vào; lưới người × ngày nằm trong một bảng. */}
               <Route path="/attendance" element={<AttendanceSheetListPage />} />
               <Route path="/attendance/:id" element={<AttendanceSheetPage />} />

@@ -1,5 +1,6 @@
 import { Logger, Module, Provider } from '@nestjs/common';
 import { isRedisEnabled, isWorkerEnabled } from 'src/config/configuration';
+import { AttendanceModule } from 'src/modules/attendance/attendance.module';
 import { NotificationModule } from 'src/modules/notification/notification.module';
 import { PayrollModule } from 'src/modules/payroll/payroll.module';
 import { FraudModule } from 'src/modules/fraud/fraud.module';
@@ -53,7 +54,11 @@ if (!workerActive) {
 @Module({
   // Khi không chạy worker thì cũng không cần kéo theo module nghiệp vụ nào: chúng
   // chỉ có mặt ở đây để processor tiêm service.
-  imports: workerActive ? [PayrollModule, FraudModule, NotificationModule] : [],
+  //
+  // `AttendanceModule` có mặt vì `ExportProcessor` gọi `WorkStatusService` để
+  // dựng file "Theo dõi công việc" — dùng lại đúng đường đọc của màn hình thay
+  // vì chép luật phân loại trạng thái sang worker.
+  imports: workerActive ? [PayrollModule, FraudModule, NotificationModule, AttendanceModule] : [],
   providers: workerProviders,
 })
 export class WorkerModule {}

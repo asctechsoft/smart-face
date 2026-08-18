@@ -7,6 +7,9 @@ import { AttendanceSheetService } from './attendance-sheet.service';
 import { AttendanceController } from './attendance.controller';
 import { AttendanceRepository } from './attendance.repository';
 import { AttendanceService } from './attendance.service';
+import { WorkStatusController } from './work-status.controller';
+import { WorkStatusRepository } from './work-status.repository';
+import { WorkStatusService } from './work-status.service';
 import { FraudModule } from '../fraud/fraud.module';
 import { PayrollModule } from '../payroll/payroll.module';
 
@@ -18,7 +21,13 @@ import { PayrollModule } from '../payroll/payroll.module';
  * - `AttendanceController`      — App Nhân viên tự chấm công cho chính mình.
  * - `AttendanceAdminController` — Web Quản lý xem/hiệu chỉnh công của người khác.
  * - `AttendanceSheetController` — bảng chấm công theo tháng × phòng ban, lưới người × ngày.
+ * - `WorkStatusController`      — theo dõi công việc trong ngày, lưới người × giờ.
  * - `ExportJobController`       — tra trạng thái job xuất Excel chạy nền.
+ *
+ * `WorkStatusController` cùng dữ liệu nhưng khác TRỤC với bảng chấm công: bảng
+ * đọc cả tháng từ `AttendanceDaily` (đã tính) để trả lời "ai thiếu công", còn
+ * theo dõi đọc một ngày từ `AttendanceLog` (thô) để trả lời "bây giờ ai đang ở
+ * đâu" — câu hỏi mà bảng đã tính không giữ đủ thông tin để trả lời.
  *
  * `forwardRef` với FraudModule là bắt buộc: chấm công gọi sang chống gian lận để
  * chấm điểm rủi ro ngay lúc quẹt, còn chống gian lận lại phải đọc lịch sử chấm
@@ -45,6 +54,7 @@ import { PayrollModule } from '../payroll/payroll.module';
     AttendanceController,
     AttendanceAdminController,
     AttendanceSheetController,
+    WorkStatusController,
     ExportJobController,
   ],
   providers: [
@@ -53,12 +63,15 @@ import { PayrollModule } from '../payroll/payroll.module';
     AttendanceAdminService,
     AttendanceSheetRepository,
     AttendanceSheetService,
+    WorkStatusRepository,
+    WorkStatusService,
   ],
   exports: [
     AttendanceRepository,
     AttendanceService,
     AttendanceAdminService,
     AttendanceSheetService,
+    WorkStatusService,
   ],
 })
 export class AttendanceModule {}

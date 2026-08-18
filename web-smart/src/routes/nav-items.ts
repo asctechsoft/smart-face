@@ -36,6 +36,23 @@ export const NAV_GROUPS: NavGroup[] = [
         to: '/dashboard',
         permission: 'dashboard.view',
       },
+      /*
+       * Đứng ngay sau Tổng quan và TRƯỚC Chấm công, theo đúng nhịp dùng thật:
+       * đây là màn mở nhiều lần mỗi ngày ("giờ này ai chưa đến"), còn bảng chấm
+       * công là việc của cuối tháng. Xếp theo tần suất chứ không theo thứ tự
+       * nghiệp vụ — sidenav này chỉ giữ những việc lặp lại hằng ngày.
+       *
+       * Dùng chung quyền `attendance.view`: đây là một CÁCH ĐỌC dữ liệu chấm
+       * công, không mở thêm dữ liệu nào. Đặt một quyền riêng có cùng danh sách
+       * vai trò chỉ thêm một thứ phải nhớ đồng bộ ở hai chỗ.
+       */
+      {
+        key: 'work-status',
+        label: 'Theo dõi công việc',
+        icon: 'monitor_heart',
+        to: '/work-status',
+        permission: 'attendance.view',
+      },
       {
         key: 'attendance',
         label: 'Chấm công',

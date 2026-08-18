@@ -53,6 +53,12 @@ export const qk = {
   attendanceSheet: (id: string) => ['attendance', 'sheet', id] as const,
   attendanceSheetBoard: (params: unknown) => ['attendance', 'sheet-board', params] as const,
 
+  // Theo dõi công việc nằm dưới `attendance` vì nó đọc CÙNG nguồn dữ liệu: duyệt
+  // một đơn hay hiệu chỉnh công phải làm cả lưới theo dõi tươi lại bằng đúng
+  // lệnh `invalidate(['attendance'])` đã có sẵn ở mọi chỗ ghi.
+  workStatus: ['attendance', 'work-status'] as const,
+  workStatusBoard: (params: unknown) => ['attendance', 'work-status', 'board', params] as const,
+
   requests: ['requests'] as const,
   requestList: (params: unknown) => ['requests', 'list', params] as const,
   requestPending: (params: unknown) => ['requests', 'pending', params] as const,

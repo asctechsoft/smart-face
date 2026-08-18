@@ -52,6 +52,15 @@ export const RedisKeys = {
   dashboard: (companyId: string, scope: string) => `cache:dashboard:${companyId}:${scope}`,
   dashboardPrefix: (companyId: string) => `cache:dashboard:${companyId}:`,
 
+  /**
+   * Cache lưới theo dõi công việc trong ngày.
+   *
+   * TTL rất ngắn (20 giây) và khoá gồm CẢ bộ lọc lẫn số trang: đây là màn hình
+   * làm mới mỗi phút, cache chỉ để nhiều người cùng phòng dùng chung một kết
+   * quả và để một cơn bão F5 không thành một cơn bão truy vấn.
+   */
+  workStatus: (companyId: string, scope: string) => `cache:work-status:${companyId}:${scope}`,
+
   /** Chính sách công ty đã resolve */
   policy: (companyId: string) => `cache:policy:${companyId}`,
 

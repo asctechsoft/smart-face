@@ -20,7 +20,7 @@
 | [6](#6-cá-nhân--công-ty) | Cá nhân & Công ty | `/v1/me`, `/v1/company` | App |
 | [7](#7-đơn-từ) | Đơn từ | `/v1/requests` | App + Web |
 | [8](#8-thông-báo) | Thông báo | `/v1/notifications` | App + Web |
-| [9](#9-web-quản-lý--chấm-công) | Chấm công (Quản lý) | `/v1/admin/attendance`, `/v1/admin/attendance-sheets`, `/v1/jobs` | Web Quản lý |
+| [9](#9-web-quản-lý--chấm-công) | Chấm công (Quản lý) | `/v1/admin/attendance`, `/v1/admin/attendance-sheets`, `/v1/admin/work-status`, `/v1/jobs` | Web Quản lý |
 | [10](#10-web-quản-lý--nhân-sự) | Nhân sự | `/v1/admin/employees` | Web Quản lý |
 | [11](#11-web-quản-lý--chính-sách) | Chính sách, ca, lễ, chi nhánh, phòng ban | `/v1/admin` | Web Quản lý |
 | [12](#12-web-quản-lý--tính-công--lương) | Tính công & Lương | `/v1/admin/payroll` | Web Quản lý |
@@ -1559,9 +1559,113 @@ Xoá mềm khung rà soát. Không đụng `attendance_daily`, `attendance_log` 
 
 ---
 
+### Theo dõi công việc `/v1/admin/work-status`
+
+Cùng dữ liệu chấm công nhưng **khác trục** với bảng chấm công, và khác biệt đó quyết định mọi thứ còn lại:
+
+| | Bảng chấm công | Theo dõi công việc |
+|---|---|---|
+| Câu hỏi | "tháng này ai thiếu công" | "**bây giờ** ai đang ở đâu" |
+| Người dùng | Kế toán, cuối tháng | Quản lý, trong ngày |
+| Trục ngang | NGÀY, cả tháng | GIỜ, trong đúng một ngày |
+| Nguồn | `attendance_daily` (đã tính) | `attendance_log` (thô) + `attendance_daily` |
+| Tập dòng | thành viên đã chốt của một bảng | mọi CBNV đang làm việc trong phạm vi quyền |
+
+Vì sao phải đọc bản ghi **thô**: `attendance_daily` chỉ giữ giờ vào đầu tiên và giờ ra cuối cùng, nên nó không phân biệt được người đang ngồi làm với người vừa quẹt `BREAK_OUT` đi ra ngoài — mà đó chính là điều màn hình này sinh ra để trả lời. Bù lại, phạm vi bị giới hạn đúng **một ngày** và tối đa **2000 CBNV** mỗi lượt (`scopeTruncated: true` khi chạm trần).
+
+#### `GET /v1/admin/work-status` — Lưới người × giờ 🔒
+
+Tham số: `date` (bỏ trống = hôm nay theo múi giờ công ty), `departmentId`, `q`, `state`, `page`, `pageSize`.
+
+**Mọi mốc thời gian trả về là SỐ PHÚT tính từ 00:00 của ngày làm việc**, theo múi giờ công ty — client không phải quy đổi timezone và không thể quy đổi sai. Phút **có thể vượt 1440**: ca đêm 22:00 → 06:00 gắn với ngày bắt đầu ca, nên giờ tan ca của nó là `1800` (= 30:00).
+
+```bash
+curl "http://localhost:3000/v1/admin/work-status?date=2026-08-18&pageSize=25" \
+  -H "Authorization: Bearer $MGR_TOKEN"
+```
+```json
+{ "success": true,
+  "data": { "workDate": "2026-08-18", "timezone": "Asia/Ho_Chi_Minh",
+            "isToday": true, "isPastDay": false, "nowMinutes": 632,
+            "holiday": null,
+            "window": { "fromMinutes": 420, "toMinutes": 1080 },
+            "summary": { "LATE_NOT_ARRIVED": 2, "ABSENT": 0, "MISSING_CHECKOUT": 0,
+                         "OUTSIDE": 1, "WORKING": 18, "DONE": 0, "NOT_ARRIVED": 3,
+                         "BUSINESS_TRIP": 0, "ON_LEAVE": 1, "HOLIDAY": 0, "NO_SHIFT": 0 },
+            "summaryScope": 25, "scopeTruncated": false, "scopeTotal": 25,
+            "rows": [{ "employee": { "id": "emp_01J...", "fullName": "Nguyễn Văn Đức",
+                                     "employeeCode": "ducnv.amobi",
+                                     "department": { "id": "dep_01J...", "name": "Kỹ thuật" } },
+                       "state": "OUTSIDE", "stateLabel": "Đang ra ngoài",
+                       "firstCheckInMinutes": 482, "lastCheckOutMinutes": null,
+                       "outsideSinceMinutes": 780,
+                       "expectedStartMinutes": 480, "expectedEndMinutes": 1050,
+                       "hasPendingRequest": false, "activeCoverIds": [],
+                       "shifts": [{ "code": "CA01", "symbol": "X",
+                                    "startTime": "08:00", "endTime": "17:30" }],
+                       "shiftWindows": [{ "shiftId": "shf_01J...", "fromMinutes": 480,
+                                          "toMinutes": 1050, "lateToleranceMinutes": 5 }],
+                       "breakWindows": [{ "fromMinutes": 720, "toMinutes": 780 }],
+                       "outsideIntervals": [{ "fromMinutes": 780, "toMinutes": null }],
+                       "marks": [{ "logId": "log_01J...", "type": "CHECK_IN",
+                                   "atMinutes": 482, "authMethod": "FACE",
+                                   "branchName": "Văn phòng Hà Nội" }],
+                       "requests": [],
+                       "workedMinutes": 298, "lateMinutes": 2, "earlyLeaveMinutes": 0,
+                       "otMinutes": 0, "hasFraudFlag": false, "dailyStatus": "LATE" }],
+            "meta": { "page": 1, "pageSize": 25, "total": 25, "totalPages": 1 } } }
+```
+
+**`summary` đếm trên TOÀN phạm vi bộ lọc, KHÔNG theo `state` và KHÔNG theo trang.** Đây là chủ ý: nếu bấm ô "Chưa đến" để lọc mà chính ô đó tụt về đúng số dòng đang hiện thì người dùng mất luôn mốc so sánh vừa dùng để bấm. `meta.total` mới là số dòng khớp `state`.
+
+Mười một `state`, phân loại ở `work-status.rules.ts` (module thuần, có bộ test riêng — Web **không** suy lại):
+
+| `state` | Nghĩa | Điều kiện rút gọn |
+|---|---|---|
+| `LATE_NOT_ARRIVED` | Chưa đến (quá giờ) | có ca, chưa quẹt lần nào, đã quá giờ vào ca + dung sai |
+| `ABSENT` | Vắng | ngày đã qua, có ca, không quẹt, không đơn nào che |
+| `MISSING_CHECKOUT` | Quên chấm ra | đã quẹt vào, quá giờ tan ca > 90 phút mà chưa quẹt ra |
+| `OUTSIDE` | Đang ra ngoài | `BREAK_OUT` chưa có `BREAK_IN`, **hoặc** đang trong khoảng đơn `GO_OUT` đã duyệt |
+| `WORKING` | Đang làm | đã quẹt vào, chưa quẹt ra, chưa quá giờ tan ca |
+| `DONE` | Đã về | đã quẹt ra |
+| `NOT_ARRIVED` | Chưa đến | có ca, chưa tới giờ vào ca |
+| `BUSINESS_TRIP` | Công tác | đơn `BUSINESS_TRIP` cả ngày đã duyệt |
+| `ON_LEAVE` | Nghỉ theo đơn | đơn nghỉ cả ngày đã duyệt |
+| `HOLIDAY` | Ngày lễ | — |
+| `NO_SHIFT` | Không có ca | không được xếp ca và không có ca mặc định áp cho ngày |
+
+Ba quy tắc dễ hiểu nhầm:
+
+1. **Lượt quẹt thắng đơn từ.** Người có đơn nghỉ cả ngày mà vẫn tới quẹt thẻ hiện `WORKING`, không phải `ON_LEAVE` — giấu đi thì mất đúng cái bất thường cần tìm. Đơn vẫn còn trong `requests` của dòng.
+2. **Đơn `PENDING` không che gì cả.** Chưa duyệt thì người đó vẫn phải có mặt; cờ `hasPendingRequest` để Web hiện nút duyệt nhanh.
+3. **Không được xếp ca thì áp ca mặc định** (`BR-ATT-04`). Bỏ bước này thì công ty không dùng phân ca sẽ thấy cả màn hình ghi `NO_SHIFT`.
+
+#### `POST /v1/admin/work-status/remind` — Nhắc CBNV chưa chấm công 🔒 📝audit
+
+Rate limit 20 lượt/giờ mỗi tài khoản. Tối đa **200 người** mỗi lượt.
+
+`employeeIds` là danh sách **tường minh** người dùng đã chọn trên lưới, không phải "gửi cho tất cả ai đang `LATE_NOT_ARRIVED`": tập đó đổi theo từng giây, và người bấm nút phải chịu trách nhiệm về đúng những cái tên họ nhìn thấy lúc bấm.
+
+```bash
+curl -X POST http://localhost:3000/v1/admin/work-status/remind \
+  -H "Authorization: Bearer $MGR_TOKEN" -H "Content-Type: application/json" \
+  -d '{ "employeeIds": ["emp_01J..."], "date": "2026-08-18" }'
+```
+```json
+{ "success": true, "data": { "sent": 12, "skipped": 2, "workDate": "2026-08-18" } }
+```
+
+`skipped` = người nằm ngoài phạm vi phòng ban của người gửi. Họ bị bỏ qua, **không** làm hỏng cả lượt gửi — nhưng Web phải nói ra con số đó, nếu không "đã gửi 12" trong khi chọn 14 sẽ đọc như hệ thống làm mất hai lượt.
+
+#### `POST /v1/admin/work-status/export` — Xuất Excel 🔒 → `202`
+
+Trả `jobId`; hỏi tiến độ qua `GET /v1/jobs/:id` (`kind: "WORK_STATUS"`). Phạm vi phòng ban được chốt tại đây và ghi vào params của job — worker chạy sau không còn request context. Mảng `departmentIds` rỗng sau khi giao quyền nghĩa là **không phòng ban nào**, và job trả về 0 dòng (fail-closed).
+
+---
+
 ### `GET /v1/jobs/:id` — Trạng thái job chạy nền 🔒
 
-**Làm gì:** hỏi tiến độ job và lấy link tải khi xong. Dùng chung cho **mọi** loại job dài, phân biệt bằng `kind`: `ATTENDANCE`, `PAYROLL`, `PAYROLL_RECALCULATE`, `ATTENDANCE_SHEET_RECALCULATE`.
+**Làm gì:** hỏi tiến độ job và lấy link tải khi xong. Dùng chung cho **mọi** loại job dài, phân biệt bằng `kind`: `ATTENDANCE`, `WORK_STATUS`, `PAYROLL`, `PAYROLL_RECALCULATE`, `ATTENDANCE_SHEET_RECALCULATE`.
 
 ```bash
 curl http://localhost:3000/v1/jobs/job_01J... -H "Authorization: Bearer $HR_TOKEN"
@@ -2932,6 +3036,9 @@ curl "http://localhost:3000/v1/system/audit-logs?action=BIOMETRIC_RESET&from=202
 | POST | `/v1/admin/attendance-sheets/:id/recalculate` | MGR/HR/ADMIN 📝 | Cập nhật bảng công → `202` (`FR-WEB-ATT-10`) |
 | POST | `/v1/admin/attendance-sheets/:id/close` | HR/ADMIN 📝 | Chốt bảng |
 | POST | `/v1/admin/attendance-sheets/:id/reopen` | HR/ADMIN 📝 | Mở lại bảng đã chốt |
+| GET | `/v1/admin/work-status` | MGR/HR/ADMIN | Lưới theo dõi người × giờ của MỘT ngày |
+| POST | `/v1/admin/work-status/remind` | MGR/HR/ADMIN 📝 | Nhắc CBNV chưa chấm công |
+| POST | `/v1/admin/work-status/export` | MGR/HR/ADMIN | Xuất trạng thái làm việc của ngày → `202` |
 | GET | `/v1/jobs/:id` | MGR/HR/ADMIN | Trạng thái job export |
 
 ### Web Quản lý — Nhân sự `/v1/admin/employees`
