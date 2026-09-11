@@ -100,10 +100,13 @@ services:
       # FIREBASE_* đọc từ `.env` qua `env_file` ở trên.
       WORKER_ENABLED: 'false'
     ports:
-      # Chỉ loopback: nginx gọi api qua mạng Docker, cổng này để kiểm tra sức
-      # khoẻ và tạo quản trị viên đầu tiên từ chính VPS. Docker đi vòng qua
-      # ufw, nên nếu bỏ `127.0.0.1:` là API lộ HTTP thuần ra internet.
-      - '127.0.0.1:3000:3000'
+      # Mặc định chỉ loopback: nginx gọi api qua mạng Docker, cổng này để kiểm
+      # tra sức khoẻ và tạo quản trị viên đầu tiên từ chính VPS.
+      #
+      # API_BIND=0.0.0.0 trong .env = mở HTTP thuần ra internet. CHỈ dùng cho giai
+      # đoạn "backend trước, chưa có tên miền" với dữ liệu thử — xem docs/23 phụ
+      # lục 4. Docker đi vòng qua ufw nên mở ở đây là mở thật, tường lửa không chặn.
+      - '${API_BIND:-127.0.0.1}:3000:3000'
     # 1. Áp migration.
     # 2. Áp ràng buộc DB mà migration không chứa (bản ghi chấm công bất biến —
     #    BR-06, ràng buộc tài khoản nền tảng). Hai file SQL viết kiểu chạy lại
@@ -141,13 +144,21 @@ services:
     command: node dist/worker
 
   web:
+    # Chỉ bật khi COMPOSE_PROFILES có `web` (mặc định trong .env.production.example).
+    # Giai đoạn chưa có tên miền thì để trống: `up -d` của script deploy bỏ qua
+    # service này, thay vì dựng một nginx thiếu chứng chỉ khởi động lại liên tục.
+    # Gọi đích danh (`dc up -d web`) thì vẫn chạy bất kể profile.
+    profiles: ['web']
     build:
       context: ../web-smart
       dockerfile: Dockerfile.prod
       args:
         VITE_API_BASE_URL: /v1
-        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:?VITE_FIREBASE_API_KEY bắt buộc trong .env}
-        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:?VITE_FIREBASE_AUTH_DOMAIN bắt buộc trong .env}
+        # KHÔNG dùng `:?` ở đây dù hai biến này bắt buộc: compose kiểm biến của
+        # MỌI service kể cả service đang tắt bằng profile, nên `:?` chặn luôn
+        # giai đoạn chỉ chạy backend. Dockerfile.prod tự kiểm và dừng build.
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:-}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:-}
         # Lấy từ FIREBASE_PROJECT_ID của backend chứ không khai riêng: Web và
         # Backend khác dự án Firebase là không ai đăng nhập được.
         VITE_FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID bắt buộc trong .env}

@@ -19,6 +19,8 @@
 > | nginx mẫu định tuyến WebSocket ở `/socket.io/` (§7.2) | Gateway khai `path: '/ws'` — cấu hình thật định tuyến `/ws` |
 > | `AI_SERVER_INTERNAL_KEY` phải khai trùng ở hai file `.env` (§6.1) | Compose truyền cùng một biến cho cả api lẫn ai-server; AI Server không cần `.env` riêng |
 > | `deploy.ps1` gửi script CRLF sang bash, health check gọi cổng 3000 từ ngoài | Chuẩn hoá LF, gửi base64, kiểm tra `/health` từ chính VPS |
+> | Chỉ có một chế độ: phải có tên miền + Cloudflare mới chạy được | Thêm chế độ "backend trước" trên IP (`COMPOSE_PROFILES`, `API_BIND`, `TRUSTED_PROXY_HOPS` trong `.env`), chuyển sang đầy đủ bằng `scripts/enable-domain.sh` — [23 phụ lục 4](./23-huong-dan-deploy-cho-nguoi-moi.md#phụ-lục-4--chưa-có-tên-miền-chạy-backend-trước) |
+> | Worker không in log nào (`bufferLogs` không bao giờ được xả) | `app.flushLogs()` trong `worker.ts` |
 >
 > | Thông tin | Giá trị |
 > |---|---|

@@ -30,6 +30,15 @@ ARG VITE_DEFAULT_TIMEZONE=Asia/Ho_Chi_Minh
 ARG VITE_GOOGLE_MAPS_API_KEY
 ARG VITE_HELP_URL
 
+# Thiếu cấu hình Firebase thì bản build vẫn thành công — và trang đăng nhập hỏng
+# mà không ai hay cho tới khi người dùng đầu tiên thử. Dừng ngay tại đây.
+RUN for key in VITE_FIREBASE_API_KEY VITE_FIREBASE_AUTH_DOMAIN VITE_FIREBASE_PROJECT_ID; do \
+      eval "value=\$$key"; \
+      if [ -z "$value" ]; then \
+        echo "THIEU $key trong server-backend-smart/.env — xem docs/23 muc E3." >&2; exit 1; \
+      fi; \
+    done
+
 RUN npm run build
 
 FROM nginx:1.28-alpine AS runner

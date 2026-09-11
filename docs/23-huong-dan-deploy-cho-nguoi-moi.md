@@ -36,6 +36,8 @@ Cách **dán** trong cửa sổ PowerShell / terminal: **bấm chuột phải** 
 - [ ] **Mật khẩu `root` của VPS** — nhà cung cấp VPS gửi qua email khi mua.
 - [ ] **Một tên miền** và quyền vào trang quản lý tên miền (nơi đã mua).
 - [ ] **Tài khoản Cloudflare** (miễn phí) — tạo ở `https://dash.cloudflare.com/sign-up`.
+
+> **Chưa có tên miền hoặc Cloudflare?** Vẫn chạy được **backend trước** trên IP của VPS — làm theo [Phụ lục 4](#phụ-lục-4--chưa-có-tên-miền-chạy-backend-trước), có tên miền rồi chuyển sang chế độ đầy đủ bằng một lệnh.
 - [ ] **Quyền Owner/Editor trên dự án Firebase** của SmartFace.
 - [ ] **Quyền Admin trên repo GitHub** (chỉ cần cho [Phần G](#phần-g--bật-deploy-tự-động)).
 - [ ] **Thư mục model AI** `server-ai-smart/models` — hỏi lập trình viên, nó không có trong GitHub vì nặng khoảng 600 MB.
@@ -555,9 +557,10 @@ models\
 └─ models\buffalo_l\*.onnx             ← nhận diện khuôn mặt (5 file)
 ```
 
-💻 Chạy **trên máy có model**, thay `E:\WebApp\smart-face` bằng đường dẫn repo trên máy đó:
+💻 Chạy **trên máy có model**, thay `E:\WebApp\smart-face` bằng đường dẫn repo trên máy đó. Lệnh đầu tạo sẵn thư mục đích — thiếu nó `scp` báo `No such file or directory`:
 
 ```powershell
+ssh root@76.13.16.235 "mkdir -p /opt/smartface/server-ai-smart/models"
 scp -r E:\WebApp\smart-face\server-ai-smart\models\anti_spoof root@76.13.16.235:/opt/smartface/server-ai-smart/models/
 scp -r E:\WebApp\smart-face\server-ai-smart\models\models root@76.13.16.235:/opt/smartface/server-ai-smart/models/
 ```
@@ -937,7 +940,16 @@ cd /opt/smartface && git status --short | head; ls server-backend-smart/.env 2>/
    git fetch origin main && git reset --hard origin/main
    ```
 
-2. **Đã có `server-backend-smart/.env`:** **đừng** chạy `init-prod-env.sh` và **đừng** xoá file này — nó giữ mật khẩu của database đang có dữ liệu. Thay vào đó, mở song song hai file để đối chiếu:
+2. Kiểm tra VPS **có** file `.env` cũ không:
+
+   ```bash
+   ls -la /opt/smartface/server-backend-smart/.env
+   ```
+
+   - Báo `No such file or directory` → **không có** `.env` cũ. Bỏ qua phần còn lại của mục này, làm [E1](#e1-chép-file-khoá-firebase-lên-vps) → [E2](#e2-tạo-file-env) như VPS mới. (Chạy lệnh `diff` bên dưới khi không có `.env` sẽ liệt kê **mọi** biến với dấu `>` — trông như "thiếu hết" nhưng thật ra là file không tồn tại.)
+   - Hiện ra một dòng thông tin file → **có** `.env` cũ. Làm tiếp bên dưới.
+
+   **Đã có `server-backend-smart/.env`:** **đừng** chạy `init-prod-env.sh` và **đừng** xoá file này — nó giữ mật khẩu của database đang có dữ liệu. Thay vào đó, mở song song hai file để đối chiếu:
 
    ```bash
    cd /opt/smartface/server-backend-smart
@@ -994,11 +1006,128 @@ Làm khi khoá Firebase bị lộ (đưa nhầm lên GitHub, gửi qua chat…) 
 | `…/server-backend-smart/nginx/` | Cấu hình cổng vào: định tuyến, HTTPS, chỉ nhận Cloudflare | Có |
 | `…/server-backend-smart/scripts/init-prod-env.sh` | Tạo `.env` lần đầu | Có |
 | `…/server-backend-smart/scripts/bootstrap-admin.sh` | Tạo quản trị viên đầu tiên | Có |
+| `…/server-backend-smart/scripts/enable-domain.sh` | Chuyển từ "backend trước" sang chế độ đầy đủ ([Phụ lục 4](#phụ-lục-4--chưa-có-tên-miền-chạy-backend-trước)) | Có |
 | `…/server-ai-smart/models/` | Model nhận diện khuôn mặt | **Không** |
 | `/opt/backups/` | Bản sao lưu database | **Không** |
 | Docker volume `server-backend-smart_postgres-data` | **Dữ liệu database** | **Không** |
 
 ---
+
+## Phụ lục 4 — Chưa có tên miền: chạy backend trước
+
+Dùng khi **chưa có tên miền hoặc chưa có tài khoản Cloudflare** mà cần backend chạy ngay — để đội app mobile test, hoặc để lập trình viên chạy giao diện web trên máy mình nối vào backend thật.
+
+| Có | Chưa có |
+|---|---|
+| api, worker, AI nhận diện, database, Redis — đầy đủ như chế độ chính | Giao diện web production |
+| API tại `http://76.13.16.235:3000/v1` | HTTPS — mọi thứ đi HTTP thuần |
+
+> ⚠ **HTTP thuần nghĩa là token đăng nhập và ảnh khuôn mặt đi trên mạng không mã hoá.** Ai nghe lén được đường truyền (Wi-Fi quán cà phê, mạng công cộng) là đọc được. Giai đoạn này **chỉ dùng tài khoản và dữ liệu thử**. Không cho nhân viên thật đăng ký khuôn mặt cho tới khi chuyển sang chế độ đầy đủ ở P4.8.
+
+### P4.1. Làm những phần giống chế độ chính
+
+| Phần | Làm | Bỏ qua |
+|---|---|---|
+| A — Cloudflare | — | **Toàn bộ** |
+| B — Firebase | B1, B3, B5 | B4 (chưa có tên miền để khai). B2 chỉ cần chép `storageBucket` |
+| C, D | Toàn bộ | — |
+| E | E1, E5 | E4 (chưa có chứng chỉ). E2 và E3 làm theo P4.2 bên dưới |
+
+### P4.2. Tạo .env ở chế độ backend trước
+
+🖥️
+
+```bash
+cd /opt/smartface/server-backend-smart
+bash scripts/init-prod-env.sh --backend-truoc /root/firebase-admin.json
+shred -u /root/firebase-admin.json
+nano .env      # chỉ cần điền FIREBASE_STORAGE_BUCKET
+```
+
+✅ **Đúng khi:** in ra `Chế độ: BACKEND TRƯỚC — api mở HTTP ở cổng 3000, chưa có web`.
+
+Script đặt sẵn 3 dòng đi cùng nhau — **không sửa tay riêng dòng nào**:
+
+| Dòng | Giá trị | Nghĩa |
+|---|---|---|
+| `COMPOSE_PROFILES=` | trống | Không dựng giao diện web. Script deploy tự bỏ qua nó |
+| `API_BIND=0.0.0.0` | | Mở cổng 3000 của api ra internet |
+| `TRUSTED_PROXY_HOPS=0` | | Không có proxy nào đứng trước — api nhìn thấy IP thật của người dùng |
+
+### P4.3. Chạy lần đầu — giữ api KHOÁ trong lúc tạo quản trị viên
+
+Tạo alias `dc` như đầu [Phần F](#phần-f--chạy-lần-đầu), rồi 🖥️:
+
+```bash
+API_BIND=127.0.0.1 docker compose -f docker-compose.prod.yml up -d --build
+```
+
+`API_BIND=127.0.0.1` đứng trước lệnh **ghi đè tạm** giá trị trong `.env` cho riêng lần chạy này: api chỉ nghe trong VPS. Lý do như [F2](#f2-build-và-chạy-mọi-thứ--trừ-giao-diện-web): chưa có quản trị viên thì ai gọi được api cũng chiếm được tài khoản đó.
+
+Chờ 10–25 phút, kiểm tra như [F3](#f3-theo-dõi-khởi-động) (không có dòng `web` — đúng). Rồi tạo quản trị viên như [F4](#f4-tạo-tài-khoản-quản-trị-nền-tảng-đầu-tiên):
+
+```bash
+bash scripts/bootstrap-admin.sh
+```
+
+Xong mới mở cổng (lần này không có `API_BIND=` đứng trước, nên giá trị `0.0.0.0` trong `.env` có hiệu lực):
+
+```bash
+dc up -d
+```
+
+### P4.4. Kiểm tra
+
+💻
+
+```powershell
+curl.exe http://76.13.16.235:3000/health
+foreach ($p in 5432, 6379, 8000) { "$p : " + (Test-NetConnection 76.13.16.235 -Port $p -WarningAction SilentlyContinue).TcpTestSucceeded }
+```
+
+✅ **Đúng khi:** dòng đầu có `"status":"healthy"`; ba cổng database, Redis, AI đều `False` — chỉ api được mở.
+
+### P4.5. Giao cho đội app mobile
+
+| Việc | Chi tiết |
+|---|---|
+| Địa chỉ API | `http://76.13.16.235:3000/v1` |
+| Cho phép HTTP trong bản build thử | Android (từ 9) và iOS **mặc định chặn HTTP**. Bản build thử phải khai ngoại lệ cho IP này: Android — `network_security_config.xml` cho phép cleartext tới `76.13.16.235`; iOS — `NSAppTransportSecurity` / `NSExceptionDomains`. Gỡ ngoại lệ khi chuyển sang HTTPS |
+| Chữ ký chấm công | Production bắt buộc chữ ký HMAC (`ATTENDANCE_SIGNATURE_REQUIRED=true`) kể cả ở chế độ này — bản app chưa ký sẽ bị từ chối mọi lượt chấm công |
+| Chốt IP văn phòng | Hoạt động đúng ở chế độ này (`TRUSTED_PROXY_HOPS=0`, api thấy IP thật) |
+
+### P4.6. Lập trình viên chạy giao diện web trên máy, nối vào backend VPS
+
+💻 Trong `web-smart\.env` trên máy lập trình viên:
+
+```dotenv
+VITE_API_PROXY_TARGET=http://76.13.16.235:3000
+# ... cộng 4 dòng VITE_FIREBASE_* của CÙNG dự án Firebase với backend
+```
+
+Rồi `npm run dev` → mở `http://localhost:5173`. Vite chuyển tiếp `/v1` sang VPS nên không vướng CORS, và `localhost` là tên miền Firebase cho phép sẵn — không cần B4.
+
+### P4.7. Deploy tự động vẫn dùng được
+
+[Phần G](#phần-g--bật-deploy-tự-động) làm y hệt. Vì `COMPOSE_PROFILES` trống, mỗi lần deploy chỉ cập nhật backend, không đụng tới web.
+
+### P4.8. Khi đã có tên miền — chuyển sang chế độ đầy đủ
+
+1. Làm [Phần A](#phần-a--cloudflare-tên-miền-và-https) (Cloudflare, record A, HTTPS, chứng chỉ Origin), [B2](#b2-lấy-cấu-hình-web-app-cho-giao-diện-web), [B4](#b4-cho-phép-tên-miền-đăng-nhập).
+2. 🖥️ `nano .env` → điền `VITE_FIREBASE_API_KEY` và `VITE_FIREBASE_APP_ID` ([E3](#e3-điền-3-giá-trị-còn-thiếu)).
+3. Đặt chứng chỉ ([E4](#e4-đặt-chứng-chỉ-https)).
+4. 🖥️ Chuyển chế độ — script tự kiểm đủ chứng chỉ và API key rồi mới đổi:
+
+   ```bash
+   cd /opt/smartface/server-backend-smart
+   bash scripts/enable-domain.sh smartface.congty.vn
+   dc up -d --build
+   ```
+
+   ✅ **Đúng khi:** `dc ps` có thêm dòng `web`, và từ 💻 `Test-NetConnection 76.13.16.235 -Port 3000` giờ là `False` — api đã đóng lại sau nginx.
+5. Kiểm tra toàn bộ như [F6](#f6-kiểm-tra-toàn-bộ).
+6. Báo đội app: địa chỉ API mới `https://smartface.congty.vn/v1`, gỡ ngoại lệ HTTP.
+7. **Dữ liệu thử vẫn nằm trong database.** Trước khi cho khách hàng thật dùng: vào web xoá/ngưng các công ty thử. Muốn làm sạch hoàn toàn thì nhờ lập trình viên dựng lại database từ đầu — thao tác đó xoá toàn bộ dữ liệu, kể cả tài khoản quản trị (phải chạy lại F4).
 
 ## Đọc thêm
 

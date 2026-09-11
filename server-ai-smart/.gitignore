@@ -1,7 +1,10 @@
 .env
 
 # Model nặng vài trăm MB, tải bằng scripts/download_models.py
-models/
+# `models/*` chứ không phải `models/`: bỏ qua cả THƯ MỤC thì git không bao giờ
+# nhìn vào bên trong, dòng `!` bên dưới vô tác dụng, và bản clone trên VPS không
+# có thư mục models — `scp` chép model vào đó báo "No such file or directory".
+models/*
 !models/.gitkeep
 
 __pycache__/
