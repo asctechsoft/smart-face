@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Alert, Button, DatePicker, Drawer, Select, Switch, Tag } from 'antd';
 import { Controller, useForm } from 'react-hook-form';
-import { Icon } from '@/components/Icon';
 import { ROLE_LABEL, SystemRole } from '@/config/constants';
 import { toUserMessage } from '@/lib/errors/api-error';
 import { toWorkDate } from '@/lib/utils/date';
@@ -17,6 +16,7 @@ import {
 } from './employees.api';
 import { Field, TextInput, useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Icon } from '@/components/ui';
 
 interface FormValues {
   fullName: string;

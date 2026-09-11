@@ -23,10 +23,9 @@ const REQUIRED_IN_PRODUCTION = [
   'REDIS_HOST',
   'AI_SERVER_URL',
   'AI_SERVER_INTERNAL_KEY',
-  'S3_BUCKET',
-  'S3_ACCESS_KEY',
-  'S3_SECRET_KEY',
-  // Firebase là nhà cung cấp danh tính — thiếu là không ai đăng nhập được.
+  // Firebase vừa là nhà cung cấp danh tính (thiếu là không ai đăng nhập được),
+  // vừa là nơi lưu ảnh chấm công / ảnh khuôn mặt / file export — cùng một service
+  // account, nên khai thiếu là hỏng cả hai.
   'FIREBASE_PROJECT_ID',
   'FIREBASE_CLIENT_EMAIL',
   'FIREBASE_PRIVATE_KEY',
@@ -90,6 +89,16 @@ export function validateEnv(config: Record<string, unknown>): Record<string, unk
       throw new Error(
         'FIREBASE_AUTH_EMULATOR_HOST không được đặt ở production — emulator không kiểm ' +
           'chữ ký ID token, ai cũng tự tạo được token hợp lệ.',
+      );
+    }
+
+    // Storage Emulator giữ file trong thư mục tạm của chính nó và mất sạch khi
+    // tắt. Trỏ vào đó ở production nghĩa là ảnh chấm công, ảnh hồ sơ khuôn mặt
+    // và file export không thực sự được lưu ở đâu cả.
+    if (config.FIREBASE_STORAGE_EMULATOR_HOST) {
+      throw new Error(
+        'FIREBASE_STORAGE_EMULATOR_HOST không được đặt ở production — file sẽ nằm trong ' +
+          'emulator và mất khi tắt tiến trình, đồng thời không ký được signed URL.',
       );
     }
 

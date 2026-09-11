@@ -1,6 +1,6 @@
 -- ============================================================================
 --  SmartFace — ràng buộc enforce ở tầng DB
---  Nguồn: docs/07-mo-hinh-du-lieu.md mục 4.3
+--  Nguồn: docs/13-mo-hinh-du-lieu.md mục 4.3
 --  Chạy SAU khi `prisma migrate deploy` thành công.
 --
 --  npm run db:guards      (cần psql trong PATH)

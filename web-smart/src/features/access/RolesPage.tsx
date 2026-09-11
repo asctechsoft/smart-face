@@ -7,10 +7,9 @@ import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmployeeCell } from '@/components/EmployeeCell';
-import { StatusBadge } from '@/components/StatusBadge';
-import { Icon } from '@/components/Icon';
 import { EMPLOYABLE_STATUSES, ROLE_LABEL, SystemRole } from '@/config/constants';
-import { rolesFor, type Permission } from '@/lib/rbac/permissions';
+import type { Permission } from '@/lib/rbac/permissions';
+import { useRoleCatalog } from '@/lib/rbac/access.api';
 import { useDepartments } from '@/features/shared/org.api';
 import {
   useEmployeeList,
@@ -20,6 +19,15 @@ import {
 } from '@/features/employees/employees.api';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Badge as StatusBadge, Icon } from '@/components/ui';
+
+/**
+ * Cột hiện trong bảng tra cứu quyền, theo mã vai trò của `GET /v1/access/roles`.
+ *
+ * `PLATFORM_ADMIN` cố ý vắng mặt: quyền của nó nằm ở tầng nền tảng, không phải
+ * thứ người quản trị một công ty gán hay cần biết.
+ */
+const ASSIGNABLE_ROLE_CODES = ['EMPLOYEE', 'MANAGER', 'HR_PAYROLL', 'COMPANY_ADMIN', 'OWNER'];
 
 /** Các vai trò gán được từ Web Quản lý. `SYSTEM_ADMIN` chỉ cấp ở tầng nền tảng. */
 const ASSIGNABLE_ROLES = [
@@ -46,7 +54,12 @@ const ASSIGNABLE_ROLES = [
  * (`BR-08`, `FR-WEB-NOT-06`) — tra cứu ở Nhật ký kiểm toán, lọc hành động "Sửa
  * hồ sơ nhân viên".
  */
-export function RolesPage() {
+/**
+ * `embedded`: bỏ tiêu đề trang khi component này nằm trong một tab của trang
+ * "Thiết lập". Trang đó đã có tiêu đề riêng, và hai tiêu đề chồng nhau đọc như
+ * một lỗi dựng trang.
+ */
+export function RolesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [target, setTarget] = useState<Employee | null>(null);
 
@@ -148,10 +161,12 @@ export function RolesPage() {
 
   return (
     <>
-      <PageHeader
-        title="Phân quyền nội bộ"
-        description="Ai đang có quyền quản trị trên hệ thống và phạm vi dữ liệu của họ. Mọi thay đổi đều được ghi vào nhật ký kiểm toán."
-      />
+      {embedded ? null : (
+        <PageHeader
+          title="Phân quyền nội bộ"
+          description="Ai đang có quyền quản trị trên hệ thống và phạm vi dữ liệu của họ. Mọi thay đổi đều được ghi vào nhật ký kiểm toán."
+        />
+      )}
 
       <Alert
         type="info"
@@ -226,13 +241,13 @@ const PERMISSION_ROWS: { group: string; items: { permission: Permission; label: 
     group: 'Đơn từ',
     items: [
       { permission: 'request.approve', label: 'Duyệt / từ chối đơn' },
-      { permission: 'request.configure', label: 'Cấu hình loại đơn & luồng duyệt' },
+      { permission: 'request.configure_flow', label: 'Cấu hình loại đơn & luồng duyệt' },
     ],
   },
   {
     group: 'Nhân sự',
     items: [
-      { permission: 'employee.edit', label: 'Tạo / sửa hồ sơ nhân viên' },
+      { permission: 'employee.update', label: 'Tạo / sửa hồ sơ nhân viên' },
       { permission: 'employee.import', label: 'Import nhân viên hàng loạt' },
       { permission: 'shift.assign', label: 'Xếp ca / phân ca' },
       { permission: 'device.revoke', label: 'Thu hồi thiết bị' },
@@ -241,46 +256,77 @@ const PERMISSION_ROWS: { group: string; items: { permission: Permission; label: 
   },
   {
     group: 'Chính sách',
-    items: [{ permission: 'policy.edit', label: 'Đổi chính sách công ty' }],
+    items: [{ permission: 'policy.update', label: 'Đổi chính sách công ty' }],
   },
   {
     group: 'Giám sát',
     items: [
       { permission: 'audit.view', label: 'Xem nhật ký hoạt động' },
-      { permission: 'role.manage', label: 'Phân quyền nội bộ' },
+      { permission: 'role.assign', label: 'Phân quyền nội bộ' },
     ],
   },
 ];
 
 /**
- * Bảng "vai trò nào làm được gì" — đọc thẳng từ ma trận phân quyền của client.
+ * Bảng "vai trò nào làm được gì" — dựng từ dữ liệu server, không chép tay.
  *
- * Dựng từ `rolesFor()` thay vì gõ lại bảng: một bảng chép tay sẽ lệch khỏi ma
- * trận thật ngay lần đầu ai đó sửa quyền, và bảng sai còn tệ hơn không có bảng.
+ * ## Vì sao phải hỏi server
+ *
+ * Bản trước dựng bảng này từ một ma trận tĩnh nằm ngay trong web. Ma trận đó
+ * lệch với Backend ở hai ô (`shift.assign` và `request.configure_flow` bị cấp
+ * nhầm cho Kế toán/HR), nghĩa là màn hình "ai đang có quyền gì" đang nói sai về
+ * chính hệ thống nó mô tả. Một bảng phân quyền sai còn tệ hơn không có bảng:
+ * người quản trị đọc nó để ra quyết định.
+ *
+ * `GET /v1/access/roles` trả về đúng những gì `PermissionGuard` dùng để quyết,
+ * nên bảng không thể lệch nữa.
  */
 function PermissionMatrix() {
-  const rows = PERMISSION_ROWS.flatMap((group) =>
-    group.items.map((item) => ({ key: item.permission, group: group.group, ...item })),
+  const roles = useRoleCatalog();
+
+  const columns = useMemo(
+    () => (roles.data ?? []).filter((role) => ASSIGNABLE_ROLE_CODES.includes(role.code)),
+    [roles.data],
   );
+
+  const rows = useMemo(
+    () =>
+      PERMISSION_ROWS.flatMap((group) =>
+        group.items.map((item) => ({ key: item.permission, group: group.group, ...item })),
+      ),
+    [],
+  );
+
+  if (roles.isError) {
+    return (
+      <Alert
+        type="warning"
+        showIcon
+        message="Chưa tải được bảng phân quyền"
+        description="Không đọc được danh mục vai trò từ máy chủ. Bảng này chỉ để tra cứu — việc gán vai trò ở trên vẫn dùng bình thường."
+      />
+    );
+  }
 
   return (
     <Table
       size="small"
       rowKey="key"
+      loading={roles.isPending}
       dataSource={rows}
       pagination={false}
       scroll={{ x: 'max-content' }}
       columns={[
         { title: 'Nhóm', dataIndex: 'group', key: 'group', width: 200 },
         { title: 'Hành động', dataIndex: 'label', key: 'label', width: 280 },
-        ...ASSIGNABLE_ROLES.map((role) => ({
-          title: ROLE_LABEL[role],
-          key: role,
+        ...columns.map((role) => ({
+          title: role.name,
+          key: role.code,
           width: 140,
           align: 'center' as const,
           render: (_: unknown, row: { permission: Permission }) =>
-            rolesFor(row.permission).includes(role) ? (
-              <Icon name="check_circle" size={20} color="var(--sf-success-700)" />
+            role.permissions.includes(row.permission) ? (
+              <Icon name="check_circle" size={20} color="var(--sf-success)" />
             ) : (
               <span className="sf-text-muted" aria-label="Không có quyền">
                 —

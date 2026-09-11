@@ -96,7 +96,107 @@ export interface AttendanceSheetBoardQuery {
   from?: string;
   to?: string;
   departmentId?: string;
+  /** Đúng một người — khác `q` (khớp `contains`) vốn còn kéo về mã trùng tiền tố. */
+  employeeId?: string;
   q?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+/**
+ * Một dòng của bảng TỔNG HỢP công — một người, cả kỳ gộp lại.
+ *
+ * Ba con số công đến từ ba nguồn khác nhau và không được lẫn:
+ *
+ *  - `standardDays` — số NGÀY người này được xếp ca trong kỳ (`ShiftAssignment`).
+ *  - `actualDays`   — công engine đã tính (`AttendanceDaily.standardDays`).
+ *  - `missingDays`  — hiệu hai số trên, kẹp ở 0. Server tính, client không tự
+ *    trừ lại: hai công thức cùng nghĩa ở hai tầng là hai thứ phải giữ đồng bộ.
+ */
+export interface AttendanceSummaryRow {
+  employeeId: string;
+  employeeCode: string;
+  fullName: string;
+  department: { id: string; name: string } | null;
+  /**
+   * Bảng chấm công đang giữ người này trong tháng.
+   *
+   * `null` = người rơi khỏi mọi bảng (bảng vừa bị xoá). Màn chi tiết của một
+   * CBNV nằm DƯỚI bảng, nên không có id này thì không mở được chi tiết.
+   */
+  sheetId: string | null;
+  standardDays: number;
+  actualDays: number;
+  missingDays: number;
+  otMinutes: number;
+  workedMinutes: number;
+  lateMinutes: number;
+  earlyLeaveMinutes: number;
+  /** Số ngày `ON_LEAVE` trong kỳ — cùng định nghĩa với bảng lương. */
+  leaveDays: number;
+  status: AttendanceSummaryStatus;
+}
+
+/** Xem `rowStatus` ở Backend — thứ tự này là thứ tự ưu tiên, không phải bảng chữ cái. */
+export type AttendanceSummaryStatus =
+  | 'LOCKED'
+  | 'MISSING_CHECK_OUT'
+  | 'NEEDS_REVIEW'
+  | 'VALID';
+
+/** Một bảng chấm công của tháng, kèm việc còn phải làm — nguồn của hộp thoại chốt. */
+export interface MonthSheetRef {
+  id: string;
+  name: string;
+  status: string;
+  departmentIds: string[];
+  memberCount: number;
+  /**
+   * Số người của bảng này còn ít nhất một ngày phải rà.
+   *
+   * Đếm trên TOÀN bảng, KHÔNG theo bộ lọc đang bật trên màn hình: lọc "Kế toán"
+   * rồi bấm Chốt mà hộp thoại ghi Kho vận "0 người cần đối soát" là dẫn thẳng
+   * tới một lần chốt sai.
+   */
+  needsReviewCount: number;
+}
+
+export interface AttendanceSheetSummary {
+  period: { month: string; from: string; to: string };
+  /** Mọi bảng chấm công của tháng. Rỗng = tháng chưa lập bảng nào. */
+  sheets: MonthSheetRef[];
+  /** Lần tính công gần nhất chạm vào tháng. `null` = tháng chưa có bản ghi công nào. */
+  lastCalculatedAt: string | null;
+  /**
+   * Tổng của CẢ KỲ, không phải tổng cột của trang đang mở — server gộp trên
+   * toàn bộ người khớp bộ lọc rồi mới cắt trang.
+   */
+  totals: {
+    employeeCount: number;
+    standardDays: number;
+    actualDays: number;
+    otMinutes: number;
+    needsReviewCount: number;
+  };
+  rows: AttendanceSummaryRow[];
+  meta: PaginationMeta;
+}
+
+export interface AttendanceSummaryQuery {
+  /** `YYYY-MM-DD` bất kỳ trong tháng — Backend tự chuẩn hoá về ngày 01. */
+  month?: string;
+  branchId?: string;
+  departmentId?: string;
+  /** Đúng một người — dùng cho màn chi tiết bảng công của từng CBNV. */
+  employeeId?: string;
+  q?: string;
+  /**
+   * Chỉ hiện người còn ngày cần đối soát.
+   *
+   * Lọc DÒNG, không đụng `totals`: cảnh báo "24 nhân viên cần đối soát" và danh
+   * sách 24 người đó phải đếm cùng một tập, nên thẻ chỉ số vẫn nói về cả kỳ.
+   */
+  needsReviewOnly?: boolean;
   page?: number;
   pageSize?: number;
 }
@@ -145,6 +245,28 @@ export function useAttendanceSheetBoard({ sheetId, ...query }: AttendanceSheetBo
     queryFn: () =>
       api.get<AttendanceSheetBoard>(`/admin/attendance-sheets/${sheetId}/board`, { ...query }),
     enabled: Boolean(sheetId),
+    placeholderData: (previous) => previous,
+  });
+}
+
+/**
+ * Bảng tổng hợp công của cả THÁNG — cửa vào của màn "Bảng công".
+ *
+ * Truy vấn RIÊNG, không dẫn xuất từ `useAttendanceSheetBoard`: lưới trả dữ liệu
+ * thô của 25 người trên trang đang mở, còn hàng thẻ chỉ số ở đây nói về cả
+ * tháng. Cộng lưới ở client sẽ cho một con số nhỏ hơn thật và đổi mỗi lần lật
+ * trang, trong khi nhãn vẫn ghi "Tổng".
+ *
+ * Không cần `sheetId`: một tháng gồm nhiều bảng, và Backend gộp hết. Các bảng
+ * vẫn trả về trong `sheets` — chốt kỳ vẫn theo từng bảng.
+ *
+ * `placeholderData` giữ bảng cũ trên màn hình trong lúc đổi bộ lọc — bảng biến
+ * mất rồi hiện lại làm mất vị trí cuộn của người đang rà tới dòng thứ 40.
+ */
+export function useAttendanceSummary(query: AttendanceSummaryQuery) {
+  return useQuery({
+    queryKey: qk.attendanceSheetSummary(query),
+    queryFn: () => api.get<AttendanceSheetSummary>('/admin/attendance-sheets/summary', { ...query }),
     placeholderData: (previous) => previous,
   });
 }

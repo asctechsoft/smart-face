@@ -7,7 +7,10 @@ import { StorageService } from 'src/infra/storage/storage.service';
 import { JobsRepository } from '../jobs.repository';
 import { PayrollService } from 'src/modules/payroll/payroll.service';
 import { WorkStatusService } from 'src/modules/attendance/work-status.service';
-import type { AttendanceExportParams } from 'src/modules/attendance/attendance-admin.service';
+import {
+  resolveExportEmployeeFilter,
+  type AttendanceExportParams,
+} from 'src/modules/attendance/attendance-admin.service';
 import type { WorkStatusExportParams } from 'src/modules/attendance/work-status.service';
 import { JOBS, QUEUES } from '../queue.constants';
 
@@ -15,7 +18,8 @@ import { JOBS, QUEUES } from '../queue.constants';
  * Queue `export` — xuất Excel ở BACKEND, không ở client (docs/04 mục 7.4).
  *
  * NFR-PERF-08: 500 nhân viên × 31 ngày phải xong dưới 60 giây.
- * Kết quả lưu S3, người dùng tải qua presigned URL có thời hạn.
+ * Kết quả lưu trên Cloud Storage for Firebase, người dùng tải qua signed URL
+ * có thời hạn.
  */
 // `concurrency: 2` — cố ý thấp. Dựng file Excel giữ TOÀN BỘ bảng tính trong RAM;
 // chạy 10 job cùng lúc, mỗi job vài chục nghìn dòng, là pod worker bị OOM kill.
@@ -106,7 +110,11 @@ export class ExportProcessor extends WorkerHost {
     // Bỏ trống khi không giới hạn phòng ban — tránh dựng mệnh đề `IN` vài nghìn
     // phần tử cho công ty lớn, trong khi `companyId` đã đủ khoanh vùng.
     const scopedEmployeeIds = params.departmentIds ? employees.map((e) => e.id) : undefined;
-    const dailies = await this.jobs.findDailiesForExport(companyId, from, to, scopedEmployeeIds);
+
+    // `employeeIds` chỉ THU HẸP, không bao giờ nới — xem `resolveExportEmployeeFilter`.
+    const targetEmployeeIds = resolveExportEmployeeFilter(scopedEmployeeIds, params.employeeIds);
+
+    const dailies = await this.jobs.findDailiesForExport(companyId, from, to, targetEmployeeIds);
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = 'SmartFace';

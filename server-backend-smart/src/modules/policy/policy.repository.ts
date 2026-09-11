@@ -16,7 +16,9 @@ import {
   withDescendantDepartments,
   type DepartmentNode,
 } from 'src/common/utils';
+import { periodLockedFilter } from 'src/common/constants/payroll-period.constants';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
+import { assertNotVersionConflict, versionedWhere } from 'src/infra/prisma/optimistic-lock';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
 export type ShiftWithSegments = Prisma.ShiftGetPayload<{ include: { segments: true } }>;
@@ -396,13 +398,18 @@ export class PolicyRepository extends BaseRepository {
     companyId: string,
     shiftId: string,
     data: ShiftPatchInput,
+    expectedVersion?: number,
     tx?: Prisma.TransactionClient,
   ): Promise<ShiftCatalogRow | null> {
+    const where = { id: shiftId, companyId, deletedAt: null };
     const updated = await this.db(tx).shift.updateMany({
-      where: { id: shiftId, companyId, deletedAt: null },
-      data,
+      where: versionedWhere(where, expectedVersion),
+      data: { ...data, rowVersion: { increment: 1 } },
     });
-    if (updated.count === 0) return null;
+    if (updated.count === 0) {
+      await assertNotVersionConflict(this.db(tx).shift, where, expectedVersion, 'SHIFT');
+      return null;
+    }
 
     return this.db(tx).shift.findFirst({
       where: { id: shiftId, companyId },
@@ -732,7 +739,7 @@ export class PolicyRepository extends BaseRepository {
     return this.db().payrollPeriod.findFirst({
       where: {
         companyId,
-        status: PayrollPeriodStatus.CLOSED,
+        status: periodLockedFilter(),
         startDate: { lte: to },
         endDate: { gte: from },
       },
@@ -1005,6 +1012,21 @@ export class PolicyRepository extends BaseRepository {
 
   async countBranches(companyId: string): Promise<number> {
     return this.db().branch.count({ where: { companyId, deletedAt: null } });
+  }
+
+  async countDepartments(companyId: string): Promise<number> {
+    return this.db().department.count({ where: { companyId, deletedAt: null } });
+  }
+
+  /**
+   * Ca ĐANG hiệu lực. Bản đã đóng (`effectiveTo` khác null) không tính vào quota:
+   * đổi giờ một ca là đóng bản cũ và mở bản kế nhiệm cùng mã (D6), nên đếm cả
+   * bản đóng sẽ khiến mỗi lần sửa giờ lại ăn thêm một suất của gói.
+   */
+  async countActiveShifts(companyId: string): Promise<number> {
+    return this.db().shift.count({
+      where: { companyId, deletedAt: null, effectiveTo: null },
+    });
   }
 
   async findBranch(companyId: string, branchId: string): Promise<Branch | null> {

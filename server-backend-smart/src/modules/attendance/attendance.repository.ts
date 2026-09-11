@@ -13,6 +13,7 @@ import {
   PayrollPeriodStatus,
   Prisma,
 } from '@prisma/client';
+import { periodLockedFilter } from 'src/common/constants/payroll-period.constants';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
@@ -190,7 +191,7 @@ export class AttendanceRepository extends BaseRepository {
     return this.db().payrollPeriod.findFirst({
       where: {
         companyId,
-        status: PayrollPeriodStatus.CLOSED,
+        status: periodLockedFilter(),
         startDate: { lte: workDate },
         endDate: { gte: workDate },
       },
@@ -256,6 +257,83 @@ export class AttendanceRepository extends BaseRepository {
     tx?: Prisma.TransactionClient,
   ): Promise<AttendanceLog> {
     return this.db(tx).attendanceLog.create({ data: { companyId, ...data } });
+  }
+
+  /**
+   * Chốt kết quả soát một lượt chấm công đang chờ duyệt.
+   *
+   * `decision: PENDING_REVIEW` trong `where` là điều kiện, không phải bộ lọc cho
+   * đẹp: hai người quản lý cùng mở một lượt và cùng bấm duyệt thì chỉ lượt đầu
+   * ghi được, lượt sau nhận `count: 0` và biết là đã có người xử lý trước.
+   */
+  async resolvePendingReview(
+    companyId: string,
+    logId: string,
+    decision: AttendanceDecision,
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const updated = await this.db(tx).attendanceLog.updateMany({
+      where: { id: logId, companyId, decision: AttendanceDecision.PENDING_REVIEW },
+      data: { decision },
+    });
+    return updated.count;
+  }
+
+  /**
+   * Bản ghi offline đã đồng bộ trước đó.
+   *
+   * Không có cột `localId` để làm khoá idempotent, nên dùng khoá tự nhiên
+   * (nhân viên, loại, thời điểm chấm). App gửi lại đúng gói cũ thì `capturedAt`
+   * giống hệt tới từng mili giây — đủ chặt để không nhân đôi công, và không
+   * chặt tới mức chặn nhầm hai lượt chấm thật cách nhau vài giây.
+   */
+  async findOfflineDuplicate(
+    companyId: string,
+    employeeId: string,
+    type: AttendanceType,
+    recordedAt: Date,
+  ): Promise<Pick<AttendanceLog, 'id'> | null> {
+    return this.db().attendanceLog.findFirst({
+      where: { companyId, employeeId, type, recordedAt, isOffline: true },
+      select: { id: true },
+    });
+  }
+
+  /** Các lượt đang chờ soát — hàng đợi công việc của Quản lý/HR. */
+  async listPendingReview(
+    companyId: string,
+    filter: { employeeIds?: string[] | null; from?: Date; to?: Date; skip: number; take: number },
+  ) {
+    const where: Prisma.AttendanceLogWhereInput = {
+      companyId,
+      decision: AttendanceDecision.PENDING_REVIEW,
+      ...(filter.employeeIds ? { employeeId: { in: filter.employeeIds } } : {}),
+      ...(filter.from || filter.to
+        ? {
+            workDate: {
+              ...(filter.from ? { gte: filter.from } : {}),
+              ...(filter.to ? { lte: filter.to } : {}),
+            },
+          }
+        : {}),
+    };
+
+    const [items, total] = await Promise.all([
+      this.db().attendanceLog.findMany({
+        where,
+        orderBy: { recordedAt: 'desc' },
+        skip: filter.skip,
+        take: filter.take,
+        include: {
+          fraudFlags: {
+            select: { id: true, code: true, severity: true, score: true, reviewedAt: true },
+          },
+        },
+      }),
+      this.db().attendanceLog.count({ where }),
+    ]);
+
+    return { items, total };
   }
 
   // ===========================================================================
@@ -401,6 +479,24 @@ export class AttendanceRepository extends BaseRepository {
       };
     }
     return this.db().attendanceAdjustment.findMany({ where, orderBy: { createdAt: 'desc' } });
+  }
+
+  /**
+   * Tên hiển thị của các tài khoản đã thao tác — dùng cho lịch sử điều chỉnh.
+   *
+   * Lọc theo `companyId` chứ không tra id trần: id lấy từ dữ liệu của công ty
+   * này, nhưng một truy vấn không khoanh vùng vẫn là một truy vấn có thể trả về
+   * tên người của công ty khác nếu dữ liệu lỡ lẫn.
+   */
+  async findUserNames(
+    companyId: string,
+    userIds: string[],
+  ): Promise<Array<{ id: string; fullName: string }>> {
+    if (userIds.length === 0) return [];
+    return this.db().userAccount.findMany({
+      where: { companyId, id: { in: userIds } },
+      select: { id: true, fullName: true },
+    });
   }
 
   // ===========================================================================

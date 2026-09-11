@@ -63,9 +63,25 @@ export function formatDayLong(iso: string | Date, timezone?: string): string {
   );
 }
 
+/**
+ * Mốc thời gian bất kỳ → `YYYY-MM-DD` theo giờ công ty.
+ *
+ * Dùng để SO SÁNH ngày, không phải để hiển thị (hiển thị đã có `formatDay`).
+ * So thẳng `iso.slice(0, 10)` là so theo UTC: một mốc hiệu lực lưu
+ * `2026-08-31T17:00:00Z` chính là ngày 01/09 ở `Asia/Ho_Chi_Minh`, và ca sẽ bị
+ * gắn nhãn "đang áp dụng" sớm hơn một ngày so với thứ máy tính công dùng.
+ */
+export function workDateOf(iso: string | Date, timezone?: string): string {
+  return formatInTimeZone(
+    typeof iso === 'string' ? parseISO(iso) : iso,
+    tz(timezone),
+    'yyyy-MM-dd',
+  );
+}
+
 /** Chuỗi `YYYY-MM-DD` của "hôm nay" theo giờ công ty — dùng làm tham số API. */
 export function todayWorkDate(timezone?: string): string {
-  return formatInTimeZone(new Date(), tz(timezone), 'yyyy-MM-dd');
+  return workDateOf(new Date(), timezone);
 }
 
 /** Ngày đầu tháng hiện tại theo giờ công ty. */

@@ -35,6 +35,16 @@ const schema = z.object({
   VITE_GOOGLE_MAPS_API_KEY: z.string().optional(),
 
   VITE_WS_URL: z.string().optional(),
+
+  /**
+   * Đích của mục "Trợ giúp" ở chân thanh điều hướng — trang tài liệu, cổng hỗ
+   * trợ, hoặc một `mailto:`.
+   *
+   * Bỏ trống thì mục đó KHÔNG hiện. Một mục "Trợ giúp" bấm vào không đi đâu cả
+   * còn tệ hơn là không có mục nào: người đang bí sẽ bấm nó trước tiên, và cái
+   * họ nhận được là một tab trắng.
+   */
+  VITE_HELP_URL: z.string().optional(),
 });
 
 /**

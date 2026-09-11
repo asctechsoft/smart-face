@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#005440" />
+    <meta name="theme-color" content="#1D4ED8" />
     <meta
       name="description"
       content="SmartFace — Hệ thống quản lý chấm công bằng nhận diện khuôn mặt và vân tay."
@@ -24,6 +24,33 @@
     />
 
     <title>SmartFace · Quản lý chấm công</title>
+
+    <!--
+      Đặt chế độ sáng/tối TRƯỚC khi trang vẽ lần đầu.
+
+      Nếu để React làm việc này thì có một khoảnh khắc trang đã vẽ bằng thang màu
+      sáng rồi mới nhảy sang tối — người dùng chế độ tối bị loá mắt mỗi lần tải
+      trang. Đoạn script này chặn render, nên phải cực ngắn và không được ném lỗi;
+      `try/catch` là vì localStorage bị chặn trong chế độ riêng tư.
+
+      `ThemeProvider` (`src/theme/use-theme.ts`) tiếp quản sau đó.
+    -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem('sf.theme');
+          var resolved =
+            saved === 'light' || saved === 'dark'
+              ? saved
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          document.documentElement.setAttribute('data-sf-theme', resolved);
+        } catch (e) {
+          document.documentElement.setAttribute('data-sf-theme', 'light');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

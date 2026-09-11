@@ -104,12 +104,13 @@ describe('Danh mục ca', () => {
 
     /** Chỉ cần `assertValidTime` thật — phần còn lại của service không tham gia. */
     const callValidate = (input: UpsertShiftDto) =>
-      (service as unknown as { validateShiftCatalog: (d: UpsertShiftDto) => void })
-        .validateShiftCatalog(input);
+      (
+        service as unknown as { validateShiftCatalog: (d: UpsertShiftDto) => void }
+      ).validateShiftCatalog(input);
 
     beforeEach(() => {
       const policy = new PolicyService({} as never, {} as never, {} as never);
-      service = new PolicyAdminService({} as never, {} as never, policy);
+      service = new PolicyAdminService({} as never, {} as never, policy, {} as never);
     });
 
     it('cấu hình hợp lệ thì không ném', () => {

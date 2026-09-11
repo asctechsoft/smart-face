@@ -9,7 +9,8 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { NetworkError, toUserMessage, type NetworkFailureKind } from '@/lib/errors/api-error';
 import { isFirebaseConfigured, missingFirebaseKeys } from '@/config/env';
 import { TwoFactorStep } from './TwoFactorStep';
-import { Button, Field, PasswordInput, TextInput } from '@/components/ui';
+import { tokenStorage } from '@/lib/auth/token-storage';
+import { Button, Checkbox, Field, Icon, PasswordInput, TextInput } from '@/components/ui';
 
 interface LoginForm {
   email: string;
@@ -60,6 +61,15 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [challenge, setChallenge] = useState<{ token: string; maskedPhone?: string } | null>(null);
+  /*
+   * Mặc định theo lựa chọn LẦN TRƯỚC, không mặc định cứng là bật.
+   *
+   * Người bỏ tích ô này đang ngồi ở máy dùng chung. Bật lại nó cho họ ở lần sau
+   * là làm hỏng đúng điều họ vừa cẩn thận chọn, trên chính cái máy mà việc đó
+   * quan trọng nhất.
+   */
+  const [remember, setRemember] = useState(() => tokenStorage.isRemembered());
+  const [showResetHelp, setShowResetHelp] = useState(false);
 
   const {
     register,
@@ -67,10 +77,10 @@ export function LoginPage() {
     formState: { errors },
   } = useForm<LoginForm>({ defaultValues: { email: '', password: '' } });
 
-  const redirectTo = (location.state as { from?: string } | null)?.from ?? '/dashboard';
+  const redirectTo = (location.state as { from?: string } | null)?.from ?? '/';
 
   async function finishLogin(tokens: SessionTokens) {
-    await applyTokens(tokens);
+    await applyTokens(tokens, remember);
     navigate(tokens.nextStep === 'CHANGE_PASSWORD' ? '/doi-mat-khau' : redirectTo, {
       replace: true,
     });
@@ -81,7 +91,11 @@ export function LoginPage() {
     setSubmitting(true);
 
     try {
-      const firebaseIdToken = await signInAndGetIdToken(values.email.trim(), values.password);
+      const firebaseIdToken = await signInAndGetIdToken(
+        values.email.trim(),
+        values.password,
+        remember,
+      );
       const result = await authApi.createSession({ firebaseIdToken });
 
       if (isTwoFactorChallenge(result)) {
@@ -142,16 +156,16 @@ export function LoginPage() {
 
   return (
     <AuthShell
-      title="Đăng nhập"
-      subtitle="Tài khoản do bộ phận nhân sự của công ty cấp."
+      title="Đăng nhập SmartFace"
+      subtitle="Dành cho Giám đốc, Kế toán/HR và Quản lý"
       footer={
-        <p className="sf-body-sm sf-text-variant" style={{ margin: 0 }}>
-          Quên mật khẩu hoặc chưa nhận được tài khoản? Liên hệ bộ phận nhân sự — chỉ HR mới cấp và
-          đặt lại được tài khoản.
+        <p className="sf-auth-note">
+          <Icon name="lock" size={18} fill color="var(--sf-on-surface-variant)" />
+          Quyền truy cập được hệ thống tự xác định theo tài khoản
         </p>
       }
     >
-      <form onSubmit={onSubmit} noValidate style={{ display: 'grid', gap: 16 }}>
+      <form onSubmit={onSubmit} noValidate className="sf-auth-form--login">
         {/*
           Thiếu cấu hình là lỗi của người triển khai, không phải của người đang
           đăng nhập — nên nói thẳng thiếu biến nào và sửa ở đâu, thay vì để họ gõ
@@ -188,14 +202,27 @@ export function LoginPage() {
           />
         ) : null}
 
-        <Field label="Email" htmlFor="email" error={errors.email?.message} required>
+        {/*
+          Nhãn bị giấu khỏi mắt chứ không bị bỏ — bản vẽ chỉ có icon và chữ gợi
+          ý trong ô. Xem docblock `labelHidden` ở `Field` về vì sao nhãn vẫn
+          phải tồn tại trong DOM.
+
+          ⚠ Chữ gợi ý là "Email đăng nhập", KHÔNG phải "Email hoặc mã nhân viên"
+          như bản vẽ. Đăng nhập bằng mã nhân viên chưa có: mật khẩu nằm ở
+          Firebase và `signInWithEmailAndPassword` chỉ nhận email — không có
+          endpoint nào đổi mã nhân viên ra email. Viết theo bản vẽ thì người gõ
+          mã nhân viên sẽ nhận "Email không hợp lệ." và không hiểu vì sao, ngay
+          ở ô đầu tiên của sản phẩm.
+        */}
+        <Field label="Email đăng nhập" htmlFor="email" error={errors.email?.message} labelHidden>
           <TextInput
             id="email"
             type="email"
-            placeholder="ten.ban@congty.vn"
+            placeholder="Email đăng nhập"
             autoComplete="username"
             autoFocus
             icon="mail"
+            aria-required
             aria-invalid={Boolean(errors.email)}
             {...register('email', {
               required: 'Nhập email đăng nhập.',
@@ -204,17 +231,50 @@ export function LoginPage() {
           />
         </Field>
 
-        <Field label="Mật khẩu" htmlFor="password" error={errors.password?.message} required>
+        <Field label="Mật khẩu" htmlFor="password" error={errors.password?.message} labelHidden>
           <PasswordInput
             id="password"
             autoComplete="current-password"
-            placeholder="Nhập mật khẩu"
+            placeholder="Mật khẩu"
+            icon="lock"
+            aria-required
             aria-invalid={Boolean(errors.password)}
             {...register('password', { required: 'Nhập mật khẩu.' })}
           />
         </Field>
 
-        <Button size="lg" type="submit" loading={submitting} disabled={!isFirebaseConfigured} block>
+        <div className="sf-auth-row">
+          <Checkbox checked={remember} onChange={(event) => setRemember(event.target.checked)}>
+            Ghi nhớ đăng nhập
+          </Checkbox>
+
+          {/*
+            Bản vẽ đặt "Quên mật khẩu?" như một liên kết đi tới luồng tự đặt lại.
+            Hệ thống này KHÔNG có luồng đó, và không phải vì chưa làm: mật khẩu
+            nằm ở Firebase, email của nhân viên là trường không bắt buộc, nên
+            gửi thư đặt lại là việc không làm được cho phần lớn tài khoản. HR
+            đặt lại hộ. Nút này mở ra đúng câu đó thay vì dẫn tới một trang trắng.
+          */}
+          <button
+            type="button"
+            className="sf-link-button"
+            aria-expanded={showResetHelp}
+            onClick={() => setShowResetHelp((open) => !open)}
+          >
+            Quên mật khẩu?
+          </button>
+        </div>
+
+        {showResetHelp ? (
+          <Alert
+            type="info"
+            showIcon
+            message="Liên hệ bộ phận nhân sự để đặt lại"
+            description="Chỉ Kế toán/HR mới cấp và đặt lại được tài khoản. Họ sẽ cấp một mật khẩu tạm; bạn đổi nó ngay ở lần đăng nhập kế tiếp."
+          />
+        ) : null}
+
+        <Button size="md" type="submit" loading={submitting} disabled={!isFirebaseConfigured} block>
           Đăng nhập
         </Button>
       </form>

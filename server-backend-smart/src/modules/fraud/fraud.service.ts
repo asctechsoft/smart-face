@@ -17,7 +17,7 @@ import { FraudFlagQueryDto } from './dto/fraud.dto';
 import { FraudRepository } from './fraud.repository';
 
 /**
- * Fraud scoring — docs/06-anti-fraud.md mục 7.
+ * Fraud scoring — docs/09-anti-fraud.md mục 7.
  *
  * Nguyên tắc thiết kế quan trọng nhất (mục 7.2):
  *   "Ưu tiên GẮN CỜ để con người xem xét hơn là chặn cứng. Chặn nhầm một nhân

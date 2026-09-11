@@ -136,9 +136,9 @@ describe('VerifyBodyHashInterceptor (AF-12)', () => {
   it('CHẶN khi thiếu X-Body-Sha256 lúc đã bật cưỡng chế', async () => {
     const interceptor = await buildInterceptor(true);
 
-    expect(() =>
-      interceptor.intercept(contextWith({ file: IMAGE }), nextHandler),
-    ).toThrow(expect.objectContaining({ code: 'AUTH_SIGNATURE_INVALID' }));
+    expect(() => interceptor.intercept(contextWith({ file: IMAGE }), nextHandler)).toThrow(
+      expect.objectContaining({ code: 'AUTH_SIGNATURE_INVALID' }),
+    );
   });
 
   it('CHO QUA khi thiếu header lúc chưa bật cưỡng chế — App cũ vẫn chạy được ở dev', async () => {
@@ -153,10 +153,7 @@ describe('VerifyBodyHashInterceptor (AF-12)', () => {
     const interceptor = await buildInterceptor(false);
 
     expect(() =>
-      interceptor.intercept(
-        contextWith({ declaredHash: 'hash-bia-ra', file: IMAGE }),
-        nextHandler,
-      ),
+      interceptor.intercept(contextWith({ declaredHash: 'hash-bia-ra', file: IMAGE }), nextHandler),
     ).toThrow(expect.objectContaining({ code: 'AUTH_SIGNATURE_INVALID' }));
   });
 });

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { Icon } from './Icon';
 
@@ -18,15 +18,27 @@ export function Card({
   padding = 16,
   className,
   as,
+  style,
 }: {
   children: ReactNode;
   padding?: number;
   className?: string;
   as?: 'div' | 'section' | 'article';
+  /**
+   * Cửa thoát cho trạng thái nhất thời — thẻ đang được tô sáng, thẻ đang kéo thả.
+   *
+   * KHÔNG dùng để đổi diện mạo cơ bản của thẻ: nền, viền, radius và bóng thuộc
+   * về `.sf-card`, và sửa chúng tại chỗ gọi là cách để mười màn hình có mười
+   * kiểu thẻ hơi khác nhau. `padding` đặt sau nên vẫn luôn thắng.
+   */
+  style?: CSSProperties;
 }) {
   const Tag = as ?? 'div';
   return (
-    <Tag className={['sf-card', className ?? ''].filter(Boolean).join(' ')} style={{ padding }}>
+    <Tag
+      className={['sf-card', className ?? ''].filter(Boolean).join(' ')}
+      style={{ ...style, padding }}
+    >
       {children}
     </Tag>
   );
@@ -70,94 +82,140 @@ export function ClickableCard({
 }
 
 /**
- * Thẻ chỉ số — docs/16 mục 11.9.
+ * Thẻ chỉ số — docs/16 mục 11.9, bố cục theo mockup Figma `55:57`.
  *
- * Nền `neutral-100`, radius `12px`, padding `12px`. Giá trị dùng `teal-700`
- * (8.12:1) hoặc `warning-700` (5.82:1) — hai màu duy nhất đã kiểm chứng cho
- * vai trò này. Không mở cho màu tuỳ ý.
+ * ## Vì sao biểu tượng nằm trong huy hiệu tròn bên trái
+ *
+ * Bản cũ đặt biểu tượng 16px cạnh nhãn, cùng cỡ cùng màu với chữ — nó không
+ * phân biệt được thẻ này với thẻ kia khi liếc mắt, mà liếc mắt chính là toàn
+ * bộ công dụng của một hàng thẻ chỉ số. Huy hiệu 48px có nền tô nhạt cho mỗi
+ * thẻ một hình bóng riêng, đọc được từ xa trước cả khi đọc chữ.
+ *
+ * Tông màu tô cả huy hiệu lẫn con số, nên nó phải mang nghĩa: `warning` là
+ * "có việc cần làm", `error` là "đang sai", `success` là "đã xong". Đừng chọn
+ * tông vì nó đẹp cạnh thẻ bên cạnh.
  */
+export type StatTone = 'primary' | 'success' | 'warning' | 'error' | 'neutral' | 'teal';
+
+const STAT_TONE: Record<StatTone, { value: string; icon: string; medallion: string }> = {
+  // Con số dùng thang 700 — bốn màu đã qua kiểm tương phản trên nền trắng
+  // (`npm run check:contrast`). Huy hiệu dùng thang 50 làm nền và 700 làm mực.
+  primary: { value: 'var(--sf-blue-700)', icon: 'var(--sf-blue-700)', medallion: 'var(--sf-blue-50)' },
+  success: {
+    value: 'var(--sf-success-700)',
+    icon: 'var(--sf-success-700)',
+    medallion: 'var(--sf-success-50)',
+  },
+  warning: {
+    value: 'var(--sf-warning-700)',
+    icon: 'var(--sf-warning-700)',
+    medallion: 'var(--sf-warning-50)',
+  },
+  error: { value: 'var(--sf-error-700)', icon: 'var(--sf-error-700)', medallion: 'var(--sf-error-50)' },
+  neutral: {
+    value: 'var(--sf-on-surface)',
+    icon: 'var(--sf-on-surface-variant)',
+    medallion: 'var(--sf-neutral-100)',
+  },
+  /** @deprecated Tên cũ từ thang teal. Dùng `primary`. */
+  teal: { value: 'var(--sf-blue-700)', icon: 'var(--sf-blue-700)', medallion: 'var(--sf-blue-50)' },
+};
+
 export function StatCard({
   label,
   value,
   suffix,
   hint,
-  tone = 'teal',
+  tone = 'primary',
   icon,
   to,
+  onClick,
   loading = false,
 }: {
   label: string;
   value: ReactNode;
   suffix?: ReactNode;
   hint?: ReactNode;
-  tone?: 'teal' | 'warning' | 'error' | 'neutral';
+  tone?: StatTone;
   icon?: string;
   to?: string;
+  /**
+   * Thẻ bấm được nhưng KHÔNG điều hướng — nó bật một bộ lọc ngay tại chỗ.
+   *
+   * Có mặt vì thẻ "Cần đối soát" lọc chính bảng nằm ngay bên dưới nó. Dùng `to`
+   * cho việc đó sẽ phải dựng lại toàn bộ query string đang có trên URL, và bỏ
+   * sót một tham số nghĩa là bấm vào thẻ làm mất luôn tháng người dùng đang xem.
+   *
+   * `to` vẫn thắng khi cả hai cùng được truyền: một thẻ vừa là liên kết vừa là
+   * nút thì bàn phím và trình đọc màn hình không có cách nào mô tả nó.
+   */
+  onClick?: () => void;
   loading?: boolean;
 }) {
-  const valueColor = {
-    teal: 'var(--sf-teal-700)',
-    warning: 'var(--sf-warning-700)',
-    error: 'var(--sf-error-700)',
-    neutral: 'var(--sf-on-surface)',
-  }[tone];
+  const palette = STAT_TONE[tone];
 
   const body = (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        {icon ? <Icon name={icon} size={16} color="var(--sf-on-surface-variant)" /> : null}
-        <span className="sf-label-md">{label}</span>
-      </div>
-
-      {loading ? (
-        <div className="sf-skeleton" style={{ width: 80, height: 40, marginTop: 4 }} />
-      ) : (
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
-          <span
-            style={{
-              fontSize: 32,
-              lineHeight: '40px',
-              fontWeight: 700,
-              letterSpacing: '-0.64px',
-              color: valueColor,
-            }}
-          >
-            {value}
-          </span>
-          {suffix ? (
-            <span className="sf-text-variant" style={{ fontSize: 16 }}>
-              {suffix}
-            </span>
-          ) : null}
-        </div>
-      )}
-
-      {hint ? (
-        <span className="sf-body-sm sf-text-variant" style={{ marginTop: 2 }}>
-          {hint}
+      {icon ? (
+        <span className="sf-stat-medallion" style={{ background: palette.medallion }}>
+          <Icon name={icon} size={24} color={palette.icon} />
         </span>
       ) : null}
+
+      <span className="sf-stat-body">
+        <span className="sf-label-md sf-text-variant">{label}</span>
+
+        {loading ? (
+          <span className="sf-skeleton" style={{ width: 80, height: 36, marginTop: 4 }} />
+        ) : (
+          <span style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+            <span
+              style={{
+                fontSize: 30,
+                lineHeight: '38px',
+                fontWeight: 700,
+                letterSpacing: '-0.6px',
+                color: palette.value,
+              }}
+            >
+              {value}
+            </span>
+            {suffix ? (
+              <span className="sf-text-variant" style={{ fontSize: 15 }}>
+                {suffix}
+              </span>
+            ) : null}
+          </span>
+        )}
+
+        {hint ? <span className="sf-body-sm sf-text-variant">{hint}</span> : null}
+      </span>
     </>
   );
 
   if (to) {
     return (
-      <Link to={to} className="sf-stat-card" style={{ textDecoration: 'none' }}>
+      <Link to={to} className="sf-stat-card sf-stat-card--link">
         {body}
-        <span
-          className="sf-body-sm"
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: 4,
-            marginTop: 4,
-            fontWeight: 600,
-            color: 'var(--sf-primary)',
-          }}
-        >
-          Xem chi tiết <Icon name="arrow_forward" size={16} />
-        </span>
+        <Icon name="chevron_right" size={20} color="var(--sf-on-surface-muted)" />
       </Link>
+    );
+  }
+
+  // `<button>` chứ không `<div onClick>` — xem chú thích ở `ClickableCard`: một
+  // div bấm được không nhận tiêu điểm bàn phím và trình đọc màn hình không báo
+  // là bấm được.
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="sf-stat-card sf-stat-card--link"
+        style={{ font: 'inherit', color: 'inherit', textAlign: 'left', cursor: 'pointer' }}
+      >
+        {body}
+        <Icon name="chevron_right" size={20} color="var(--sf-on-surface-muted)" />
+      </button>
     );
   }
 

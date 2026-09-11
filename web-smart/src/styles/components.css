@@ -1,5 +1,5 @@
 /**
- * Thư viện component — docs/16-quy-chuan-style-guide.md mục 11.
+ * Thư viện component — docs/20-quy-chuan-style-guide.md mục 11.
  *
  * Mọi lớp ở đây chỉ tham chiếu token ngữ nghĩa trong `tokens.css`, không có mã
  * HEX viết thẳng (nguyên tắc số 1 của tài liệu, và điều đầu tiên trong checklist
@@ -65,47 +65,70 @@
   font-weight: 700;
 }
 
-/* ── Biến thể 1: Primary (amber) ────────────────────────────────────────── */
-
-.sf-btn--primary {
-  background: var(--sf-action);
-  color: var(--sf-on-action);
-  box-shadow: var(--sf-shadow-xs);
-}
-
 /*
- * SÁNG LÊN khi hover, không tối đi — mục 0.1.
+ * ── Biến thể 1: Primary (xanh dương đặc) ──────────────────────────────────
  *
- * Tối một bậc (amber-600) làm chữ nâu tụt xuống 3.02:1, trượt WCAG AA. Sáng một
- * bậc (amber-400) cho 5.29:1, cao hơn cả trạng thái nghỉ. Đây không phải sở
- * thích thẩm mỹ mà là lựa chọn duy nhất giữ được sắc nâu ấm của thương hiệu.
+ * Nút hành động chính của mọi màn hình: "Lưu", "Tạo mới", "Thiết lập".
+ *
+ * ## Hover TỐI đi một bậc — đã đảo chiều so với bản trước
+ *
+ * Bản teal/amber phải làm ngược lại (sáng lên), vì nút amber có chữ nâu sẫm nên
+ * tối nền đi làm tương phản TỤT xuống 3.02:1 và trượt AA. Nút xanh dương có chữ
+ * trắng, nên quy tắc quen thuộc lại đúng: `blue-800` cho 8.72:1 so với 6.70:1 ở
+ * trạng thái nghỉ.
+ *
+ * Ghi lại chỗ này để lần sau đổi thang màu thì kiểm lại CHIỀU, đừng chép quy
+ * tắc "luôn sáng lên" của bản cũ sang một bảng màu nó không còn đúng.
  */
-.sf-btn--primary:hover:not(:disabled) {
-  background: var(--sf-action-hover);
-}
-
-/* Nhấn: giữ nguyên màu, dùng bóng lõm + dịch 1px. Chuyển động truyền đạt cú
-   nhấn tốt hơn màu, và không tốn thêm một bậc tương phản nào. */
-.sf-btn--primary:active:not(:disabled) {
-  background: var(--sf-action);
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
-  transform: translateY(1px);
-}
-
-/* ── Biến thể 2: Primary teal (đặc) ─────────────────────────────────────── */
-
+.sf-btn--primary,
+.sf-btn--brand,
 .sf-btn--teal {
   background: var(--sf-primary-surface);
   color: var(--sf-on-primary-surface);
   box-shadow: var(--sf-shadow-xs);
 }
 
+.sf-btn--primary:hover:not(:disabled),
+.sf-btn--brand:hover:not(:disabled),
 .sf-btn--teal:hover:not(:disabled) {
   background: var(--sf-primary-surface-hover);
 }
 
+/* Nhấn: giữ nguyên màu, dùng bóng lõm + dịch 1px. Chuyển động truyền đạt cú
+   nhấn tốt hơn màu, và không tốn thêm một bậc tương phản nào. */
+.sf-btn--primary:active:not(:disabled),
+.sf-btn--brand:active:not(:disabled),
 .sf-btn--teal:active:not(:disabled) {
-  background: var(--sf-teal-900);
+  background: var(--sf-primary-surface);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+  transform: translateY(1px);
+}
+
+/*
+ * ── Biến thể 1b: Action (xanh lá đặc) ─────────────────────────────────────
+ *
+ * CHỈ dùng cho thao tác CHỐT một quy trình: "Phê duyệt & cập nhật công", "Xác
+ * nhận chốt kỳ". Không dùng cho "Lưu" hay "Tạo mới".
+ *
+ * Ranh giới đó là điểm chính. Bản trước gán màu nhấn mạnh cho biến thể mặc
+ * định, nên mọi nút trên toàn ứng dụng đều nhấn mạnh — và khi mọi nút đều nhấn
+ * mạnh thì không nút nào nhấn mạnh nữa. Trong thiết kế v2.1, một màn hình có
+ * nhiều lắm là một nút xanh lá.
+ */
+.sf-btn--action {
+  background: var(--sf-action);
+  color: var(--sf-on-action);
+  box-shadow: var(--sf-shadow-xs);
+}
+
+.sf-btn--action:hover:not(:disabled) {
+  background: var(--sf-action-hover);
+}
+
+.sf-btn--action:active:not(:disabled) {
+  background: var(--sf-action);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+  transform: translateY(1px);
 }
 
 /* ── Biến thể 3: Secondary (viền) ───────────────────────────────────────── */
@@ -317,8 +340,8 @@
 }
 
 .sf-choice:hover:not(.sf-choice--disabled) .sf-choice__input:checked + .sf-choice__box--checkbox {
-  background: var(--sf-teal-800);
-  border-color: var(--sf-teal-800);
+  background: var(--sf-blue-800);
+  border-color: var(--sf-blue-800);
 }
 
 /* Radio đã chọn: viền teal + chấm tròn 12px, nền VẪN trong suốt (mục 11.3). */
@@ -687,7 +710,7 @@
   border: none;
   border-radius: 6px;
   background: none;
-  color: var(--sf-teal-700);
+  color: var(--sf-blue-700);
   font: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -822,13 +845,13 @@
 }
 
 .sf-notification--unread {
-  background: var(--sf-teal-50);
+  background: var(--sf-blue-50);
   border-left-color: var(--sf-primary-surface);
   cursor: pointer;
 }
 
 .sf-notification--unread:hover {
-  background: var(--sf-teal-100);
+  background: var(--sf-blue-100);
 }
 
 .sf-notification:not(.sf-notification--unread):hover {

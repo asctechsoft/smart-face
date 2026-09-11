@@ -1,5 +1,5 @@
 # ============================================================================
-#  Môi trường `local` — docs/02-kien-truc-he-thong.md mục 12.1
+#  Môi trường `local` — docs/11-kien-truc-va-technology-stack.md mục 12.1
 #  Dựng đủ hạ tầng để chạy Backend mà không cần cloud.
 # ============================================================================
 
@@ -35,37 +35,6 @@ services:
       timeout: 3s
       retries: 5
 
-  minio:
-    image: minio/minio:latest
-    container_name: smartface-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - '9000:9000'
-      - '9001:9001'
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ['CMD', 'mc', 'ready', 'local']
-      interval: 15s
-      timeout: 5s
-      retries: 5
-
-  # Tạo sẵn bucket rồi thoát.
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_started
-    entrypoint: >
-      /bin/sh -c "
-      until mc alias set local http://minio:9000 minioadmin minioadmin; do sleep 2; done;
-      mc mb --ignore-existing local/smartface;
-      echo 'Bucket smartface đã sẵn sàng';
-      "
-
   api:
     build: .
     container_name: smartface-api
@@ -80,11 +49,13 @@ services:
       DATABASE_URL: postgresql://smartface:smartface@postgres:5432/smartface?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: smartface
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      S3_FORCE_PATH_STYLE: 'true'
+      # Ảnh và file báo cáo nằm trên Cloud Storage for Firebase — không còn
+      # container lưu trữ chạy cục bộ. Bốn biến dưới lấy từ `.env` cạnh file này
+      # (docker compose tự đọc `.env` để thay thế biến), xem .env.example.
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY}
+      FIREBASE_STORAGE_BUCKET: ${FIREBASE_STORAGE_BUCKET}
       AI_SERVER_URL: http://ai-server:8000
       AI_SERVER_INTERNAL_KEY: dev-internal-key
       JWT_SECRET: dev-only-change-me
@@ -111,11 +82,13 @@ services:
       DATABASE_URL: postgresql://smartface:smartface@postgres:5432/smartface?schema=public
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: smartface
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: minioadmin
-      S3_FORCE_PATH_STYLE: 'true'
+      # Ảnh và file báo cáo nằm trên Cloud Storage for Firebase — không còn
+      # container lưu trữ chạy cục bộ. Bốn biến dưới lấy từ `.env` cạnh file này
+      # (docker compose tự đọc `.env` để thay thế biến), xem .env.example.
+      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID}
+      FIREBASE_CLIENT_EMAIL: ${FIREBASE_CLIENT_EMAIL}
+      FIREBASE_PRIVATE_KEY: ${FIREBASE_PRIVATE_KEY}
+      FIREBASE_STORAGE_BUCKET: ${FIREBASE_STORAGE_BUCKET}
       AI_SERVER_URL: http://ai-server:8000
       AI_SERVER_INTERNAL_KEY: dev-internal-key
       JWT_SECRET: dev-only-change-me
@@ -127,4 +100,3 @@ services:
 volumes:
   postgres-data:
   redis-data:
-  minio-data:

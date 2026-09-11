@@ -86,9 +86,9 @@ describe('JwtAuthGuard — ràng buộc thiết bị (AF-16)', () => {
     });
 
     it('CHẶN khi header rỗng', async () => {
-      await expect(
-        guard.canActivate(contextWith({ 'x-device-id': '' })),
-      ).rejects.toMatchObject({ code: 'AUTH_DEVICE_MISMATCH' });
+      await expect(guard.canActivate(contextWith({ 'x-device-id': '' }))).rejects.toMatchObject({
+        code: 'AUTH_DEVICE_MISMATCH',
+      });
     });
 
     it('CHẶN khi header khác deviceId trong token', async () => {
@@ -98,9 +98,9 @@ describe('JwtAuthGuard — ràng buộc thiết bị (AF-16)', () => {
     });
 
     it('CHO QUA khi header khớp', async () => {
-      await expect(
-        guard.canActivate(contextWith({ 'x-device-id': 'dev_abc' })),
-      ).resolves.toBe(true);
+      await expect(guard.canActivate(contextWith({ 'x-device-id': 'dev_abc' }))).resolves.toBe(
+        true,
+      );
     });
 
     it('đưa deviceId vào RequestContext cho các tầng sau dùng', async () => {
@@ -128,9 +128,9 @@ describe('JwtAuthGuard — ràng buộc thiết bị (AF-16)', () => {
     });
 
     it('CHO QUA kể cả khi gửi header lạ — token không gắn thiết bị nào', async () => {
-      await expect(
-        guard.canActivate(contextWith({ 'x-device-id': 'dev_bat_ky' })),
-      ).resolves.toBe(true);
+      await expect(guard.canActivate(contextWith({ 'x-device-id': 'dev_bat_ky' }))).resolves.toBe(
+        true,
+      );
     });
 
     it('deviceId trong RequestContext là null', async () => {

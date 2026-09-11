@@ -119,9 +119,9 @@ describe('Giao giờ giữa các ca trong ngày', () => {
     });
 
     it('ca linh hoạt đè lên mọi ca trong ngày', () => {
-      expect(
-        findOverlappingShift(FLEXIBLE, [existing(fixed('08:00', '12:00'), 0, 'a')])?.id,
-      ).toBe('a');
+      expect(findOverlappingShift(FLEXIBLE, [existing(fixed('08:00', '12:00'), 0, 'a')])?.id).toBe(
+        'a',
+      );
     });
 
     it('không có ca nào thì xếp được', () => {

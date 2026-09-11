@@ -1,35 +1,48 @@
 import type { ThemeConfig } from 'antd';
 
 /**
- * docs/16-quy-chuan-style-guide.md mục 13.1 — chép nguyên văn.
+ * Cấu hình Ant Design — phải khớp `src/styles/tokens.css`.
  *
- * ⚠ Điểm dễ sai nhất: Ant Design mặc định TỐI màu nút khi hover. Nút chính của
- * SmartFace là amber, và tối đi một bậc (`amber-600`) làm chữ nâu tụt xuống
- * 3.02:1 — trượt WCAG AA. Vì vậy `colorPrimaryHover` phải là `amber-400`
- * (SÁNG LÊN). Xem lập luận đầy đủ ở mục 0.1 của tài liệu.
+ * ## Vì sao ở đây là mã hex chứ không phải `var(--sf-*)`
+ *
+ * Ant Design tính ra hàng chục màu dẫn xuất (nền hover, viền disabled, bóng
+ * focus) từ các màu gốc này, và phép tính đó chạy trong JavaScript nên nó cần
+ * giá trị thật, không phải một chuỗi `var(...)` mà chỉ trình duyệt hiểu. Đây là
+ * chỗ DUY NHẤT trong dự án được viết hex ngoài `tokens.css` — đổi màu thì phải
+ * sửa cả hai file rồi chạy `npm run check:contrast`.
+ *
+ * ## Ghi chú về hover, đã đảo chiều so với bản trước
+ *
+ * Bản teal/amber phải ép nút chính SÁNG LÊN khi hover, vì nút amber có chữ nâu
+ * sẫm và tối nền đi làm tương phản tụt xuống 3.02:1. Nút xanh dương có chữ
+ * trắng nên hành vi mặc định của Ant Design (tối đi) lại là hướng đúng:
+ * `blue-800` cho 8.72:1, cao hơn 6.70:1 ở trạng thái nghỉ.
+ *
+ * Đừng chép quy tắc "luôn sáng lên" của bản cũ sang — nó đúng cho một bảng màu
+ * đã không còn dùng.
  */
 export const smartFaceTheme: ThemeConfig = {
   token: {
-    colorPrimary: '#003B2C',
-    colorSuccess: '#2E7D32',
-    colorWarning: '#855400',
-    colorError: '#BA1A1A',
-    colorInfo: '#005440',
+    colorPrimary: '#1D4ED8',
+    colorSuccess: '#15803D',
+    colorWarning: '#B45309',
+    colorError: '#DC2626',
+    colorInfo: '#1D4ED8',
 
-    colorText: '#191C1C',
-    colorTextSecondary: '#3F4944',
-    colorTextTertiary: '#6F7974',
-    colorTextDisabled: '#6F7974',
-    colorTextPlaceholder: '#6F7974',
+    colorText: '#0F172A',
+    colorTextSecondary: '#334155',
+    colorTextTertiary: '#64748B',
+    colorTextDisabled: '#64748B',
+    colorTextPlaceholder: '#64748B',
 
     colorBgBase: '#FFFFFF',
-    colorBgLayout: '#F8FAF9',
+    colorBgLayout: '#F8FAFC',
     colorBgContainer: '#FFFFFF',
-    colorFillSecondary: '#F2F4F3',
-    colorFillTertiary: '#E1E3E2',
+    colorFillSecondary: '#F1F5F9',
+    colorFillTertiary: '#E2E8F0',
 
-    colorBorder: '#6F7974',
-    colorBorderSecondary: '#BFC9C3',
+    colorBorder: '#64748B',
+    colorBorderSecondary: '#CBD5E1',
 
     fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
     fontSize: 16,
@@ -101,47 +114,56 @@ export const smartFaceTheme: ThemeConfig = {
      * mà control vẫn gọn.
      */
     Button: {
-      // Nút "primary" của SmartFace là amber, không phải teal.
-      colorPrimary: '#FCAA33',
-      colorPrimaryHover: '#FFBD67',
-      colorPrimaryActive: '#FCAA33',
-      primaryColor: '#6B4200',
+      /*
+       * Nút `type="primary"` của Ant Design là nút XANH DƯƠNG, không phải nút
+       * xác nhận xanh lá.
+       *
+       * Bản trước gán màu hành động (amber) cho `type="primary"`, nên mọi nút
+       * mặc định trên toàn ứng dụng đều là nút nhấn mạnh — và khi mọi nút đều
+       * nhấn mạnh thì không nút nào nhấn mạnh nữa. Nút xác nhận xanh lá bây giờ
+       * là lớp `.sf-btn--action` dùng cho đúng các thao tác chốt (phê duyệt,
+       * xác nhận), không phải cho mọi nút.
+       */
+      colorPrimary: '#1D4ED8',
+      colorPrimaryHover: '#1E40AF',
+      colorPrimaryActive: '#1D4ED8',
+      primaryColor: '#FFFFFF',
       borderRadius: 8,
       fontSize: 14,
       fontWeight: 700,
       // 24px đệm ngang cân với nút cao 44px; với nút 32px thì nút dài ngoẵng.
       paddingInline: 16,
       dangerColor: '#FFFFFF',
-      colorError: '#BA1A1A',
-      colorErrorHover: '#980001',
+      colorError: '#DC2626',
+      colorErrorHover: '#B91C1C',
     },
     Input: {
       borderRadius: 8,
       fontSize: 14,
       paddingBlock: 4,
       paddingInline: 12,
-      colorBorder: '#6F7974',
-      activeBorderColor: '#003B2C',
-      activeShadow: '0 0 0 3px #D1F7E8',
+      colorBorder: '#64748B',
+      activeBorderColor: '#1D4ED8',
+      activeShadow: '0 0 0 3px #DBEAFE',
     },
     InputNumber: {
       borderRadius: 8,
       fontSize: 14,
-      colorBorder: '#6F7974',
-      activeBorderColor: '#003B2C',
-      activeShadow: '0 0 0 3px #D1F7E8',
+      colorBorder: '#64748B',
+      activeBorderColor: '#1D4ED8',
+      activeShadow: '0 0 0 3px #DBEAFE',
     },
     Select: {
       borderRadius: 8,
       fontSize: 14,
-      colorBorder: '#BFC9C3',
-      optionSelectedBg: '#D1F7E8',
+      colorBorder: '#CBD5E1',
+      optionSelectedBg: '#DBEAFE',
     },
     DatePicker: {
       borderRadius: 8,
       fontSize: 14,
-      colorBorder: '#BFC9C3',
-      cellActiveWithRangeBg: '#E4FEF4',
+      colorBorder: '#CBD5E1',
+      cellActiveWithRangeBg: '#EFF6FF',
     },
     /*
      * Ba bậc mật độ bảng — docs/16 mục 11.10.
@@ -160,12 +182,12 @@ export const smartFaceTheme: ThemeConfig = {
      * ngang mới là thứ giết khả năng đọc của một bảng tra cứu.
      */
     Table: {
-      headerBg: '#F2F4F3',
-      headerColor: '#3F4944',
-      rowHoverBg: '#F8FAF9',
-      rowSelectedBg: '#E4FEF4',
-      rowSelectedHoverBg: '#D1F7E8',
-      borderColor: '#BFC9C3',
+      headerBg: '#F1F5F9',
+      headerColor: '#334155',
+      rowHoverBg: '#F8FAFC',
+      rowSelectedBg: '#EFF6FF',
+      rowSelectedHoverBg: '#DBEAFE',
+      borderColor: '#CBD5E1',
       cellPaddingBlock: 16,
       cellPaddingInline: 24,
       cellPaddingBlockMD: 12,
@@ -173,7 +195,7 @@ export const smartFaceTheme: ThemeConfig = {
       cellPaddingBlockSM: 8,
       cellPaddingInlineSM: 16,
     },
-    Modal: { borderRadiusLG: 16, headerBg: '#F8FAF9', footerBg: '#F2F4F3', contentBg: '#FFFFFF' },
+    Modal: { borderRadiusLG: 16, headerBg: '#F8FAFC', footerBg: '#F1F5F9', contentBg: '#FFFFFF' },
     Drawer: { paddingLG: 24 },
     /*
      * Sidenav KHÔNG dùng `Menu` của antd — nó là `.sf-nav-item` viết riêng
@@ -184,20 +206,20 @@ export const smartFaceTheme: ThemeConfig = {
      * Vì vậy `itemHeight` phải theo nhịp control 32px, không theo nhịp sidenav.
      */
     Menu: {
-      itemSelectedBg: '#FCAA33',
-      itemSelectedColor: '#6B4200',
-      itemHoverBg: '#E1E3E2',
+      itemSelectedBg: '#EFF6FF',
+      itemSelectedColor: '#1E40AF',
+      itemHoverBg: '#E2E8F0',
       itemBorderRadius: 6,
       itemHeight: 32,
       fontSize: 14,
     },
-    Card: { borderRadiusLG: 12, colorBorderSecondary: '#BFC9C3', paddingLG: 16 },
-    Tag: { borderRadiusSM: 9999, defaultBg: '#E1E3E2', defaultColor: '#191C1C' },
-    Checkbox: { colorPrimary: '#003B2C', borderRadiusSM: 4 },
-    Radio: { colorPrimary: '#003B2C' },
-    Tabs: { itemSelectedColor: '#003B2C', inkBarColor: '#005440', titleFontSize: 16 },
-    Tooltip: { colorBgSpotlight: '#2D3230', borderRadius: 8 },
-    Segmented: { itemSelectedBg: '#D1F7E8', itemSelectedColor: '#003B2C', borderRadius: 8 },
+    Card: { borderRadiusLG: 12, colorBorderSecondary: '#CBD5E1', paddingLG: 16 },
+    Tag: { borderRadiusSM: 9999, defaultBg: '#E2E8F0', defaultColor: '#0F172A' },
+    Checkbox: { colorPrimary: '#1D4ED8', borderRadiusSM: 4 },
+    Radio: { colorPrimary: '#1D4ED8' },
+    Tabs: { itemSelectedColor: '#1D4ED8', inkBarColor: '#1D4ED8', titleFontSize: 16 },
+    Tooltip: { colorBgSpotlight: '#1E293B', borderRadius: 8 },
+    Segmented: { itemSelectedBg: '#DBEAFE', itemSelectedColor: '#1D4ED8', borderRadius: 8 },
     Alert: { borderRadiusLG: 12 },
     Statistic: { contentFontSize: 32 },
   },

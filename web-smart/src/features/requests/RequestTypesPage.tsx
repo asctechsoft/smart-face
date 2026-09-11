@@ -3,8 +3,6 @@ import { Alert, Button, Switch } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
-import { StatusBadge } from '@/components/StatusBadge';
-import { Icon } from '@/components/Icon';
 import { Can, useCan } from '@/lib/rbac/Can';
 import { ApprovalFlowDrawer } from './ApprovalFlowDrawer';
 import { RequestTypeFormModal } from './RequestTypeFormModal';
@@ -18,6 +16,7 @@ import {
 } from './request-config.api';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
 import { useToast } from '@/components/ui';
+import { Badge as StatusBadge, Icon } from '@/components/ui';
 
 /**
  * Cấu hình loại đơn & luồng duyệt — docs/04 mục 4.1 (`FR-WEB-REQ-05`).
@@ -29,10 +28,15 @@ import { useToast } from '@/components/ui';
  * Cột "Luồng duyệt" hiển thị chuỗi các cấp ngay trên dòng chứ không giấu sau nút
  * bấm — đây là thông tin người ta mở màn hình này để xem.
  */
-export function RequestTypesPage() {
+/**
+ * `embedded`: bỏ tiêu đề trang khi component này nằm trong một tab của trang
+ * "Thiết lập". Trang đó đã có tiêu đề riêng, và hai tiêu đề chồng nhau đọc như
+ * một lỗi dựng trang.
+ */
+export function RequestTypesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useToast();
   const showError = useErrorToast();
-  const canEdit = useCan('request.configure');
+  const canEdit = useCan('request.configure_flow');
 
   const types = useRequestTypeConfigs();
   const update = useUpdateRequestType();
@@ -218,21 +222,23 @@ export function RequestTypesPage() {
 
   return (
     <>
-      <PageHeader
-        title="Loại đơn & luồng duyệt"
-        description="Định nghĩa các loại đơn nhân viên gửi được và ai phải duyệt chúng. Đơn đang chờ duyệt luôn chạy hết luồng của lúc nó được gửi."
-        actions={
-          <Can do="request.configure">
-            <Button
-              type="primary"
-              icon={<Icon name="add" size={20} />}
-              onClick={() => setFormTarget('create')}
-            >
-              Thêm loại đơn
-            </Button>
-          </Can>
-        }
-      />
+      {embedded ? null : (
+        <PageHeader
+          title="Loại đơn & luồng duyệt"
+          description="Định nghĩa các loại đơn nhân viên gửi được và ai phải duyệt chúng. Đơn đang chờ duyệt luôn chạy hết luồng của lúc nó được gửi."
+          actions={
+            <Can do="request.configure_flow">
+              <Button
+                type="primary"
+                icon={<Icon name="add" size={20} />}
+                onClick={() => setFormTarget('create')}
+              >
+                Thêm loại đơn
+              </Button>
+            </Can>
+          }
+        />
+      )}
 
       <Alert
         type="info"

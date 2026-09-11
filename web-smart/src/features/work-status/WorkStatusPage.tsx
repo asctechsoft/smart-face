@@ -6,8 +6,6 @@ import { FilterBar, FilterField } from '@/components/FilterBar';
 import { ApiErrorState } from '@/components/ApiErrorState';
 import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmptyState, useToast } from '@/components/ui';
-import { TableSkeleton } from '@/components/Skeleton';
-import { Icon } from '@/components/Icon';
 import { Can, useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
@@ -28,6 +26,7 @@ import {
   type WorkState,
   type WorkStatusRow,
 } from './work-status.api';
+import { Icon, TableSkeleton } from '@/components/ui';
 
 /**
  * Theo dõi công việc trong ngày — lưới CBNV × dòng thời gian.
@@ -637,7 +636,7 @@ function WorkStatusRowView({
 
         {pending.length > 0 ? (
           <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            <span className="sf-caption" style={{ width: '100%', color: 'var(--sf-teal-800)' }}>
+            <span className="sf-caption" style={{ width: '100%', color: 'var(--sf-blue-800)' }}>
               {pending.map((request) => request.typeName).join(', ')} · chờ duyệt
             </span>
             {canApprove && pending[0] ? (
@@ -743,7 +742,7 @@ const STATE_TONE: Record<WorkState, { icon: string; color: string; background: s
     color: 'var(--sf-warning-800)',
     background: 'var(--sf-warning-50)',
   },
-  WORKING: { icon: 'work', color: 'var(--sf-teal-700)', background: 'var(--sf-teal-50)' },
+  WORKING: { icon: 'work', color: 'var(--sf-blue-700)', background: 'var(--sf-blue-50)' },
   DONE: {
     icon: 'check_circle',
     color: 'var(--sf-success-700)',
@@ -754,11 +753,11 @@ const STATE_TONE: Record<WorkState, { icon: string; color: string; background: s
     color: 'var(--sf-neutral-700)',
     background: 'var(--sf-neutral-100)',
   },
-  ON_LEAVE: { icon: 'event_busy', color: 'var(--sf-teal-800)', background: 'var(--sf-teal-50)' },
+  ON_LEAVE: { icon: 'event_busy', color: 'var(--sf-blue-800)', background: 'var(--sf-blue-50)' },
   BUSINESS_TRIP: {
     icon: 'flight_takeoff',
-    color: 'var(--sf-teal-800)',
-    background: 'var(--sf-teal-50)',
+    color: 'var(--sf-blue-800)',
+    background: 'var(--sf-blue-50)',
   },
   HOLIDAY: {
     icon: 'celebration',
@@ -870,7 +869,7 @@ function StateSummary({
                 // Ô đang lọc có viền đậm CHỨ KHÔNG đổi nền: đổi nền sẽ phá vai
                 // trò chú thích màu của chính dải này.
                 border: isActive
-                  ? '2px solid var(--sf-teal-700)'
+                  ? '2px solid var(--sf-blue-700)'
                   : '1px solid var(--sf-outline-variant)',
                 // Bù lại đúng 1px viền dày thêm, để ô đang chọn không nhích to
                 // hơn hàng xóm và làm cả dải xô lệch.

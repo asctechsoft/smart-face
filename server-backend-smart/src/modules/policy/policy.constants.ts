@@ -45,6 +45,19 @@ export const PolicyKeys = {
   FACE_MAX_YAW_DEGREES: 'ai.face.maxYawDegrees',
   FACE_MAX_PITCH_DEGREES: 'ai.face.maxPitchDegrees',
 
+  // --- Chấm công offline (FR-APP-STAT-06, giai đoạn 3) ----------------------
+  /**
+   * Bật/tắt đồng bộ bản ghi chấm công offline cho công ty này.
+   *
+   * MẶC ĐỊNH TẮT, và đó là lựa chọn có chủ ý: bản ghi offline mâu thuẫn trực
+   * tiếp với `BR-01` (giờ server là giờ chính thức) vì thời điểm chấm là do máy
+   * người dùng khai. docs/02 §12.1 gọi đây là đánh đổi tiện lợi ↔ độ tin cậy và
+   * bù bằng quy trình duyệt. Công ty nào chấp nhận đánh đổi đó thì tự bật.
+   */
+  OFFLINE_ENABLED: 'attendance.offline.enabled',
+  /** Bản ghi cũ hơn ngần này giờ thì không nhận nữa — đồng bộ muộn là dấu hiệu xấu. */
+  OFFLINE_MAX_AGE_HOURS: 'attendance.offline.maxAgeHours',
+
   // --- Lệch giờ (AF-18) -----------------------------------------------------
   CLOCK_SKEW_FLAG_SECONDS: 'attendance.clock.skewFlagSeconds',
   CLOCK_SKEW_TAMPER_SECONDS: 'attendance.clock.skewTamperSeconds',
@@ -74,6 +87,22 @@ export const PolicyKeys = {
   PAYROLL_OT_MAX_MINUTES_PER_YEAR: 'payroll.ot.maxMinutesPerYear',
   PAYROLL_PENALTY_RULES: 'payroll.penalty.rules',
   PAYROLL_COUNT_WEEKEND_AS_WORKDAY: 'payroll.countWeekendAsWorkday',
+
+  // --- Lich chot luong (docs/13 §5.4 — cac moc hien tren man hinh Tong quan) --
+  /**
+   * So ngay danh cho DOI SOAT sau khi ky dong lai.
+   *
+   * Ba khoa duoi day chi mo ta LICH DU KIEN de hien thi, khong dieu khien may
+   * trang thai ky cong: khong co job nao tu dong chuyen ky sang LOCKED vao ngay
+   * nay. Chung ton tai vi ke toan can biet "con may ngay nua toi han", va so
+   * ngay do khac nhau o moi cong ty — hard-code thi cong ty nao khac lich se
+   * doc mot ngay sai ma khong sua duoc.
+   */
+  PAYROLL_SCHEDULE_REVIEW_DAYS: 'payroll.schedule.reviewDays',
+  /** So ngay danh cho buoc TINH LUONG, tinh tiep sau khoang doi soat. */
+  PAYROLL_SCHEDULE_CALC_DAYS: 'payroll.schedule.calcDays',
+  /** Ngay CHI TRA = ngay cuoi ky + so ngay nay. */
+  PAYROLL_SCHEDULE_PAYOUT_OFFSET_DAYS: 'payroll.schedule.payoutOffsetDays',
 
   // --- Làm bù (docs/04 mục 5.1) ---------------------------------------------
   MAKEUP_DUE_DAYS: 'makeup.dueDays',
@@ -212,6 +241,8 @@ export const POLICY_DEFAULTS: Record<string, unknown> = {
   [PolicyKeys.FACE_MAX_PITCH_DEGREES]: 25,
 
   // Lệch giờ
+  [PolicyKeys.OFFLINE_ENABLED]: false,
+  [PolicyKeys.OFFLINE_MAX_AGE_HOURS]: 48,
   [PolicyKeys.CLOCK_SKEW_FLAG_SECONDS]: 120,
   [PolicyKeys.CLOCK_SKEW_TAMPER_SECONDS]: 3600,
 
@@ -258,6 +289,12 @@ export const POLICY_DEFAULTS: Record<string, unknown> = {
   [PolicyKeys.PAYROLL_OT_MAX_MINUTES_PER_YEAR]: 12000,
   [PolicyKeys.PAYROLL_PENALTY_RULES]: [] satisfies PenaltyRule[],
   [PolicyKeys.PAYROLL_COUNT_WEEKEND_AS_WORKDAY]: false,
+
+  // Lich chot luong — mac dinh dung theo nhip pho bien nhat: chot cong ngay
+  // cuoi ky, doi soat 2 ngay, tinh luong 2 ngay, chi tra ngay thu 5.
+  [PolicyKeys.PAYROLL_SCHEDULE_REVIEW_DAYS]: 2,
+  [PolicyKeys.PAYROLL_SCHEDULE_CALC_DAYS]: 2,
+  [PolicyKeys.PAYROLL_SCHEDULE_PAYOUT_OFFSET_DAYS]: 5,
 
   // Làm bù
   [PolicyKeys.MAKEUP_DUE_DAYS]: 30,

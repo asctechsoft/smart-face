@@ -20,6 +20,7 @@ import {
   AttendanceSheetBoardQueryDto,
   AttendanceSheetMemberDto,
   AttendanceSheetQueryDto,
+  AttendanceMonthSummaryQueryDto,
   CreateAttendanceSheetDto,
 } from './dto/attendance-sheet.dto';
 
@@ -44,6 +45,32 @@ export class AttendanceSheetController {
   @ApiOperation({ summary: 'Danh sách bảng chấm công' })
   list(@CurrentTenant() ctx: TenantContext, @Query() query: AttendanceSheetQueryDto) {
     return this.sheets.list(ctx.companyId, query, resolveDepartmentScope(ctx));
+  }
+
+  /**
+   * Bảng TỔNG HỢP của một THÁNG: mỗi dòng một người.
+   *
+   * ⚠ Phải nằm TRƯỚC `@Get(':id')` — Nest so khớp theo thứ tự khai báo, để sau
+   * thì `/summary` bị hiểu thành một `id` và luôn trả `ATT_SHEET_NOT_FOUND`.
+   *
+   * Đây là cửa vào của màn "Bảng công": người rà công hỏi theo THÁNG, không
+   * theo từng bảng. Các bảng của tháng đi kèm trong `sheets` để chốt — chốt vẫn
+   * theo từng bảng, vì bảng mới là đơn vị giữ danh sách thành viên.
+   *
+   * Số liệu do đây gộp, KHÔNG do client cộng từ `/board`: lưới phân trang theo
+   * người nên client chỉ nắm được một phần tháng, và hàng thẻ chỉ số nói về cả
+   * tháng.
+   */
+  @Get('summary')
+  @Roles(SystemRole.COMPANY_ADMIN, SystemRole.HR_PAYROLL, SystemRole.MANAGER)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Tổng hợp công cả tháng — mỗi dòng một nhân viên',
+    description:
+      'Gộp mọi bảng chấm công của tháng. Công chuẩn (số ngày được xếp ca), công thực tế, OT, đi muộn, về sớm, nghỉ phép và thiếu công của từng người, kèm tổng của cả tháng cho hàng thẻ chỉ số và danh sách bảng để chốt. Phân trang theo NGƯỜI.',
+  })
+  summary(@CurrentTenant() ctx: TenantContext, @Query() query: AttendanceMonthSummaryQueryDto) {
+    return this.sheets.getMonthSummary(ctx.companyId, query, resolveDepartmentScope(ctx));
   }
 
   @Get(':id')

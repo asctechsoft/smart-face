@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 /**
- * Tiêu đề trang — docs/16 mục 3.2 (`display-lg`, Plus Jakarta Sans 700/32, teal-700).
+ * Tiêu đề trang — docs/16 mục 3.2 (`display-lg`, Plus Jakarta Sans 700/32, blue-700).
  *
  * Một trong đúng 3 vai trò được phép dùng Plus Jakarta Sans (mục 3.1).
  */

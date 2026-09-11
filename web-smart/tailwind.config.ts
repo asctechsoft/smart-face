@@ -1,7 +1,17 @@
 import type { Config } from 'tailwindcss';
 
 /**
- * docs/16-quy-chuan-style-guide.md mục 13.2 — sao chép nguyên văn, không sửa giá trị.
+ * Thang màu Tailwind — phải khớp `src/styles/tokens.css`.
+ *
+ * Sửa một giá trị ở đây mà quên file kia là hai nguồn sự thật lệch nhau: một
+ * component viết bằng lớp Tailwind và một component viết bằng biến CSS sẽ ra hai
+ * sắc xanh khác nhau trên cùng một màn hình. Đổi màu thì sửa cả hai, rồi chạy
+ * `npm run check:contrast`.
+ *
+ * `darkMode: 'class'` chứ không phải `'media'`: chế độ tối được quyết bằng thuộc
+ * tính `data-sf-theme` trên `<html>` (xem docblock trong `tokens.css`), nên
+ * Tailwind cũng phải nhìn vào đúng chỗ đó thay vì hỏi lại hệ điều hành — hai
+ * nguồn sẽ mâu thuẫn khi người dùng ép chế độ sáng trên máy đang để tối.
  *
  * `preflight` TẮT: Ant Design đã có reset riêng, bật cả hai thì hai bộ reset đè
  * nhau và các control của antd mất chiều cao mặc định.
@@ -9,81 +19,104 @@ import type { Config } from 'tailwindcss';
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   corePlugins: { preflight: false },
-  darkMode: 'media',
+  darkMode: ['selector', '[data-sf-theme="dark"]'],
   theme: {
     extend: {
       colors: {
-        teal: {
-          50: '#E4FEF4',
-          100: '#D1F7E8',
-          200: '#AEE5D1',
-          300: '#84CAB1',
-          400: '#5EAD93',
-          500: '#398F75',
-          600: '#17725A',
-          700: '#005440',
-          800: '#004836',
-          900: '#003B2C',
+        // Thương hiệu — thay thang teal của bản trước.
+        blue: {
+          50: '#EFF6FF',
+          100: '#DBEAFE',
+          200: '#BFDBFE',
+          300: '#93C5FD',
+          400: '#60A5FA',
+          500: '#3B82F6',
+          600: '#2563EB',
+          700: '#1D4ED8',
+          800: '#1E40AF',
+          900: '#1E3A8A',
         },
-        amber: {
-          50: '#FFF7DC',
-          100: '#FFF5CB',
-          200: '#FFEAAD',
-          300: '#FFD284',
-          400: '#FFBD67',
-          500: '#FCAA33',
-          600: '#CF8922',
-          700: '#A56600',
-          800: '#774B00',
-          900: '#6B4200',
+        // Thanh điều hướng. Không nằm trong thang blue vì nó tối hơn `blue-900`
+        // một cách có chủ ý: sidenav phải lùi ra sau nội dung, không tranh chú ý.
+        navy: {
+          DEFAULT: '#0B1B3A',
+          hover: '#16294D',
+          deep: '#060D1D',
         },
         neutral: {
-          50: '#F8FAF9',
-          100: '#F2F4F3',
-          200: '#E1E3E2',
-          300: '#BFC9C3',
-          400: '#99A09D',
-          500: '#6F7974',
-          600: '#59605D',
-          700: '#3F4944',
-          800: '#2D3230',
-          900: '#191C1C',
+          50: '#F8FAFC',
+          100: '#F1F5F9',
+          200: '#E2E8F0',
+          300: '#CBD5E1',
+          400: '#94A3B8',
+          500: '#64748B',
+          600: '#475569',
+          700: '#334155',
+          800: '#1E293B',
+          900: '#0F172A',
         },
         success: {
-          50: '#E2FBE1',
-          100: '#CAEFC9',
-          200: '#A5DAA4',
-          300: '#7BBC7A',
-          400: '#549D55',
-          500: '#2E7D32',
-          600: '#18691F',
-          700: '#00530D',
-          800: '#003F05',
-          900: '#002A01',
+          50: '#F0FDF4',
+          100: '#DCFCE7',
+          200: '#BBF7D0',
+          300: '#86EFAC',
+          400: '#4ADE80',
+          500: '#22C55E',
+          600: '#16A34A',
+          700: '#15803D',
+          800: '#166534',
+          900: '#14532D',
         },
         warning: {
-          50: '#FFF3DD',
-          100: '#FFE7C5',
-          200: '#FCD2A2',
-          300: '#E9B77A',
-          400: '#D49D57',
-          500: '#BB8236',
-          600: '#A16B1D',
-          700: '#855400',
-          800: '#643D00',
-          900: '#442600',
+          50: '#FFFBEB',
+          100: '#FEF3C7',
+          200: '#FDE68A',
+          300: '#FCD34D',
+          400: '#FBBF24',
+          500: '#F59E0B',
+          600: '#D97706',
+          700: '#B45309',
+          800: '#92400E',
+          900: '#78350F',
         },
         error: {
-          50: '#FFE8E0',
-          100: '#FFD4C9',
-          200: '#FFB3A5',
-          300: '#FF8A7B',
-          400: '#FB6457',
-          500: '#DC3E36',
-          600: '#BA1A1A',
-          700: '#980001',
-          800: '#740000',
-          900: '#500000',
+          50: '#FEF2F2',
+          100: '#FEE2E2',
+          200: '#FECACA',
+          300: '#FCA5A5',
+          400: '#F87171',
+          500: '#EF4444',
+          600: '#DC2626',
+          700: '#B91C1C',
+          800: '#991B1B',
+          900: '#7F1D1D',
+        },
+        // Token ngữ nghĩa — cách ĐÚNG để dùng màu trong component mới.
+        // `bg-surface`, `text-muted`, `border-outline`… tự đổi theo chế độ tối,
+        // còn `bg-blue-700` thì không.
+        surface: {
+          DEFAULT: 'var(--sf-surface)',
+          bright: 'var(--sf-surface-bright)',
+          low: 'var(--sf-surface-container-low)',
+          container: 'var(--sf-surface-container)',
+          inverse: 'var(--sf-surface-inverse)',
+        },
+        ink: {
+          DEFAULT: 'var(--sf-on-surface)',
+          variant: 'var(--sf-on-surface-variant)',
+          muted: 'var(--sf-on-surface-muted)',
+          inverse: 'var(--sf-on-surface-inverse)',
+        },
+        outline: {
+          DEFAULT: 'var(--sf-outline)',
+          variant: 'var(--sf-outline-variant)',
+        },
+        brand: {
+          DEFAULT: 'var(--sf-primary)',
+          surface: 'var(--sf-primary-surface)',
+          hover: 'var(--sf-primary-surface-hover)',
+          tint: 'var(--sf-primary-tint)',
+          'tint-strong': 'var(--sf-primary-tint-strong)',
         },
       },
       fontFamily: {

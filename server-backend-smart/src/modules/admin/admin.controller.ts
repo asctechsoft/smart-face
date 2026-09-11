@@ -1,5 +1,21 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Put, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Put,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiProperty,
+  ApiPropertyOptional,
+  ApiTags,
+} from '@nestjs/swagger';
 import { CompanyStatus, SystemRole } from '@prisma/client';
 import {
   IsBoolean,
@@ -12,13 +28,14 @@ import {
   Length,
   Min,
 } from 'class-validator';
-import { Audit, CurrentUser, Roles, SkipTenant } from 'src/common/decorators';
+import { Audit, CurrentUser, RequirePermission, Roles, SkipTenant } from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
 import type { RequestContext } from 'src/common/types/request-context';
 import { AuditLogQueryDto } from '../audit/dto/audit.dto';
 import { AuditService } from '../audit/audit.service';
 import { SystemUserQueryDto, TenantQueryDto } from './dto/admin-query.dto';
 import { PayrollService } from '../payroll/payroll.service';
+import { PlanService } from '../tenant/plan.service';
 import { TenantService } from '../tenant/tenant.service';
 import { AdminService } from './admin.service';
 
@@ -43,7 +60,10 @@ class CreateTenantDto {
    * đổi mã của toàn bộ nhân viên — thứ đã tuyên bố là không đổi được — hoặc để
    * mã cũ và mã mới tồn tại song song, không ai còn hiểu mã nào thuộc về đâu.
    */
-  @ApiProperty({ example: 'amobi', description: 'BẤT BIẾN suốt vòng đời — nằm trong mọi employee code' })
+  @ApiProperty({
+    example: 'amobi',
+    description: 'BẤT BIẾN suốt vòng đời — nằm trong mọi employee code',
+  })
   @IsString()
   @Length(2, 32)
   code!: string;
@@ -128,9 +148,36 @@ class AssignPlanDto extends ReasonDto {
 }
 
 class UpsertPlanDto {
-  @ApiProperty({ example: 'Pro' })
+  @ApiProperty({ example: 'PLUS', description: 'Khoá định danh gói, BẤT BIẾN' })
+  @IsString()
+  code!: string;
+
+  @ApiProperty({ example: 'Plus' })
   @IsString()
   name!: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxDepartments?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxShifts?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  maxAdminAccounts?: number;
+
+  @ApiPropertyOptional({ default: 365, description: 'Thời gian lưu dữ liệu hệ thống (ngày)' })
+  @IsOptional()
+  @IsInt()
+  dataRetentionDays?: number;
 
   @ApiPropertyOptional({ description: 'null = không giới hạn' })
   @IsOptional()
@@ -254,12 +301,47 @@ class InterveneRecalculateDto extends ReasonDto {
   to!: string;
 }
 
+/**
+ * Ghi đè MỘT khoá của gói dịch vụ cho riêng một tenant (`FR-ADM-PKG-04`).
+ *
+ * `value` nhận `null` với nghĩa "gỡ ghi đè, trả về giá trị của gói" — khác hẳn
+ * với `value: 0`, vốn nghĩa là "chặn hoàn toàn". Hai thứ này mà lẫn nhau thì một
+ * thao tác gỡ ghi đè sẽ khoá sạch tính năng của khách hàng.
+ */
+class TenantFeatureOverrideDto {
+  @ApiProperty({
+    example: 'maxEmployees',
+    description: 'Trùng khoá với cột max* hoặc features của gói',
+  })
+  @IsString()
+  key!: string;
+
+  @ApiProperty({
+    description: 'Giá trị ghi đè. `null` = gỡ ghi đè và trả về giá trị của gói.',
+    required: false,
+    nullable: true,
+  })
+  value!: unknown;
+
+  @ApiProperty({ description: 'Bắt buộc — vì sao tenant này được ưu đãi khác gói' })
+  @IsString()
+  @Length(10, 500)
+  reason!: string;
+
+  @ApiPropertyOptional({
+    description: 'Nới tạm thời — hết hạn thì tự trở lại giới hạn gói, không cần ai nhớ đi gỡ',
+  })
+  @IsOptional()
+  @IsDateString()
+  expiresAt?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Controller
 // ---------------------------------------------------------------------------
 
 /**
- * docs/08-hop-dong-api.md mục 7 — Web Admin (`/system/*`).
+ * docs/15-hop-dong-api.md mục 7 — Web Admin (`/system/*`).
  *
  * Toàn bộ endpoint yêu cầu SYSTEM_ADMIN và bỏ qua TenantGuard vì phạm vi là
  * toàn hệ thống. A1: mọi truy cập dữ liệu công ty cụ thể đều ghi audit.
@@ -282,7 +364,20 @@ export class AdminController {
     private readonly tenants: TenantService,
     private readonly audit: AuditService,
     private readonly payroll: PayrollService,
+    private readonly plans: PlanService,
   ) {}
+
+  // --- Tổng quan nền tảng ----------------------------------------------------
+
+  @Get('overview')
+  @ApiOperation({
+    summary: 'Tổng quan nền tảng (FR-ADM-DASH-01)',
+    description:
+      'Số công ty theo trạng thái, số người dùng, phân bố gói dịch vụ và số công ty khởi tạo theo ngày. KHÔNG chứa dữ liệu nghiệp vụ của bất kỳ tenant nào — ranh giới #2 của docs/08 §1.1.',
+  })
+  platformOverview() {
+    return this.tenants.platformOverview();
+  }
 
   // --- Tenant ---------------------------------------------------------------
 
@@ -368,21 +463,90 @@ export class AdminController {
   }
 
   // --- Gói dịch vụ ----------------------------------------------------------
+  //
+  // Từ v2.1 màn hình gọi đây là "Gói dịch vụ" nên đường dẫn chính là `packages`.
+  // `plans` giữ lại làm bí danh, KHÔNG bỏ: App và Web đã phát hành đang gọi nó,
+  // và đổi tên một endpoint đọc chỉ để cho gọn tên là đánh đổi tồi.
+
+  @Get('packages')
+  @RequirePermission('tenant.billing')
+  @ApiOperation({ summary: 'Danh sách gói dịch vụ (Free / Plus / Max)' })
+  listPackages() {
+    return this.tenants.listPlans();
+  }
 
   @Get('plans')
-  @ApiOperation({ summary: 'Danh sách gói dịch vụ' })
+  @ApiOperation({ summary: 'Bí danh cũ của `GET /system/packages`', deprecated: true })
   listPlans() {
     return this.tenants.listPlans();
   }
 
-  @Put('plans')
+  @Put('packages')
+  @RequirePermission('tenant.billing')
   @Audit({ action: 'PLAN_UPSERT', targetType: 'PLAN' })
   @ApiOperation({
     summary: 'Tạo/cập nhật gói dịch vụ',
     description: 'Giới hạn gói được enforce ở tầng Backend, không chỉ ẩn nút ở UI (FR-ADM-TEN-04).',
   })
+  upsertPackage(@Body() dto: UpsertPlanDto) {
+    return this.tenants.upsertPlan(dto as never);
+  }
+
+  @Put('plans')
+  @Audit({ action: 'PLAN_UPSERT', targetType: 'PLAN' })
+  @ApiOperation({ summary: 'Bí danh cũ của `PUT /system/packages`', deprecated: true })
   upsertPlan(@Body() dto: UpsertPlanDto) {
     return this.tenants.upsertPlan(dto as never);
+  }
+
+  // --- Ghi đè tính năng theo tenant (FR-ADM-PKG-04) -------------------------
+  //
+  // Vì sao tách khỏi việc sửa gói: nới giới hạn cho MỘT khách hàng bằng cách sửa
+  // gói sẽ nới cho tất cả khách hàng đang dùng gói đó, và không ai nhận ra cho
+  // tới khi hoá đơn sai. Ghi đè nằm ở tầng công ty, có lý do và có hạn dùng.
+
+  @Get('tenants/:id/features')
+  @RequirePermission('tenant.billing')
+  @ApiOperation({
+    summary: 'Gói dịch vụ đang áp dụng cho một tenant, kèm các ghi đè',
+    description: 'Trả về giá trị HIỆU LỰC — đã hoà gói với ghi đè và đã bỏ các ghi đè hết hạn.',
+  })
+  async tenantFeatures(@CurrentUser() ctx: RequestContext, @Param('id') id: string) {
+    await this.audit.recordCrossTenantAccess(ctx, id, 'tenant-features');
+    const [effective, overrides] = await Promise.all([
+      this.plans.resolve(id),
+      this.plans.listOverrides(id),
+    ]);
+    return { ...effective, overrides };
+  }
+
+  @Put('tenants/:id/features')
+  @RequirePermission('tenant.billing')
+  @Audit({ action: 'TENANT_FEATURE_OVERRIDE', targetType: 'COMPANY', requireReason: true })
+  @ApiOperation({
+    summary: 'Ghi đè một giới hạn hoặc tính năng cho riêng tenant này',
+    description:
+      'Đặt `value: null` để gỡ ghi đè và trả về giá trị của gói. `expiresAt` cho phép nới tạm thời — hết hạn thì tự trở lại giới hạn gói mà không cần ai nhớ đi gỡ.',
+  })
+  @ApiErrors('TEN_NOT_FOUND', 'RBAC_PERMISSION_DENIED')
+  async setTenantFeature(
+    @CurrentUser() ctx: RequestContext,
+    @Param('id') id: string,
+    @Body() dto: TenantFeatureOverrideDto,
+  ) {
+    if (dto.value === null) {
+      await this.plans.clearOverride(id, dto.key);
+    } else {
+      await this.plans.setOverride(
+        id,
+        dto.key,
+        dto.value,
+        ctx.userId,
+        dto.reason,
+        dto.expiresAt ? new Date(dto.expiresAt) : null,
+      );
+    }
+    return this.plans.resolve(id);
   }
 
   // --- Người dùng -----------------------------------------------------------
@@ -479,7 +643,8 @@ export class AdminController {
   @Audit({ action: 'AI_MODEL_REGISTER', targetType: 'AI_MODEL' })
   @ApiOperation({
     summary: 'Đăng ký phiên bản model kèm kết quả đo FAR/FRR',
-    description: 'Chỉ triển khai model nếu FAR/FRR KHÔNG XẤU ĐI so với model hiện tại (docs/05 mục 3.2).',
+    description:
+      'Chỉ triển khai model nếu FAR/FRR KHÔNG XẤU ĐI so với model hiện tại (docs/05 mục 3.2).',
   })
   registerModel(@Body() dto: RegisterModelDto) {
     return this.admin.registerAiModel(dto);

@@ -47,7 +47,16 @@ import {
 } from '../policy/policy.constants';
 import { PolicyService } from '../policy/policy.service';
 import { AttendanceRepository } from './attendance.repository';
-import type { CheckInDto } from './dto/attendance.dto';
+import type { CheckInDto, OfflineRecordDto, SyncOfflineDto } from './dto/attendance.dto';
+
+/** Kết quả đồng bộ của MỘT bản ghi offline — App đối chiếu theo `localId`. */
+export interface OfflineSyncResult {
+  localId: string;
+  status: 'ACCEPTED' | 'DUPLICATE' | 'REJECTED';
+  attendanceLogId?: string;
+  code?: string;
+  message?: string;
+}
 import type { RequestContext } from 'src/common/types/request-context';
 
 interface ChallengePayload {
@@ -190,6 +199,7 @@ export class AttendanceService {
       dto,
       image,
       challenge.livenessAction,
+      ctx.correlationId,
     );
 
     // --- Chấm điểm rủi ro ------------------------------------------------------
@@ -369,6 +379,7 @@ export class AttendanceService {
     dto: CheckInDto,
     image: Buffer | undefined,
     livenessAction: LivenessAction,
+    correlationId?: string,
   ): Promise<{
     matchScore: number | null;
     livenessScore: number | null;
@@ -412,7 +423,11 @@ export class AttendanceService {
     );
 
     // Gọi AI Server. AI Server chỉ trả SỐ LIỆU (P3).
-    const result = await this.ai.verify(image, embeddings, { requireLiveness, livenessAction });
+    const result = await this.ai.verify(image, embeddings, {
+      requireLiveness,
+      livenessAction,
+      correlationId,
+    });
 
     if (!result.face_found) {
       throw this.ai.toAppException(result.error_code);
@@ -597,6 +612,260 @@ export class AttendanceService {
         throw new AppException('FRAUD_ROOTED_DEVICE');
       }
     }
+  }
+
+  // ===========================================================================
+  //  Đồng bộ bản ghi chấm công offline (FR-APP-STAT-06)
+  // ===========================================================================
+
+  /**
+   * Nhận các lượt chấm công App đã ghi lại lúc mất mạng.
+   *
+   * ## Vì sao mặc định TẮT
+   *
+   * Chế độ này mâu thuẫn trực tiếp với `BR-01`: giờ chính thức là giờ server, mà
+   * lúc mất mạng thì không có giờ server nào để lấy. docs/02 §12.1 gọi thẳng đây
+   * là đánh đổi tiện lợi ↔ độ tin cậy. Công ty nào chấp nhận đánh đổi thì tự bật
+   * `attendance.offline.enabled`; không bật thì App phải báo "không chấm được"
+   * chứ không âm thầm xếp hàng.
+   *
+   * ## Cái gì kiểm được và cái gì không
+   *
+   * | Chốt | Offline |
+   * |---|---|
+   * | Đúng người (đối chiếu khuôn mặt) | **Kiểm được** — ảnh vẫn gửi lên lúc đồng bộ |
+   * | Đúng chỗ (geofence) | Ghi lại toạ độ, nhưng không chứng minh được |
+   * | Đúng giờ (`BR-01`) | **Không** — giờ do máy người dùng khai |
+   * | Chống phát lại (nonce) | **Không** — nonce do server cấp, offline không xin được |
+   * | Đúng hành động sống (`AF-05`) | **Không** — hành động do server bốc ngẫu nhiên |
+   *
+   * Ba dòng "không" là lý do mọi bản ghi ở đây vào `PENDING_REVIEW` và không tự
+   * lên bảng công. Xác thực khuôn mặt thì vẫn siết thật: sai người là loại ngay
+   * tại đây, không đẩy rác vào hàng đợi của người duyệt.
+   *
+   * Một bản ghi hỏng KHÔNG làm hỏng cả gói — mỗi bản ghi có kết quả riêng, vì
+   * App xoá dữ liệu cục bộ theo từng `localId` mà nó nhận được xác nhận.
+   */
+  async syncOffline(ctx: RequestContext, dto: SyncOfflineDto, ipAddress?: string) {
+    const employee = await this.requireActiveEmployee(ctx);
+    const companyId = employee.companyId;
+
+    const [enabled, maxAgeHours] = await Promise.all([
+      this.policy.getBoolean(companyId, PolicyKeys.OFFLINE_ENABLED),
+      this.policy.getNumber(companyId, PolicyKeys.OFFLINE_MAX_AGE_HOURS),
+    ]);
+    if (!enabled) {
+      throw new AppException('ATT_OFFLINE_DISABLED');
+    }
+
+    const timezone = await this.policy.getTimezone(companyId, employee.branchId);
+    const now = new Date();
+    const results: OfflineSyncResult[] = [];
+
+    for (const record of dto.records) {
+      try {
+        const outcome = await this.ingestOfflineRecord(
+          employee,
+          record,
+          { now, timezone, maxAgeHours },
+          ipAddress,
+        );
+        results.push({ localId: record.localId, ...outcome });
+      } catch (error) {
+        const isKnown = error instanceof AppException;
+        if (!isKnown) {
+          this.logger.error(
+            `Đồng bộ offline lỗi ngoài dự kiến (${record.localId}): ${(error as Error).message}`,
+          );
+        }
+        results.push({
+          localId: record.localId,
+          status: 'REJECTED',
+          code: isKnown ? error.code : 'SYS_INTERNAL_ERROR',
+          message: isKnown ? error.definition.message : (error as Error).message,
+        });
+      }
+    }
+
+    return {
+      accepted: results.filter((row) => row.status === 'ACCEPTED').length,
+      duplicates: results.filter((row) => row.status === 'DUPLICATE').length,
+      rejected: results.filter((row) => row.status === 'REJECTED').length,
+      results,
+    };
+  }
+
+  private async ingestOfflineRecord(
+    employee: Employee,
+    record: OfflineRecordDto,
+    context: { now: Date; timezone: string; maxAgeHours: number },
+    ipAddress?: string,
+  ): Promise<{ status: 'ACCEPTED' | 'DUPLICATE'; attendanceLogId: string }> {
+    const companyId = employee.companyId;
+    const capturedAt = new Date(record.capturedAt);
+    if (Number.isNaN(capturedAt.getTime())) {
+      throw new AppException('SYS_VALIDATION_ERROR', { reason: 'capturedAt không hợp lệ.' });
+    }
+
+    // Giờ tương lai là dấu hiệu vặn đồng hồ chứ không phải mất mạng. Cho dư 5
+    // phút vì đồng hồ máy lệch vài phút là chuyện bình thường.
+    if (capturedAt.getTime() > context.now.getTime() + 5 * 60_000) {
+      throw new AppException('FRAUD_CLOCK_SKEW', {
+        reason: 'Thời điểm chấm nằm ở tương lai so với giờ server.',
+        capturedAt: capturedAt.toISOString(),
+      });
+    }
+
+    const ageHours = (context.now.getTime() - capturedAt.getTime()) / 3_600_000;
+    if (ageHours > context.maxAgeHours) {
+      throw new AppException('ATT_OFFLINE_TOO_OLD', {
+        ageHours: Math.round(ageHours),
+        maxAgeHours: context.maxAgeHours,
+      });
+    }
+
+    const workDate = await this.resolveWorkDate(employee, capturedAt, context.timezone);
+
+    // BR-07: kỳ đã chốt thì không nhét thêm dữ liệu vào được, kể cả dữ liệu thật.
+    await this.assertPeriodOpen(companyId, workDate);
+
+    // Đồng bộ lại cùng một gói là chuyện thường (mạng rớt giữa chừng, App thử
+    // lại). Khoá tự nhiên là (nhân viên, loại, thời điểm chấm): App gửi lại đúng
+    // bản ghi cũ thì `capturedAt` giống hệt tới từng mili giây.
+    const existing = await this.attendances.findOfflineDuplicate(
+      companyId,
+      employee.id,
+      record.type,
+      capturedAt,
+    );
+    if (existing) {
+      return { status: 'DUPLICATE', attendanceLogId: existing.id };
+    }
+
+    const image = record.imageBase64 ? Buffer.from(record.imageBase64, 'base64') : undefined;
+    const verification = await this.verifyOfflineIdentity(companyId, employee, record, image);
+
+    let photoKey: string | null = null;
+    let photoHash: string | null = null;
+    if (image && image.length > 0) {
+      const key = this.storage.buildAttendancePhotoKey(companyId, employee.id, capturedAt);
+      const uploaded = await this.storage.upload(key, image, 'image/jpeg', {
+        employeeId: employee.id,
+        companyId,
+      });
+      photoKey = uploaded.key;
+      photoHash = uploaded.hash;
+    }
+
+    const log = await this.attendances.createLog(companyId, {
+      employeeId: employee.id,
+      branchId: employee.branchId,
+      type: record.type,
+      authMethod: record.authMethod,
+      // `recordedAt` ở đây là giờ do MÁY khai — chỗ duy nhất trong hệ thống ghi
+      // như vậy, và `isOffline` là cờ để mọi thứ đọc sau này biết mà không tin nó.
+      recordedAt: capturedAt,
+      clientReportedAt: capturedAt,
+      workDate,
+      latitude: record.location.latitude,
+      longitude: record.location.longitude,
+      gpsAccuracy: record.location.accuracy,
+      locationProvider: record.location.provider,
+      isMockLocation: record.location.isMocked ?? false,
+      deviceId: record.deviceContext.deviceId,
+      deviceModel: record.deviceContext.model,
+      osVersion: record.deviceContext.osVersion,
+      appVersion: record.deviceContext.appVersion,
+      isRootedDevice: record.deviceContext.isRooted ?? false,
+      ipAddress,
+      matchScore: verification.matchScore,
+      livenessScore: verification.livenessScore,
+      photoKey,
+      photoHash,
+      isOffline: true,
+      // Không tự vào bảng công: engine tính công chỉ đếm ACCEPTED và FLAGGED.
+      // Đường ra là hàng đợi soát ở `AttendanceAdminService.reviewPendingLog`.
+      decision: AttendanceDecision.PENDING_REVIEW,
+    });
+
+    // Để lại dấu vết nói rõ CÁI GÌ không kiểm được, thay vì bắt người duyệt tự
+    // đoán vì sao lượt này nằm trong hàng đợi.
+    await this.fraud.persistFlags({
+      companyId,
+      employeeId: employee.id,
+      attendanceLogId: log.id,
+      signals: [
+        {
+          code: 'OFFLINE_RECORD',
+          severity: 'MEDIUM',
+          score: 0,
+          message:
+            'Bản ghi đồng bộ từ chế độ offline — giờ, vị trí và hành động sống không xác minh được.',
+          details: {
+            capturedAt: capturedAt.toISOString(),
+            syncedAt: context.now.toISOString(),
+            delayHours: Math.round(ageHours * 10) / 10,
+          },
+        },
+      ],
+    });
+
+    if (!employee.codeLocked) {
+      await this.attendances.lockEmployeeCode(companyId, employee.id);
+    }
+
+    return { status: 'ACCEPTED', attendanceLogId: log.id };
+  }
+
+  /**
+   * Đối chiếu khuôn mặt cho bản ghi offline.
+   *
+   * Khác `verifyIdentity` ở đúng một chỗ, và đó là chỗ quan trọng: KHÔNG kiểm
+   * hành động sống (`AF-05`). Hành động là do server bốc ngẫu nhiên tại thời
+   * điểm chấm, lúc mất mạng thì không có ai bốc. Điểm liveness vẫn được đo và
+   * lưu cho người duyệt nhìn, nhưng không dùng làm điều kiện chặn — dùng nó làm
+   * điều kiện ở đây là giả vờ đã kiểm một thứ chưa hề kiểm.
+   *
+   * Ngược lại, "đúng người" thì siết thật: ảnh vẫn có, embedding vẫn có, nên sai
+   * người là loại ngay chứ không đẩy sang cho người duyệt.
+   */
+  private async verifyOfflineIdentity(
+    companyId: string,
+    employee: Employee,
+    record: OfflineRecordDto,
+    image: Buffer | undefined,
+  ): Promise<{ matchScore: number | null; livenessScore: number | null }> {
+    if (record.authMethod !== AuthMethod.FACE) {
+      // Vân tay offline không kiểm được: chữ ký gắn với nonce do server cấp.
+      return { matchScore: null, livenessScore: null };
+    }
+    if (!image || image.length === 0) {
+      throw new AppException('FACE_NOT_FOUND', {
+        reason: 'Bản ghi offline chấm bằng khuôn mặt phải kèm ảnh để đối chiếu lúc đồng bộ.',
+      });
+    }
+
+    const rawEmbeddings = await this.attendances.findActiveFaceEmbeddings(companyId, employee.id);
+    if (rawEmbeddings.length === 0) {
+      throw new AppException('FACE_NOT_ENROLLED');
+    }
+
+    const result = await this.ai.verify(
+      image,
+      rawEmbeddings.map((raw) => bufferToEmbedding(raw)),
+      { requireLiveness: false },
+    );
+    if (!result.face_found) {
+      throw this.ai.toAppException(result.error_code);
+    }
+
+    const matchThreshold = await this.policy.getNumber(companyId, PolicyKeys.FACE_MATCH_THRESHOLD);
+    const matchScore = result.match?.best_score ?? 0;
+    if (matchScore < matchThreshold) {
+      throw new AppException('FACE_NOT_MATCHED', { matchScore, threshold: matchThreshold });
+    }
+
+    return { matchScore, livenessScore: result.liveness?.score ?? null };
   }
 
   /** BR-07 / BR-ATT-05 — kỳ lương đã chốt thì khoá hoàn toàn. */

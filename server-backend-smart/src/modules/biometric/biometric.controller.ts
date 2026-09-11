@@ -123,7 +123,7 @@ class ResetBiometricDto {
 }
 
 /**
- * docs/08-hop-dong-api.md mục 3 — API Sinh trắc học.
+ * docs/15-hop-dong-api.md mục 3 — API Sinh trắc học.
  *
  * Nguyên tắc xuyên suốt: thao tác nào làm THAY ĐỔI thứ dùng để xác minh danh
  * tính đều đòi `reauthToken` (đăng ký đè khuôn mặt, xoá khuôn mặt, đăng ký vân

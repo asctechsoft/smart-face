@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     # Số suy luận chạy song song. ONNX chiếm trọn CPU/GPU trong lúc chạy nên
     # thả tự do sẽ làm p99 tệ đi thay vì tốt lên.
     max_concurrency: int = 4
+    #: Ngân sách thời gian cho một request (docs/11 §6.4 — nhận diện < 2s).
+    #:
+    #: Không cắt ngang phép suy luận đang chạy (không dừng được thread ONNX), mà
+    #: dùng làm ngưỡng TỪ CHỐI Ở CỬA: chờ hàng đợi quá lâu thì trả 503 ngay thay
+    #: vì bắt đầu một việc chắc chắn đã muộn. Đặt 0 để tắt.
+    max_processing_ms: int = 2000
     warmup_on_startup: bool = True
 
     # --- Liveness -----------------------------------------------------------

@@ -57,6 +57,31 @@ DECLARED_ONLY_ERROR_CODES: Final[frozenset[str]] = frozenset(
 KNOWN_ERROR_CODES: Final[frozenset[str]] = EMITTED_ERROR_CODES | DECLARED_ONLY_ERROR_CODES
 
 
+#: Mã lỗi ở TẦNG HTTP — khác hoàn toàn nhóm mã ở trên.
+#:
+#: Nhóm trên là "ảnh không dùng được", trả 200 kèm `face_found: false`. Nhóm này
+#: là "lời gọi sai hoặc service hỏng", trả 4xx/5xx.
+#:
+#: Trước đây các phản hồi 401/422/500 chỉ có `{"detail": ...}` không mã, nên
+#: Backend gộp tất cả thành `SYS_AI_UNAVAILABLE`. Hậu quả cụ thể: thiếu trường
+#: `namespace` — một lỗi lập trình sửa trong hai phút — được báo cho vận hành là
+#: "AI Server sập", và còn được tính vào circuit breaker khiến chấm công của cả
+#: công ty dừng theo.
+AI_UNAUTHORIZED: Final = "AI_UNAUTHORIZED"
+AI_BAD_REQUEST: Final = "AI_BAD_REQUEST"
+AI_DEADLINE_EXCEEDED: Final = "AI_DEADLINE_EXCEEDED"
+AI_INTERNAL_ERROR: Final = "AI_INTERNAL_ERROR"
+
+
+class DeadlineExceededError(Exception):
+    """Hàng đợi đã dài tới mức bắt đầu xử lý cũng không kịp hạn.
+
+    Từ chối SỚM tốt hơn nhận rồi trả muộn: Backend có timeout riêng (mặc định
+    2000ms) nên request quá hạn sẽ bị nó huỷ, còn AI Server thì vẫn nghiến CPU
+    cho một kết quả không ai đọc — làm mọi request xếp sau chậm thêm.
+    """
+
+
 class ImageRejectedError(Exception):
     """Ảnh không dùng được — trả 200 kèm `face_found: false` và `error_code`.
 

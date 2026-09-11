@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Alert, InputNumber, Select, Switch } from 'antd';
-import { CardSkeleton } from '@/components/Skeleton';
 import { ReasonDialog } from '@/components/ReasonDialog';
 import { SectionTitle } from '@/components/PageHeader';
 import { ApiErrorState } from '@/components/ApiErrorState';
@@ -8,6 +7,7 @@ import { useCan } from '@/lib/rbac/Can';
 import { POLICY_FIELDS, usePolicies, useUpdatePolicies, type PolicyValues } from '../policy.api';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { CardSkeleton } from '@/components/ui';
 
 /**
  * Chỉnh giá trị chính sách.
@@ -20,7 +20,7 @@ import { useErrorToast } from '@/lib/errors/use-error-toast';
 export function PolicyValuesTab() {
   const toast = useToast();
   const showError = useErrorToast();
-  const canEdit = useCan('policy.edit');
+  const canEdit = useCan('policy.update');
   const policies = usePolicies();
   const update = useUpdatePolicies();
 

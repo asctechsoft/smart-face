@@ -18,6 +18,19 @@ export interface AuditLogRecord {
   before?: Prisma.InputJsonValue;
   after?: Prisma.InputJsonValue;
   traceId?: string | null;
+  /**
+   * Chuỗi truy vết xuyên Backend → AI Server → Queue → Log (NFR-AUD-02).
+   *
+   * Khác `traceId` ở chỗ `traceId` là của MỘT request HTTP, còn `correlationId`
+   * đi theo cả một nghiệp vụ: request gốc, job nền nó đẩy ra, lượt gọi AI Server
+   * bên trong job đó. Không có nó thì không nối được dòng log của AI Server với
+   * bản ghi chấm công đã sinh ra nó.
+   */
+  correlationId?: string | null;
+  /** Thao tác nhạy cảm này đã qua thử thách step-up nào (BR-18). */
+  stepUpChallengeId?: string | null;
+  /** Ghi khi hành động xảy ra trong một phiên hỗ trợ tenant (BR-08). */
+  supportSessionId?: string | null;
 }
 
 export interface AuditLogFilter {
@@ -58,6 +71,9 @@ export class AuditRepository extends BaseRepository {
         targetType: record.targetType,
         targetId: record.targetId,
         reason: record.reason,
+        correlationId: record.correlationId,
+        stepUpChallengeId: record.stepUpChallengeId,
+        supportSessionId: record.supportSessionId,
         before: record.before,
         after: record.after,
         traceId: record.traceId,

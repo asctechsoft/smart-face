@@ -20,6 +20,8 @@ from fastapi.responses import JSONResponse
 from . import runner
 from .config import get_settings
 from .core.engine import build_engine, set_engine
+from .correlation import CorrelationIdMiddleware
+from .errors import AI_BAD_REQUEST, AI_DEADLINE_EXCEEDED, AI_INTERNAL_ERROR, DeadlineExceededError
 from .logging_config import configure_logging
 from .metrics import MODEL_INFO
 from .routers import batch, enroll, health, identify, index, liveness, verify
@@ -31,7 +33,7 @@ logger = logging.getLogger(__name__)
 async def lifespan(_: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level)
-    runner.configure(settings.max_concurrency)
+    runner.configure(settings.max_concurrency, settings.max_processing_ms)
 
     logger.info("Đang nạp model (%s)...", settings.engine)
     engine = build_engine(settings)
@@ -70,8 +72,31 @@ app = FastAPI(
     openapi_url="/openapi.json",
 )
 
+# Middleware chạy TRƯỚC router nên mọi dòng log của request, kể cả log lỗi
+# trong exception handler, đều mang theo correlation id.
+app.add_middleware(CorrelationIdMiddleware)
+
 for module in (enroll, verify, identify, liveness, batch, index, health):
     app.include_router(module.router)
+
+
+@app.exception_handler(DeadlineExceededError)
+async def deadline_exception_handler(request: Request, error: DeadlineExceededError) -> JSONResponse:
+    """503 khi hàng đợi dài tới mức nhận thêm cũng không kịp hạn.
+
+    Trả 503 chứ không phải 500: đây là tình trạng quá tải TẠM THỜI và retry được,
+    nên Backend nên thử lại/giảm tải chứ không phải coi service là hỏng.
+    """
+    logger.warning("Quá hạn hàng đợi tại %s: %s", request.url.path, error)
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": {
+                "code": AI_DEADLINE_EXCEEDED,
+                "message": "AI Server đang quá tải, thử lại sau.",
+            }
+        },
+    )
 
 
 @app.exception_handler(RequestValidationError)
@@ -97,7 +122,10 @@ async def validation_exception_handler(
         for item in error.errors()
     ]
     logger.warning("Request sai định dạng tại %s: %s", request.url.path, fields)
-    return JSONResponse(status_code=422, content={"detail": fields})
+    return JSONResponse(
+        status_code=422,
+        content={"detail": {"code": AI_BAD_REQUEST, "message": "Request sai định dạng.", "fields": fields}},
+    )
 
 
 @app.exception_handler(Exception)
@@ -110,7 +138,7 @@ async def unhandled_exception_handler(request: Request, error: Exception) -> JSO
     logger.exception("Lỗi chưa xử lý tại %s: %s", request.url.path, error)
     return JSONResponse(
         status_code=500,
-        content={"detail": "Lỗi nội bộ AI Server."},
+        content={"detail": {"code": AI_INTERNAL_ERROR, "message": "Lỗi nội bộ AI Server."}},
     )
 
 

@@ -1,10 +1,10 @@
 import { Table } from 'antd';
 import type { TableProps } from 'antd';
 import type { ReactNode } from 'react';
-import { EmptyState } from './EmptyState';
+import { EmptyState } from './ui';
 import { ApiErrorState } from './ApiErrorState';
 import type { PaginationMeta } from '@/lib/api/types';
-import { TableSkeleton } from './Skeleton';
+import { TableSkeleton } from './ui';
 
 export interface DataTableProps<T> extends Omit<TableProps<T>, 'dataSource'> {
   data: T[] | undefined;
@@ -18,6 +18,15 @@ export interface DataTableProps<T> extends Omit<TableProps<T>, 'dataSource'> {
   emptyDescription: string;
   emptyIcon?: string;
   emptyAction?: ReactNode;
+  /**
+   * Đưa dòng đếm phía trên bảng về chế độ CHỈ TRÌNH ĐỌC MÀN HÌNH.
+   *
+   * Chỉ bật khi con số đó đã hiện ở chỗ khác trong cùng khung nhìn — thực tế là
+   * chân phân trang có `showTotal` ("Hiển thị 1 đến 10 của 42 kết quả"). Vùng
+   * `aria-live` vẫn nguyên nên người dùng trình đọc màn hình vẫn nghe kết quả
+   * lọc thay đổi; thứ bị bỏ là bản SAO của con số, không phải chính nó.
+   */
+  srOnlyCount?: boolean;
 }
 
 /**
@@ -46,6 +55,7 @@ export function DataTable<T extends object>({
   emptyDescription,
   emptyIcon,
   emptyAction,
+  srOnlyCount = false,
   columns,
   pagination,
   ...rest
@@ -91,8 +101,8 @@ export function DataTable<T extends object>({
       <p
         role="status"
         aria-live="polite"
-        className="sf-body-sm sf-text-variant"
-        style={{ margin: '0 0 8px' }}
+        className={srOnlyCount ? 'sf-visually-hidden' : 'sf-body-sm sf-text-variant'}
+        style={srOnlyCount ? undefined : { margin: '0 0 8px' }}
       >
         {meta ? `Tìm thấy ${meta.total} dòng` : `Hiển thị ${data.length} dòng`}
       </p>

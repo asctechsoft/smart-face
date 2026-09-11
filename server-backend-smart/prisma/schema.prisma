@@ -1,6 +1,6 @@
 // ============================================================================
 //  SmartFace — Prisma schema
-//  Nguồn: docs/07-mo-hinh-du-lieu.md
+//  Nguồn: docs/13-mo-hinh-du-lieu.md
 //  PostgreSQL 16 · Multi-tenant shared schema + companyId (ADR-05)
 //
 //  Nguyên tắc:
@@ -69,6 +69,13 @@ model Company {
   holidays         Holiday[]
   requestTypes     RequestType[]
   payrollPeriods   PayrollPeriod[]
+  roles            Role[]
+  roleAssignments  RoleAssignment[]
+  owners           CompanyOwner[]
+  positions        Position[]
+  featureOverrides CompanyFeatureOverride[]
+  setupState       CompanySetupState?
+  supportSessions  SupportAccessSession[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -78,19 +85,36 @@ model Company {
   @@map("company")
 }
 
+/// Goi dich vu ban cho tenant (docs/07 muc 7).
+///
+/// `features` la NGUON SU THAT cho feature flag; cac cot `max*` chi la ban sao
+/// duoc pheo phang de query nhanh va de rang buoc o tang DB. Ghi de theo tung
+/// tenant nam o `CompanyFeatureOverride`, khong sua goi.
 model SubscriptionPlan {
   id                      String   @id @default(cuid())
-  /// "Trial" | "Basic" | "Pro" | "Enterprise"
+  /// "FREE" | "PLUS" | "MAX" — BAT BIEN, dung trong code
+  code                    String   @unique
+  /// Ten hien thi: "Free" | "Plus" | "Max"
   name                    String   @unique
+  description             String?
   maxEmployees            Int?
   maxBranches             Int?
+  maxDepartments          Int?
+  maxShifts               Int?
+  maxAdminAccounts        Int?
   maxRecognitionsPerMonth Int?
   storageGb               Int?
   photoRetentionDays      Int      @default(90)
-  /// { rotatingShift: true, ot: true, multiBranch: false, ... }
+  /// Thoi gian luu du lieu he thong (ngay) — khac photoRetentionDays
+  dataRetentionDays       Int      @default(365)
+  /// Cong tac feature flag. Khoa: appAccount, leaveApproval, advancedScheduling,
+  /// excelExport, advancedReport, apiIntegration, fullAuditLog, ...
   features                Json     @default("{}")
   pricePerMonth           Decimal? @db.Decimal(12, 2)
+  /// Goi gan cho tenant moi khi khong chi dinh
+  isDefault               Boolean  @default(false)
   isActive                Boolean  @default(true)
+  sortOrder               Int      @default(0)
 
   companies Company[]
 
@@ -305,15 +329,27 @@ model Employee {
   branch               Branch?        @relation(fields: [branchId], references: [id])
   departmentId         String?
   department           Department?    @relation(fields: [departmentId], references: [id])
+  /// Chuc vu dang hien hanh dang chuoi tu do — GIU de tuong thich nguoc.
+  /// Nguon su that moi la `positionId`; xem EmployeeAssignmentHistory (BR-17).
   position             String?
+  positionId           String?
+  positionRef          Position?      @relation(fields: [positionId], references: [id])
+  /// Quan ly truc tiep — dung cho scope TEAM va luong duyet DIRECT_MANAGER
+  directManagerId      String?
+  directManager        Employee?      @relation("DirectManager", fields: [directManagerId], references: [id])
+  directReports        Employee[]     @relation("DirectManager")
   /// "Chính thức" | "Thử việc" | "Thời vụ" | "Part-time"
   contractType         String?
   joinedAt             DateTime?
   terminatedAt         DateTime?
   status               EmployeeStatus @default(PENDING_ACTIVATION)
   roles                SystemRole[]   @default([EMPLOYEE])
-  /// Phạm vi quản lý — dùng cho ScopeGuard của vai trò MANAGER
+  /// Phạm vi quản lý — dùng cho ScopeGuard của vai trò MANAGER.
+  /// ⚠ LOP TUONG THICH NGUOC. Nguon su that moi la RoleAssignment.scopeIds
+  /// voi scopeLevel = DEPARTMENT (docs/13 §5.1). Khong them cho dung moi.
   managedDepartmentIds String[]       @default([])
+  /// Optimistic lock — kiem #5 cua BR-13
+  rowVersion           Int            @default(0)
   /// true sau lần chấm công đầu tiên → khoá employeeCode (BR-04)
   codeLocked           Boolean        @default(false)
 
@@ -328,6 +364,13 @@ model Employee {
   scheduleMembers   ShiftScheduleMember[]
   attendanceSheets  AttendanceSheetMember[]
 
+  roleAssignments     RoleAssignment[]            @relation("AssignedTo")
+  grantedRoles        RoleAssignment[]            @relation("GrantedBy")
+  ownerships          CompanyOwner[]
+  assignmentHistory   EmployeeAssignmentHistory[] @relation("AssignmentSubject")
+  delegationsGiven    ApprovalDelegation[]        @relation("Delegator")
+  delegationsReceived ApprovalDelegation[]        @relation("Delegate")
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
@@ -336,6 +379,7 @@ model Employee {
   @@unique([companyId, phone])
   @@index([companyId, status])
   @@index([companyId, departmentId])
+  @@index([companyId, directManagerId])
   // Không cần @@index([userId]) — @unique ở trên đã tạo chỉ mục cho cột này.
   @@map("employee")
 }
@@ -534,13 +578,16 @@ model Shift {
   /// ⚠ CHƯA được máy tính công đọc tới — xem `docs/04` mục 6.5. Đây là khai báo
   /// danh mục, không phải cấu hình đang có hiệu lực. Đừng suy ra số liệu bảng
   /// công từ mấy cột này cho tới khi phần nối vào engine được làm.
-  normalDayFactor   Decimal @default(1.00) @db.Decimal(4, 2)
-  weeklyRestFactor  Decimal @default(2.00) @db.Decimal(4, 2)
-  holidayFactor     Decimal @default(3.00) @db.Decimal(4, 2)
+  normalDayFactor  Decimal @default(1.00) @db.Decimal(4, 2)
+  weeklyRestFactor Decimal @default(2.00) @db.Decimal(4, 2)
+  holidayFactor    Decimal @default(3.00) @db.Decimal(4, 2)
 
   segments       ShiftSegment[]
   assignments    ShiftAssignment[]
   holidayFactors ShiftHolidayFactor[]
+
+  /// Optimistic lock — kiem #5 cua BR-13
+  rowVersion Int @default(0)
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -724,9 +771,9 @@ model AttendanceSheet {
 
   /// `DRAFT` = đang rà soát, còn hiệu chỉnh được.
   /// `CLOSED` = đã chốt để chuyển sang tính lương; hiệu chỉnh phải mở lại bảng.
-  status    String    @default("DRAFT")
-  closedAt  DateTime?
-  closedBy  String?
+  status   String    @default("DRAFT")
+  closedAt DateTime?
+  closedBy String?
 
   createdBy String?
 
@@ -802,6 +849,8 @@ model CompanyPolicy {
   effectiveFrom DateTime  @default(now())
   effectiveTo   DateTime?
   updatedBy     String?
+  /// Optimistic lock — kiem #5 cua BR-13
+  rowVersion    Int       @default(0)
 
   createdAt DateTime @default(now())
 
@@ -939,7 +988,7 @@ model AttendanceLog {
   photoKey  String?
   photoHash String?
 
-  /// --- Đánh giá rủi ro (mục 7 của 06-anti-fraud.md) ---
+  /// --- Đánh giá rủi ro (mục 7 của 09-anti-fraud.md) ---
   fraudScore Int                @default(0)
   decision   AttendanceDecision @default(ACCEPTED)
 
@@ -1057,6 +1106,8 @@ model AttendanceDaily {
   calcEngineVersion String?
   /// Snapshot chi tiết phục vụ giải trình "con số này ra từ đâu"
   breakdown         Json?
+  /// Optimistic lock — kiem #5 cua BR-13
+  rowVersion        Int         @default(0)
 
   @@unique([employeeId, workDate])
   @@index([companyId, workDate])
@@ -1071,10 +1122,21 @@ model AttendanceDaily {
 
 enum RequestStatus {
   DRAFT
+  /// Vua gui, chua vao buoc duyet nao
+  SUBMITTED
+  /// Giu lai de tuong thich nguoc voi du lieu cu — dong nghia PENDING_LEVEL_1
   PENDING
+  PENDING_LEVEL_1
+  PENDING_NEXT_LEVEL
+  /// Nguoi duyet yeu cau bo sung thong tin, don quay ve nguoi tao
+  NEED_MORE_INFO
   APPROVED
   REJECTED
+  /// Da duyet VA da toi ngay hieu luc — engine tinh cong moi tinh den
+  EFFECTIVE
   CANCELLED
+  /// Qua han xu ly theo SLA
+  EXPIRED
 }
 
 /// Loại đơn cấu hình được theo công ty (không hard-code enum)
@@ -1121,7 +1183,11 @@ model ApprovalFlow {
   requestTypeId String      @unique
   requestType   RequestType @relation(fields: [requestTypeId], references: [id], onDelete: Cascade)
 
-  steps ApprovalFlowStep[]
+  /// Version dang ap dung. Tang moi lan sua steps (BR-16)
+  currentVersion Int @default(1)
+
+  steps    ApprovalFlowStep[]
+  versions ApprovalFlowVersion[]
 
   createdAt DateTime @default(now())
 
@@ -1129,15 +1195,18 @@ model ApprovalFlow {
 }
 
 model ApprovalFlowStep {
-  id           String       @id @default(cuid())
-  flowId       String
-  flow         ApprovalFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
-  order        Int
+  id                 String       @id @default(cuid())
+  flowId             String
+  flow               ApprovalFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  order              Int
   /// "DIRECT_MANAGER" | "DEPARTMENT_HEAD" | "HR_PAYROLL" | "COMPANY_ADMIN"
-  approverRole String
-  isRequired   Boolean      @default(true)
+  approverRole       String
+  isRequired         Boolean      @default(true)
   /// Điều kiện kích hoạt bước này, VD { "minDays": 3 }
-  condition    Json?
+  condition          Json?
+  /// Nguoi duyet du phong khi nguoi duyet chinh nghi viec/khong xac dinh duoc.
+  /// Thieu truong nay thi don bi ket vinh vien (FR-GDW-FLOW-02)
+  fallbackApproverId String?
 
   @@index([flowId, order])
   @@map("approval_flow_step")
@@ -1161,11 +1230,18 @@ model LeaveRequest {
   /// Cho đơn "Xin ra ngoài": giờ về dự kiến
   expectedReturnAt DateTime?
 
-  submittedAt  DateTime?
-  decidedAt    DateTime?
-  rejectReason String?
-  cancelledAt  DateTime?
-  cancelledBy  String?
+  submittedAt      DateTime?
+  decidedAt        DateTime?
+  rejectReason     String?
+  cancelledAt      DateTime?
+  cancelledBy      String?
+  /// Chot khi chuyen sang SUBMITTED — don giu luong duyet TAI THOI DIEM GUI (BR-16)
+  flowVersionId    String?
+  flowVersion      ApprovalFlowVersion? @relation(fields: [flowVersionId], references: [id])
+  /// Danh sach nguoi duyet da giai quyet tai luc gui
+  approvalSnapshot Json?
+  /// Optimistic lock — kiem #5 cua BR-13
+  rowVersion       Int                  @default(0)
 
   approvalSteps ApprovalStep[]
   attachments   RequestAttachment[]
@@ -1255,27 +1331,39 @@ model MakeupWorkRecord {
 
 enum PayrollPeriodStatus {
   OPEN
-  REVIEWING
-  CLOSED
+  /// Dang tinh lai — chan recalculate dong thoi
+  CALCULATING
+  /// Ke toan da gui de nghi chot, cho Giam doc duyet (FR-WEB-PERIOD-08)
+  PENDING_APPROVAL
+  /// Giam doc da duyet chot. Du lieu trong ky bat bien (BR-07)
+  LOCKED
+  /// Mo lai co ly do va nguoi duyet — moi lan mo tao mot version moi
+  REOPENED
 }
 
 model PayrollPeriod {
-  id           String              @id @default(cuid())
-  companyId    String
-  company      Company             @relation(fields: [companyId], references: [id])
+  id             String              @id @default(cuid())
+  companyId      String
+  company        Company             @relation(fields: [companyId], references: [id])
   /// "Tháng 08/2026"
-  name         String
-  startDate    DateTime            @db.Date
-  endDate      DateTime            @db.Date
-  status       PayrollPeriodStatus @default(OPEN)
-  closedAt     DateTime?
-  closedBy     String?
+  name           String
+  startDate      DateTime            @db.Date
+  endDate        DateTime            @db.Date
+  status         PayrollPeriodStatus @default(OPEN)
+  closedAt       DateTime?
+  closedBy       String?
   /// Mở lại kỳ đã chốt — thao tác đặc quyền (BR-07)
-  reopenedAt   DateTime?
-  reopenedBy   String?
-  reopenReason String?
+  reopenedAt     DateTime?
+  reopenedBy     String?
+  reopenReason   String?
+  /// Version hien hanh cua ky — tang moi lan tinh lai (docs/13 §5.4)
+  currentVersion Int                 @default(0)
+  /// Optimistic lock — kiem #5 cua BR-13
+  rowVersion     Int                 @default(0)
 
-  summaries PayrollSummary[]
+  summaries   PayrollSummary[]
+  versions    PayrollPeriodVersion[]
+  transitions PeriodTransition[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1347,21 +1435,27 @@ model Notification {
 
 /// Append-only. KHÔNG cho update/delete kể cả Admin (BR-08, NFR-SEC-10).
 model AuditLog {
-  id             String  @id @default(cuid())
-  companyId      String?
-  actorUserId    String?
-  actorName      String?
-  actorRole      String?
-  actorIp        String?
-  actorUserAgent String?
+  id                String  @id @default(cuid())
+  companyId         String?
+  actorUserId       String?
+  actorName         String?
+  actorRole         String?
+  actorIp           String?
+  actorUserAgent    String?
   /// "BIOMETRIC_RESET" | "PAYROLL_REOPEN" | "ATTENDANCE_ADJUST" | ...
-  action         String
-  targetType     String?
-  targetId       String?
-  reason         String?
-  before         Json?
-  after          Json?
-  traceId        String?
+  action            String
+  targetType        String?
+  targetId          String?
+  reason            String?
+  before            Json?
+  after             Json?
+  traceId           String?
+  /// Chuoi truy vet xuyen Backend -> AI Server -> Queue -> Log (NFR-AUD-02)
+  correlationId     String?
+  /// Thao tac nhay cam da qua step-up nao (BR-18)
+  stepUpChallengeId String?
+  /// Ghi khi hanh dong duoc thuc hien trong phien ho tro tenant (BR-08)
+  supportSessionId  String?
 
   createdAt DateTime @default(now())
 
@@ -1369,6 +1463,8 @@ model AuditLog {
   @@index([actorUserId, createdAt])
   @@index([action, createdAt])
   @@index([targetType, targetId])
+  @@index([correlationId])
+  @@index([supportSessionId])
   @@map("audit_log")
 }
 
@@ -1425,4 +1521,373 @@ model ExportJob {
 
   @@index([companyId, createdAt])
   @@map("export_job")
+}
+
+// ============================================================================
+//  9. RBAC + DATA SCOPE  (docs/13 §5.1 · BR-13 · E-V21.1)
+//
+//  Mo hinh cu — `Employee.roles: SystemRole[]` + `managedDepartmentIds` — chi
+//  bieu dien duoc MOT muc scope va khong bieu dien duoc quyen theo module hay
+//  quyen co thoi han. Bon bang duoi day thay the no. Hai mo hinh chay song song
+//  mot release: seed anh xa moi SystemRole thanh mot Role he thong.
+// ============================================================================
+
+enum ScopeLevel {
+  /// Chi du lieu cua chinh minh
+  SELF
+  /// Nhom bao cao truc tiep (Employee.directManagerId)
+  TEAM
+  DEPARTMENT
+  BRANCH
+  COMPANY
+  /// Xuyen tenant — chi danh cho quan tri nen tang
+  PLATFORM
+}
+
+/// Vai tro. `companyId = null` la vai tro he thong dung chung moi tenant.
+model Role {
+  id          String   @id @default(cuid())
+  companyId   String?
+  company     Company? @relation(fields: [companyId], references: [id])
+  /// "OWNER" | "COMPANY_ADMIN" | "BRANCH_DIRECTOR" | "HR_VIEWER" | ...
+  code        String
+  name        String
+  description String?
+  /// Vai tro he thong: khong cho tenant sua hay xoa
+  isSystem    Boolean  @default(false)
+
+  permissions RolePermission[]
+  assignments RoleAssignment[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("role")
+}
+
+/// Danh muc quyen theo module. Bang tra cuu toan he thong, tenant khong sua.
+model Permission {
+  id          String  @id @default(cuid())
+  /// "request.approve" | "period.approve_lock" | "owner.assign" | ...
+  code        String  @unique
+  /// "request" | "period" | "policy" | "employee" | "platform" | ...
+  module      String
+  description String?
+
+  roles RolePermission[]
+
+  @@index([module])
+  @@map("permission")
+}
+
+model RolePermission {
+  roleId       String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@index([permissionId])
+  @@map("role_permission")
+}
+
+/// Gan vai tro cho mot nguoi + PHAM VI + THOI HAN.
+///
+/// Quyen het han TU MAT TAC DUNG vi guard loc theo `validTo` tai thoi diem
+/// request — khong co job don dep nao, va khong duoc phep co (docs/13 §5.1).
+model RoleAssignment {
+  id          String     @id @default(cuid())
+  companyId   String
+  company     Company    @relation(fields: [companyId], references: [id])
+  employeeId  String
+  employee    Employee   @relation("AssignedTo", fields: [employeeId], references: [id], onDelete: Cascade)
+  roleId      String
+  role        Role       @relation(fields: [roleId], references: [id])
+  scopeLevel  ScopeLevel
+  /// Id chi nhanh/phong ban tuong ung voi scopeLevel. Rong voi SELF/COMPANY/PLATFORM.
+  scopeIds    String[]   @default([])
+  validFrom   DateTime   @default(now())
+  /// null = vo thoi han; co gia tri = uy quyen tam thoi (FR-GDW-ROLE-03)
+  validTo     DateTime?
+  grantedById String
+  grantedBy   Employee   @relation("GrantedBy", fields: [grantedById], references: [id])
+  reason      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([companyId, employeeId, validTo])
+  @@index([roleId])
+  @@index([grantedById])
+  @@map("role_assignment")
+}
+
+/// Owner cong ty (docs/13 §5.2 · BR-15).
+///
+/// BR-15: truoc khi ghi `revokedAt`, dem so Owner con hieu luc cua tenant.
+/// Bang 0 thi TU CHOI GIAO DICH. Kiem tra phai nam trong CUNG transaction —
+/// dat o tang ung dung la co race condition xoa het Owner.
+model CompanyOwner {
+  id           String    @id @default(cuid())
+  companyId    String
+  company      Company   @relation(fields: [companyId], references: [id])
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id])
+  grantedAt    DateTime  @default(now())
+  grantedBy    String
+  revokedAt    DateTime?
+  revokedBy    String?
+  revokeReason String?
+
+  @@unique([companyId, employeeId])
+  @@index([companyId, revokedAt])
+  @@map("company_owner")
+}
+
+// ============================================================================
+//  10. DU LIEU HIEU LUC THEO THOI GIAN  (docs/13 §5.5 · BR-17 · E-V21.10)
+//
+//  Phong ban / chuc vu / quan ly truc tiep tren `Employee` chi la TRANG THAI
+//  HIEN TAI. Xem bang cong thang truoc ma doc gia tri hien tai la sai co cau.
+//  Engine tinh cong va man bang cong phai truy van theo `effectiveFrom/To`
+//  ung voi NGAY CONG, khong dung gia tri hien tai tren Employee.
+// ============================================================================
+
+model Position {
+  id        String  @id @default(cuid())
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+  code      String
+  name      String
+  /// Bac chuc vu, dung so sanh cap bac trong luong duyet
+  level     Int     @default(0)
+  isActive  Boolean @default(true)
+
+  employees Employee[]
+  history   EmployeeAssignmentHistory[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+  @@map("position")
+}
+
+model EmployeeAssignmentHistory {
+  id              String    @id @default(cuid())
+  companyId       String
+  employeeId      String
+  employee        Employee  @relation("AssignmentSubject", fields: [employeeId], references: [id], onDelete: Cascade)
+  /// Cac id duoi day de dang SCALAR co y: bang nay la nhat ky bat bien, khong
+  /// duoc phep bi anh huong khi phong ban/chi nhanh bi xoa mem.
+  departmentId    String?
+  branchId        String?
+  directManagerId String?
+  positionId      String?
+  position        Position? @relation(fields: [positionId], references: [id])
+  effectiveFrom   DateTime
+  /// null = dang hieu luc
+  effectiveTo     DateTime?
+  changedBy       String
+  reason          String?
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId, employeeId, effectiveFrom])
+  @@index([positionId])
+  @@map("employee_assignment_history")
+}
+
+// ============================================================================
+//  11. WORKFLOW VERSIONING  (docs/13 §5.3 · BR-16 · E-V21.2)
+//
+//  Hien tai ApprovalFlow duoc doc TAI THOI DIEM DUYET. Sua luong duyet giua
+//  chung se doi luat choi cua don da gui. BR-16: don giu luong duyet tai thoi
+//  diem GUI.
+// ============================================================================
+
+model ApprovalFlowVersion {
+  id        String       @id @default(cuid())
+  flowId    String
+  flow      ApprovalFlow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  version   Int
+  /// Snapshot BAT BIEN cua cac buoc duyet tai luc tao version
+  steps     Json
+  createdBy String?
+
+  requests LeaveRequest[]
+
+  createdAt DateTime @default(now())
+
+  @@unique([flowId, version])
+  @@map("approval_flow_version")
+}
+
+/// Uy quyen duyet tam thoi (FR-GDW-FLOW-03).
+model ApprovalDelegation {
+  id            String     @id @default(cuid())
+  companyId     String
+  delegatorId   String
+  delegator     Employee   @relation("Delegator", fields: [delegatorId], references: [id])
+  delegateId    String
+  delegate      Employee   @relation("Delegate", fields: [delegateId], references: [id])
+  /// null = uy quyen moi loai don
+  requestTypeId String?
+  scopeLevel    ScopeLevel @default(COMPANY)
+  scopeIds      String[]   @default([])
+  validFrom     DateTime
+  validTo       DateTime
+  reason        String?
+  createdBy     String
+  revokedAt     DateTime?
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId, delegateId, validTo])
+  @@index([companyId, delegatorId, validTo])
+  @@map("approval_delegation")
+}
+
+// ============================================================================
+//  12. KY CONG — VERSION & NHAT KY CHUYEN TRANG THAI
+//      (docs/13 §5.4 · BR-07 · BR-12 · E-V21.3)
+//
+//  Moi export phai mang `periodId + version` de hai lan xuat cung mot ky cho
+//  cung so lieu (FR-WEB-PERIOD-05). Truoc day `PayrollSummary` bi GHI DE moi
+//  lan chot lai, nen mo lai ky la mat so lieu da phat hanh.
+// ============================================================================
+
+model PayrollPeriodVersion {
+  id             String        @id @default(cuid())
+  companyId      String
+  periodId       String
+  period         PayrollPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  version        Int
+  calculatedAt   DateTime      @default(now())
+  calculatedBy   String
+  /// Policy version da dung — phuc vu tai lap ket qua (BR-12, FR-WEB-PERIOD-11)
+  policySnapshot Json
+  /// headcount, tong cong, OT, phep, exception
+  summary        Json
+
+  @@unique([periodId, version])
+  @@index([companyId, periodId])
+  @@map("payroll_period_version")
+}
+
+model PeriodTransition {
+  id            String              @id @default(cuid())
+  companyId     String
+  periodId      String
+  period        PayrollPeriod       @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  fromStatus    PayrollPeriodStatus
+  toStatus      PayrollPeriodStatus
+  actorId       String
+  /// BAT BUOC voi REOPENED (BR-07)
+  reason        String?
+  /// Pham vi du lieu bi anh huong khi mo lai (FR-WEB-PERIOD-06)
+  affectedScope Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([periodId, createdAt])
+  @@index([companyId, createdAt])
+  @@map("period_transition")
+}
+
+// ============================================================================
+//  13. STEP-UP AUTH & SUPPORT ACCESS  (docs/13 §5.6 · BR-18 · BR-08 · E-V21.7)
+// ============================================================================
+
+model StepUpChallenge {
+  id         String    @id @default(cuid())
+  userId     String
+  companyId  String?
+  /// "owner.assign" | "period.reopen" | "period.approve_lock" | ...
+  /// Thach thuc gan voi DUNG MOT hanh dong: xac thuc de mo lai ky khong duoc
+  /// dung lai de gan Owner.
+  action     String
+  /// "BIOMETRIC" | "OTP" | "MFA"
+  method     String
+  verifiedAt DateTime?
+  expiresAt  DateTime
+  consumedAt DateTime?
+  attempts   Int       @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, action, expiresAt])
+  @@map("step_up_challenge")
+}
+
+/// Phien quan tri nen tang truy cap du lieu tenant (docs/07 §12 · BR-08).
+///
+/// Thay cho viec SYSTEM_ADMIN dat thang header X-Company-Id: moi lan cham vao
+/// du lieu khach hang deu phai co ma phieu, muc dich va han het.
+model SupportAccessSession {
+  id          String    @id @default(cuid())
+  adminUserId String
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id])
+  /// BAT BUOC — ma phieu ho tro
+  ticketRef   String
+  /// BAT BUOC — ly do truy cap
+  purpose     String
+  /// BAT BUOC — phien tu het hieu luc, khong cho phep phien vo han
+  expiresAt   DateTime
+  endedAt     DateTime?
+  endedBy     String?
+  /// Chi doc hay duoc ghi
+  readOnly    Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+
+  @@index([companyId, expiresAt])
+  @@index([adminUserId, createdAt])
+  @@map("support_access_session")
+}
+
+// ============================================================================
+//  14. GOI DICH VU THEO TENANT & WIZARD KHOI TAO  (docs/07 §7 · E-V21.9)
+// ============================================================================
+
+/// Ghi de feature flag cho MOT tenant, khong sua goi dung chung.
+model CompanyFeatureOverride {
+  id        String    @id @default(cuid())
+  companyId String
+  company   Company   @relation(fields: [companyId], references: [id])
+  /// Trung khoa voi SubscriptionPlan.features / cac cot max*
+  key       String
+  value     Json
+  reason    String?
+  setBy     String
+  expiresAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, key])
+  @@map("company_feature_override")
+}
+
+/// Tien do wizard "Thiet lap ban dau" 5 buoc cua Tong giam doc.
+model CompanySetupState {
+  id          String    @id @default(cuid())
+  companyId   String    @unique
+  company     Company   @relation(fields: [companyId], references: [id])
+  /// { companyInfo: {done, at, by}, departments: {...}, shifts: {...},
+  ///   accountantAccount: {...}, handover: {...} }
+  steps       Json      @default("{}")
+  currentStep Int       @default(1)
+  completedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("company_setup_state")
 }

@@ -7,6 +7,7 @@ import hmac
 from fastapi import Header, HTTPException, status
 
 from .config import get_settings
+from .errors import AI_UNAUTHORIZED
 
 
 async def require_internal_key(
@@ -27,5 +28,5 @@ async def require_internal_key(
     if x_internal_key is None or not hmac.compare_digest(x_internal_key, settings.internal_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="X-Internal-Key không hợp lệ.",
+            detail={"code": AI_UNAUTHORIZED, "message": "X-Internal-Key không hợp lệ."},
         )

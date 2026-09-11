@@ -9,7 +9,7 @@ import { AttendanceAdminService } from '../attendance/attendance-admin.service';
 import { FraudFlagQueryDto, ReviewFlagDto } from './dto/fraud.dto';
 import { FraudService } from './fraud.service';
 
-/** docs/08-hop-dong-api.md mục 6.4 — Dashboard cảnh báo gian lận (AF-21, AF-23). */
+/** docs/15-hop-dong-api.md mục 6.4 — Dashboard cảnh báo gian lận (AF-21, AF-23). */
 @ApiTags('Web Quản lý · Chống gian lận')
 @ApiBearerAuth()
 @Controller('admin/fraud')

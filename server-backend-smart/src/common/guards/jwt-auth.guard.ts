@@ -41,6 +41,9 @@ export class JwtAuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     request.traceId ??= (request.headers['x-trace-id'] as string) || ulid();
+    // Nhận lại correlationId nếu người gọi đã có (App gửi kèm, hoặc một job nền
+    // gọi ngược vào API), không thì lấy chính traceId làm gốc chuỗi.
+    request.correlationId ??= (request.headers['x-correlation-id'] as string) || request.traceId;
 
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC_KEY, [
       context.getHandler(),
@@ -102,6 +105,7 @@ export class JwtAuthGuard implements CanActivate {
       ip: request.ip,
       userAgent: request.headers['user-agent'],
       traceId: request.traceId,
+      correlationId: request.correlationId ?? request.traceId,
     };
 
     return true;

@@ -1,4 +1,10 @@
-import { INestApplication, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import {
+  INestApplication,
+  Injectable,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 
 /**
@@ -18,8 +24,14 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
     super({
       log:
         process.env.NODE_ENV === 'production'
-          ? [{ emit: 'event', level: 'warn' }, { emit: 'event', level: 'error' }]
-          : [{ emit: 'event', level: 'warn' }, { emit: 'event', level: 'error' }],
+          ? [
+              { emit: 'event', level: 'warn' },
+              { emit: 'event', level: 'error' },
+            ]
+          : [
+              { emit: 'event', level: 'warn' },
+              { emit: 'event', level: 'error' },
+            ],
       errorFormat: 'minimal',
     });
 

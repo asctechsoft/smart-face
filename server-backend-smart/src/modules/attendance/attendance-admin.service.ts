@@ -1,6 +1,6 @@
 import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
-import { AttendanceType, AuthMethod, Prisma } from '@prisma/client';
+import { AttendanceDecision, AttendanceType, AuthMethod, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
 import { PaginatedResult } from 'src/common/dto';
 import { AppException } from 'src/common/errors';
@@ -30,6 +30,13 @@ export interface AttendanceExportParams {
   to?: string;
   /** `null` = toàn công ty. Mảng rỗng = không phòng ban nào (fail-closed, có chủ đích). */
   departmentIds: string[] | null;
+  /**
+   * Thu hẹp thêm xuống vài người cụ thể. `undefined` = không thu hẹp.
+   *
+   * Đây là bộ lọc TIỆN LỢI, không phải hàng rào quyền: hàng rào vẫn là
+   * `departmentIds` ở trên, và worker giao hai tập trước khi đọc dữ liệu.
+   */
+  employeeIds?: string[];
 }
 
 /**
@@ -49,6 +56,29 @@ export function resolveExportDepartmentFilter(
   }
   if (!requested?.length) return [...scope];
   return requested.filter((id) => scope.includes(id));
+}
+
+/**
+ * Người mà job export được phép đọc — giao phạm vi phòng ban với danh sách
+ * `employeeIds` client gửi kèm.
+ *
+ * Tách thành hàm thuần vì cùng lý do với `resolveExportDepartmentFilter`: xuất
+ * Excel là đường rò rỉ êm nhất hệ thống, và quy tắc "chỉ thu hẹp, không bao giờ
+ * nới" phải kiểm được mà không cần dựng cả worker.
+ *
+ * @param scoped `undefined` = không giới hạn phòng ban (HR/Admin toàn công ty).
+ * @param requested `undefined`/rỗng = không thu hẹp thêm.
+ * @returns `undefined` nghĩa là "mọi người trong công ty" — worker bỏ mệnh đề
+ *   `IN` đi thay vì dựng danh sách vài nghìn id.
+ */
+export function resolveExportEmployeeFilter(
+  scoped: string[] | undefined,
+  requested: string[] | undefined,
+): string[] | undefined {
+  if (!requested?.length) return scoped;
+  // Không có giới hạn phòng ban thì danh sách gửi lên chính là kết quả; có giới
+  // hạn thì lấy GIAO — id ngoài phạm vi rơi ra, không phải được thêm vào.
+  return scoped ? scoped.filter((id) => requested.includes(id)) : [...requested];
 }
 
 /**
@@ -242,12 +272,167 @@ export class AttendanceAdminService {
     return adjustment;
   }
 
+  // ===========================================================================
+  //  Soát lượt chấm công chờ duyệt
+  // ===========================================================================
+
+  /**
+   * Hàng đợi các lượt chấm công `PENDING_REVIEW`.
+   *
+   * ## Vì sao hàng đợi này phải tồn tại
+   *
+   * `PENDING_REVIEW` được gán ở hai chỗ — chính sách "chấm ngoài vùng thì chờ
+   * duyệt" (`attendance.geofence.outOfRangeAction`) và điểm rủi ro vượt ngưỡng
+   * (`FRAUD_THRESHOLD_PENDING_REVIEW`) — còn engine tính công thì chỉ đếm
+   * `ACCEPTED` và `FLAGGED`. Trước đây không có đường nào chuyển một lượt ra
+   * khỏi `PENDING_REVIEW`, nên những lượt đó nằm lại vĩnh viễn: nhân viên có
+   * chấm công, hệ thống có bản ghi, mà bảng công thì trống và không ai nhìn thấy
+   * chúng ở đâu để xử lý.
+   */
+  async listPendingReview(
+    companyId: string,
+    query: { from?: string; to?: string; skip?: number; take?: number },
+    departmentScope: string[] | null,
+  ) {
+    // Cùng đường thu hẹp phạm vi như `listDaily`: MANAGER chỉ soát được lượt của
+    // phòng ban mình quản lý (`BR-13` kiểm #3).
+    const employeeIds = departmentScope
+      ? (await this.attendances.findEmployeesInScope(companyId, { departmentScope })).map(
+          (employee) => employee.id,
+        )
+      : null;
+
+    return this.attendances.listPendingReview(companyId, {
+      employeeIds,
+      from: query.from ? parseWorkDate(query.from) : undefined,
+      to: query.to ? parseWorkDate(query.to) : undefined,
+      skip: query.skip ?? 0,
+      take: query.take ?? 50,
+    });
+  }
+
+  /**
+   * Chấp nhận hoặc bác một lượt đang chờ soát (`BR-ATT-08`).
+   *
+   * Chấp nhận thì phải tính lại công của ngày đó — nếu không, lượt đã được duyệt
+   * vẫn không xuất hiện trên bảng công và người duyệt tưởng mình đã xong việc.
+   *
+   * `reason` bắt buộc ở cả hai chiều (`BR-08`): đây là quyết định của con người
+   * đè lên quyết định của hệ thống, nên phải nói được vì sao — nhất là chiều
+   * chấp nhận, vì nó biến một lượt bị nghi ngờ thành công được trả lương.
+   */
+  async reviewPendingLog(
+    ctx: TenantContext,
+    logId: string,
+    decision: 'ACCEPT' | 'REJECT',
+    reason: string,
+  ) {
+    const companyId = ctx.companyId;
+    const log = await this.attendances.findLogDetail(companyId, logId);
+    if (!log) {
+      throw new AppException('ATT_NOT_FOUND');
+    }
+    if (log.decision !== AttendanceDecision.PENDING_REVIEW) {
+      throw new AppException('SYS_VALIDATION_ERROR', {
+        reason: 'Lượt chấm công này không ở trạng thái chờ soát.',
+        decision: log.decision,
+      });
+    }
+
+    // BR-07: kỳ đã chốt thì không đổi được số liệu quá khứ.
+    const closedPeriod = await this.attendances.findClosedPeriodCovering(companyId, log.workDate);
+    if (closedPeriod) {
+      throw new AppException('ATT_PERIOD_LOCKED', { period: closedPeriod.name });
+    }
+
+    const next = decision === 'ACCEPT' ? AttendanceDecision.ACCEPTED : AttendanceDecision.REJECTED;
+    const count = await this.attendances.resolvePendingReview(companyId, logId, next);
+    if (count === 0) {
+      throw new AppException('SYS_VALIDATION_ERROR', {
+        reason: 'Lượt chấm công này vừa được người khác xử lý.',
+      });
+    }
+
+    await this.audit.record(ctx, {
+      action: 'ATTENDANCE_REVIEW',
+      targetType: 'ATTENDANCE_LOG',
+      targetId: logId,
+      reason,
+      before: { decision: AttendanceDecision.PENDING_REVIEW },
+      after: { decision: next },
+    });
+
+    await this.attendance.enqueueRecalculate(companyId, log.employeeId, log.workDate);
+
+    await this.notifications.notify({
+      companyId,
+      employeeId: log.employeeId,
+      type: decision === 'ACCEPT' ? 'ATTENDANCE_ACCEPTED' : 'ATTENDANCE_VOIDED',
+      title:
+        decision === 'ACCEPT'
+          ? 'Lượt chấm công chờ duyệt của bạn đã được chấp nhận'
+          : 'Lượt chấm công chờ duyệt của bạn đã bị bác',
+      body: `Ngày ${formatWorkDate(log.workDate)}. Lý do: ${reason}`,
+      data: { attendanceLogId: logId, workDate: formatWorkDate(log.workDate) },
+    });
+
+    return { id: logId, decision: next };
+  }
+
   /** BR-ADJ-06 — nhân viên xem được lịch sử hiệu chỉnh liên quan tới mình. */
   async listAdjustments(companyId: string, employeeId: string, from?: string, to?: string) {
-    return this.attendances.listAdjustments(companyId, employeeId, {
+    const rows = await this.attendances.listAdjustments(companyId, employeeId, {
       from: from ? parseWorkDate(from) : undefined,
       to: to ? parseWorkDate(to) : undefined,
     });
+
+    /*
+     * Đổi `createdByUserId` thành TÊN NGƯỜI ngay tại đây.
+     *
+     * Bảng `attendance_adjustment` không có quan hệ tới `user_account`, nên nếu
+     * không tra ở đây thì màn hình chỉ có một chuỗi `cmsikw...` — và mục đích duy
+     * nhất của lịch sử điều chỉnh là trả lời "ai đã sửa, vì sao".
+     *
+     * Một lượt tra cho cả danh sách chứ không mỗi dòng một lượt: một tháng
+     * thường chỉ có một hai người hiệu chỉnh, nhưng có thể có vài chục dòng.
+     */
+    const actorIds = [...new Set(rows.map((row) => row.createdByUserId).filter(Boolean))];
+    const actors = await this.attendances.findUserNames(companyId, actorIds);
+    const nameById = new Map(actors.map((actor) => [actor.id, actor.fullName]));
+
+    return rows.map((row) => ({
+      ...row,
+      workDate: formatWorkDate(row.workDate),
+      createdByName: nameById.get(row.createdByUserId) ?? null,
+    }));
+  }
+
+  /**
+   * Lịch sử điều chỉnh của MỘT CBNV, đọc từ phía quản trị.
+   *
+   * Khác `listAdjustments` ở đúng một điểm, và điểm đó là lý do nó tồn tại:
+   * kiểm nhân viên được hỏi có nằm trong phạm vi phòng ban của người hỏi không.
+   * Endpoint tự phục vụ (`GET /attendance/adjustments`) lấy `employeeId` từ
+   * chính JWT nên không cần kiểm; endpoint này nhận id từ client, nên cần.
+   *
+   * Trả `EMP_NOT_FOUND` chứ không `AUTH_FORBIDDEN` khi ngoài phạm vi: nói
+   * "bạn không được xem người này" là đã xác nhận người này tồn tại.
+   */
+  async listAdjustmentsForEmployee(
+    companyId: string,
+    employeeId: string,
+    departmentScope: string[] | null,
+    from?: string,
+    to?: string,
+  ) {
+    const [employee] = await this.attendances.findEmployeesInScope(companyId, {
+      employeeId,
+      departmentScope,
+    });
+    if (!employee) {
+      throw new AppException('EMP_NOT_FOUND');
+    }
+    return this.listAdjustments(companyId, employeeId, from, to);
   }
 
   // ===========================================================================
@@ -274,6 +459,7 @@ export class AttendanceAdminService {
       from: dto.from,
       to: dto.to,
       departmentIds: resolveExportDepartmentFilter(dto.departmentIds, departmentScope),
+      employeeIds: dto.employeeIds?.length ? dto.employeeIds : undefined,
     };
 
     const job = await this.attendances.createExportJob(ctx.companyId, {

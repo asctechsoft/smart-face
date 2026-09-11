@@ -13,7 +13,10 @@ import {
   RequestType,
   SystemRole,
 } from '@prisma/client';
+import { periodLockedFilter } from 'src/common/constants/payroll-period.constants';
+import { AppException } from 'src/common/errors';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
+import { assertNotVersionConflict, versionedWhere } from 'src/infra/prisma/optimistic-lock';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
 export type RequestTypeWithFlow = Prisma.RequestTypeGetPayload<{
@@ -220,17 +223,36 @@ export class RequestRepository extends BaseRepository {
     });
   }
 
+  /**
+   * Sửa đơn nháp, có khoá lạc quan (`BR-13` kiểm #5).
+   *
+   * `expectedVersion` đi vào mệnh đề `WHERE` chứ không được kiểm ở tầng service:
+   * kiểm trước rồi ghi sau để ngỏ đúng cái cửa sổ mà khoá lạc quan sinh ra để
+   * đóng. Hai người cùng sửa một đơn, cả hai cùng đọc thấy version 3, người sau
+   * ghi đè mất thay đổi của người trước mà không ai biết.
+   *
+   * Trả `null` khi đơn không còn ở trạng thái nháp, ném `VERSION_CONFLICT` khi
+   * đơn vẫn là nháp nhưng đã đổi phiên bản — hai chuyện khác nhau và người dùng
+   * cần hai thông báo khác nhau.
+   */
   async updateDraft(
     companyId: string,
     requestId: string,
     data: UpdateDraftData,
+    expectedVersion?: number,
     tx?: Prisma.TransactionClient,
   ): Promise<LeaveRequest | null> {
-    const updated = await this.db(tx).leaveRequest.updateMany({
-      where: { id: requestId, companyId, status: RequestStatus.DRAFT },
-      data,
+    const client = this.db(tx);
+    const where = { id: requestId, companyId, status: RequestStatus.DRAFT };
+    const updated = await client.leaveRequest.updateMany({
+      where: versionedWhere(where, expectedVersion),
+      data: { ...data, rowVersion: { increment: 1 } },
     });
-    if (updated.count === 0) return null;
+
+    if (updated.count === 0) {
+      await assertNotVersionConflict(client.leaveRequest, where, expectedVersion, 'LEAVE_REQUEST');
+      return null;
+    }
     return this.findById(companyId, requestId);
   }
 
@@ -253,6 +275,26 @@ export class RequestRepository extends BaseRepository {
     });
     if (updated.count === 0) return null;
     return this.findById(companyId, requestId);
+  }
+
+  /**
+   * Ghi câu hỏi của người duyệt vào bước đang chờ mà KHÔNG quyết định.
+   *
+   * Tách khỏi `recordStepDecision` vì đây không phải một quyết định: bước vẫn
+   * `PENDING`, người duyệt vẫn là người đó, và khi nhân viên bổ sung xong thì
+   * đơn quay lại đúng bước này chứ không chạy lại từ đầu.
+   */
+  async recordStepQuestion(
+    companyId: string,
+    stepId: string,
+    comment: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const updated = await this.db(tx).approvalStep.updateMany({
+      where: { id: stepId, companyId, status: 'PENDING' },
+      data: { comment },
+    });
+    return updated.count;
   }
 
   /** BR-REQ-02 — đơn chồng lấn thời gian đang chờ duyệt hoặc đã duyệt. */
@@ -285,7 +327,7 @@ export class RequestRepository extends BaseRepository {
     return this.db().payrollPeriod.findFirst({
       where: {
         companyId,
-        status: PayrollPeriodStatus.CLOSED,
+        status: periodLockedFilter(),
         startDate: { lte: endAt },
         endDate: { gte: startAt },
       },

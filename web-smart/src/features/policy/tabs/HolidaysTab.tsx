@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Alert, Button, DatePicker, Input, InputNumber, Modal, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
-import { Icon } from '@/components/Icon';
 import { useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatDay, toWorkDate } from '@/lib/utils/date';
@@ -11,6 +10,7 @@ import { useBranches } from '@/features/shared/org.api';
 import { useCreateHoliday, useDeleteHoliday, useHolidays, type Holiday } from '../policy.api';
 import { ConfirmDialog, useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Icon } from '@/components/ui';
 
 /**
  * Danh mục ngày nghỉ lễ — `FR-WEB-POL-06`.
@@ -24,7 +24,7 @@ export function HolidaysTab() {
   const { timezone } = useAuth();
   const toast = useToast();
   const showError = useErrorToast();
-  const canEdit = useCan('policy.edit');
+  const canEdit = useCan('policy.update');
 
   const [year, setYear] = useState(new Date().getFullYear());
   const [formOpen, setFormOpen] = useState(false);

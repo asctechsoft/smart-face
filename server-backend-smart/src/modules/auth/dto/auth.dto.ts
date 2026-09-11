@@ -140,7 +140,7 @@ export class ChangePasswordDto {
   firebaseIdToken!: string;
 
   @ApiProperty({
-    description: `Tối thiểu ${PasswordService.MIN_LENGTH} ký tự. Không bắt buộc chữ hoa/ký tự đặc biệt — độ dài mới là thứ có tác dụng.`,
+    description: `Tối thiểu ${PasswordService.MIN_LENGTH} ký tự, phải có cả chữ hoa lẫn chữ thường, và ít nhất 1 chữ số hoặc ký tự đặc biệt.`,
   })
   @IsString()
   @Length(PasswordService.MIN_LENGTH, PasswordService.MAX_LENGTH)
@@ -209,6 +209,37 @@ export class LogoutDto {
  * đang đăng nhập cũng nhận được SMS gửi tới chính máy đó, nên OTP một mình không
  * phải rào cản trong đúng kịch bản mà chốt này sinh ra để chặn.
  */
+/**
+ * Mở thử thách step-up cho MỘT hành động cụ thể (BR-18).
+ *
+ * `action` phải khớp đúng chuỗi trong `@RequireStepUp()` của endpoint sắp gọi.
+ * Đây là điểm khác căn bản so với `reauthToken` cũ: xác thực để mở lại kỳ công
+ * không dùng lại được để gán Owner.
+ */
+export class StepUpChallengeDto {
+  @ApiProperty({ example: 'period.reopen' })
+  @IsString()
+  @Length(3, 100)
+  action!: string;
+}
+
+export class StepUpVerifyDto {
+  @ApiProperty({ description: 'Id thử thách nhận từ POST /v1/auth/step-up' })
+  @IsString()
+  challengeId!: string;
+
+  @ApiProperty({
+    description: 'ID token vừa làm mới của Firebase sau khi người dùng gõ lại mật khẩu',
+  })
+  @IsString()
+  firebaseIdToken!: string;
+
+  @ApiPropertyOptional({ description: 'Bắt buộc khi tài khoản đã bật xác thực 2 lớp' })
+  @IsOptional()
+  @IsString()
+  twoFactorCode?: string;
+}
+
 export class ReauthVerifyDto {
   @ApiProperty({
     description: 'ID token vừa làm mới sau khi xác thực lại với Firebase.',

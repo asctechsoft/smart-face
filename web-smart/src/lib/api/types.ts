@@ -1,5 +1,5 @@
 /**
- * Hình dạng phản hồi của Backend — docs/08-hop-dong-api.md mục 1.3.
+ * Hình dạng phản hồi của Backend — docs/15-hop-dong-api.md mục 1.3.
  *
  * Thành công: `{ success: true, data, meta? }`
  * Lỗi:        `{ success: false, error: { code, message, ... } }`

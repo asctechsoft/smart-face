@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { ErrorState } from './EmptyState';
+import { ErrorState } from './ui';
 
 interface State {
   error: Error | null;

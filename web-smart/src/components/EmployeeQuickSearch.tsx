@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Select, Spin } from 'antd';
-import { Icon } from '@/components/Icon';
 import { useCan } from '@/lib/rbac/Can';
 import { useEmployeeList } from '@/features/employees/employees.api';
+import { Icon } from '@/components/ui';
 
 /**
  * Tìm nhanh nhân viên trên thanh trên cùng.

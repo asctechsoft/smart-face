@@ -1,7 +1,13 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
-import { Audit, CurrentTenant, DepartmentScoped, Roles } from 'src/common/decorators';
+import {
+  Audit,
+  CurrentTenant,
+  DepartmentScoped,
+  RequirePermission,
+  Roles,
+} from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
 import { RateLimit } from 'src/common/guards/rate-limit.guard';
 import { resolveDepartmentScope } from 'src/common/guards/scope.guard';
@@ -12,10 +18,12 @@ import {
   AdjustAttendanceDto,
   AdminAttendanceQueryDto,
   ExportAttendanceDto,
+  PendingReviewQueryDto,
+  ReviewPendingLogDto,
 } from './dto/attendance.dto';
 
 /**
- * docs/08-hop-dong-api.md mục 6.1 — Web Quản lý · Chấm công.
+ * docs/15-hop-dong-api.md mục 6.1 — Web Quản lý · Chấm công.
  *
  * Khác `AttendanceController` (App) ở chỗ mọi endpoint đều thao tác trên NGƯỜI
  * KHÁC, nên đều phải qua `@Roles` + `@DepartmentScoped()`.
@@ -63,6 +71,62 @@ export class AttendanceAdminController {
     return this.admin.listLogsForDay(ctx.companyId, employeeId, workDate);
   }
 
+  /**
+   * Lịch sử điều chỉnh công của một CBNV.
+   *
+   * Có bản song sinh tự phục vụ ở `GET /v1/attendance/adjustments` — kia lấy
+   * `employeeId` từ JWT của chính nhân viên. Đường này nhận id từ client nên
+   * phải kiểm phạm vi phòng ban, và đó là toàn bộ khác biệt giữa hai endpoint.
+   *
+   * Phải nằm TRƯỚC `@Get(':id')` — xem cảnh báo ở khối đó.
+   */
+  @Get('adjustments')
+  @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Lịch sử hiệu chỉnh công của một CBNV',
+    description:
+      'BR-ADJ-01 — hiệu chỉnh không sửa đè bản ghi thô mà tạo bản ghi điều chỉnh riêng, nên đây là cách duy nhất đọc lại "ai đã sửa gì, vì sao". MANAGER chỉ xem được CBNV thuộc phòng ban mình quản lý.',
+  })
+  @ApiErrors('EMP_NOT_FOUND')
+  listAdjustments(
+    @CurrentTenant() ctx: TenantContext,
+    @Query('employeeId') employeeId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.admin.listAdjustmentsForEmployee(
+      ctx.companyId,
+      employeeId,
+      resolveDepartmentScope(ctx),
+      from,
+      to,
+    );
+  }
+
+  @Get('pending-review')
+  @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Các lượt chấm công đang chờ soát',
+    description:
+      'Lượt bị chính sách "ngoài vùng thì chờ duyệt" hoặc điểm rủi ro cao đưa về `PENDING_REVIEW`. Engine tính công KHÔNG đếm những lượt này cho tới khi được duyệt ở đây.',
+  })
+  listPendingReview(@CurrentTenant() ctx: TenantContext, @Query() query: PendingReviewQueryDto) {
+    return this.admin.listPendingReview(ctx.companyId, query, resolveDepartmentScope(ctx));
+  }
+
+  /**
+   * ⚠ Route GET CUỐI CÙNG của class — Nest so khớp theo THỨ TỰ KHAI BÁO.
+   *
+   * Trước đây khối này đứng thứ ba và nuốt mọi route GET đặt sau nó:
+   * `GET /admin/attendance/pending-review` bị hiểu thành `id = 'pending-review'`
+   * rồi trả `ATT_NOT_FOUND` — hàng đợi chờ soát không mở được từ giao diện, mà
+   * lỗi lại đọc như "không có lượt nào" nên không ai ngờ tới định tuyến.
+   *
+   * `AttendanceController` đã ghi đúng cảnh báo này ở bản của nó; class này thì
+   * chưa. Thêm route GET mới thì thêm phía TRÊN, không phải phía dưới.
+   */
   @Get(':id')
   @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
   @DepartmentScoped()
@@ -74,6 +138,28 @@ export class AttendanceAdminController {
   @ApiErrors('ATT_NOT_FOUND')
   detail(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
     return this.attendance.getLogDetail(ctx.companyId, id);
+  }
+
+  // MANAGER XEM được hàng đợi (endpoint trên) nhưng KHÔNG quyết — cùng lý do đã
+  // ghi ở `FraudController.review`: chấp nhận hay bác một lượt là quyết định
+  // cộng hay cắt công của cấp dưới trực tiếp, và đó là thế xung đột lợi ích.
+  @Post('pending-review/:id')
+  @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('attendance.review_suspicious')
+  @HttpCode(HttpStatus.OK)
+  @Audit({ action: 'ATTENDANCE_REVIEW', targetType: 'ATTENDANCE_LOG', requireReason: true })
+  @ApiOperation({
+    summary: 'Chấp nhận hoặc bác một lượt chờ soát',
+    description:
+      'Chấp nhận thì tính lại công của ngày đó ngay. Lý do bắt buộc ở CẢ HAI chiều: đây là quyết định của con người đè lên quyết định của hệ thống (BR-08).',
+  })
+  @ApiErrors('ATT_NOT_FOUND', 'ATT_PERIOD_LOCKED', 'SYS_VALIDATION_ERROR')
+  reviewPending(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: ReviewPendingLogDto,
+  ) {
+    return this.admin.reviewPendingLog(ctx, id, dto.decision, dto.reason);
   }
 
   @Post('adjust')

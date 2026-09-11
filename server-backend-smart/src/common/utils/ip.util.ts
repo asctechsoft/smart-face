@@ -84,11 +84,7 @@ function ipv6ToBigInt(value: string): bigint | null {
   if (doubleColon.length === 1 && head.length !== 8) return null;
   if (head.length + rear.length > 8) return null;
 
-  const groups = [
-    ...head,
-    ...Array<string>(8 - head.length - rear.length).fill('0'),
-    ...rear,
-  ];
+  const groups = [...head, ...Array<string>(8 - head.length - rear.length).fill('0'), ...rear];
 
   let result = 0n;
   for (const group of groups) {

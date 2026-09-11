@@ -21,6 +21,15 @@ export const FraudCodes = {
   MISSING_CHECKOUT: 'MISSING_CHECKOUT',
   ABSENT_DURING_SHIFT: 'ABSENT_DURING_SHIFT',
   LOW_SIMILARITY_AUDIT: 'LOW_SIMILARITY_AUDIT',
+  /**
+   * Bản ghi đến từ chế độ offline (`FR-APP-STAT-06`).
+   *
+   * Điểm rủi ro là 0 chứ không phải một con số dương: đây không phải tín hiệu
+   * gian lận mà là ghi chú cho người duyệt biết những chốt nào KHÔNG chạy được.
+   * Cộng điểm ở đây sẽ khiến mọi bản ghi offline hợp lệ đều bị đội lên ngưỡng
+   * cảnh báo và làm nhiễu chính cái điểm rủi ro đó.
+   */
+  OFFLINE_RECORD: 'OFFLINE_RECORD',
 } as const;
 
 export type FraudCode = (typeof FraudCodes)[keyof typeof FraudCodes];

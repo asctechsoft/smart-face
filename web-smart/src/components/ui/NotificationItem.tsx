@@ -3,10 +3,10 @@ import { Icon } from './Icon';
 /**
  * Một dòng trong danh sách thông báo — docs/16 mục 11.20.
  *
- * Chưa đọc: nền `teal-50` + viền trái `2px teal-700`.
+ * Chưa đọc: nền `blue-50` + viền trái `2px blue-700`.
  * Đã đọc:  trong suốt + viền dưới `1px outline-variant`.
  *
- * Nền tint đổi từ `rgba(0,84,64,.05)` sang bậc đặc `teal-50` theo nguyên tắc số
+ * Nền tint đổi từ `rgba(0,84,64,.05)` sang bậc đặc `blue-50` theo nguyên tắc số
  * 2 của tài liệu: nền có alpha đổi màu theo thứ nằm phía sau, nên tương phản
  * chữ trên nó không dự đoán được — dòng thông báo nằm trên nền trắng và nằm
  * chồng lên một card sẽ cho hai kết quả khác nhau.
@@ -37,13 +37,13 @@ export function NotificationItem({
         className="sf-notification__icon"
         aria-hidden="true"
         style={{
-          background: tone === 'warning' ? 'var(--sf-warning-100)' : 'var(--sf-teal-100)',
+          background: tone === 'warning' ? 'var(--sf-warning-100)' : 'var(--sf-blue-100)',
         }}
       >
         <Icon
           name={tone === 'warning' ? 'warning' : 'notifications'}
           size={18}
-          color={tone === 'warning' ? 'var(--sf-warning-800)' : 'var(--sf-teal-800)'}
+          color={tone === 'warning' ? 'var(--sf-warning-800)' : 'var(--sf-blue-800)'}
         />
       </span>
 

@@ -12,7 +12,7 @@ export interface EmployeeRef {
 /**
  * Ô "Nhân viên" trong bảng — docs/16 mục 11.8.
  *
- * Avatar `32px` nền `teal-700`, chữ viết tắt `#FFFFFF` (8.97:1). Bản Figma cũ
+ * Avatar `32px` nền `blue-700`, chữ viết tắt `#FFFFFF` (8.97:1). Bản Figma cũ
  * dùng `#82C6AD` — 4.54:1, sát ngưỡng tới mức đổi độ sáng màn hình là trượt.
  */
 export function EmployeeCell({
@@ -46,7 +46,7 @@ export function EmployeeCell({
             width: 32,
             height: 32,
             borderRadius: 9999,
-            background: 'var(--sf-teal-700)',
+            background: 'var(--sf-blue-700)',
             color: '#FFFFFF',
             display: 'grid',
             placeItems: 'center',

@@ -53,6 +53,20 @@ describe('Bảng chấm công', () => {
       findMemberIds: jest.fn().mockResolvedValue([]),
       createRecalculateJob: jest.fn().mockResolvedValue({ id: 'job_1' }),
       markRecalculateJobDone: jest.fn().mockResolvedValue(undefined),
+      // Bảng tổng hợp. Mặc định là một kỳ RỖNG; từng test tự dựng số liệu nó cần.
+      findMemberEmployeeIds: jest.fn().mockResolvedValue([]),
+      // Tháng có đúng một bảng, và bảng đó giữ mọi thành viên — hình dạng đơn
+      // giản nhất; test nào cần nhiều bảng thì tự dựng lại hai mock này.
+      listSheetsInMonth: jest.fn().mockResolvedValue([sheet()]),
+      findMembersOfSheets: jest.fn().mockResolvedValue([]),
+      searchMemberEmployees: jest.fn().mockResolvedValue({ items: [], total: 0 }),
+      sumDailiesByEmployee: jest.fn().mockResolvedValue([]),
+      countDailyStatusByEmployee: jest.fn().mockResolvedValue([]),
+      findEmployeesNeedingReview: jest
+        .fn()
+        .mockResolvedValue({ needsReview: new Set(), missingCheckOut: new Set() }),
+      countScheduledDaysByEmployee: jest.fn().mockResolvedValue(new Map()),
+      findLastCalculatedAt: jest.fn().mockResolvedValue(null),
     };
     payroll = { runTrackedRecalculate: jest.fn().mockResolvedValue(undefined) };
     queue = { add: jest.fn().mockResolvedValue(undefined) };
@@ -268,6 +282,244 @@ describe('Bảng chấm công', () => {
         code: 'ATT_SHEET_NOT_FOUND',
       });
       expect(sheets.createRecalculateJob).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Bảng tổng hợp công — mỗi dòng một người, cả kỳ gộp lại.
+   *
+   * Ba luật được kiểm ở đây là ba chỗ mà sai một cái là người rà công đọc ra
+   * một câu chuyện khác hẳn về cùng một kỳ.
+   */
+  describe('tổng hợp công cả kỳ', () => {
+    const employee = (id: string, code: string) => ({
+      id,
+      fullName: `Người ${code}`,
+      employeeCode: code,
+      status: 'ACTIVE',
+      department: { id: 'dept_kho', name: 'Kho' },
+    });
+
+    /** Kỳ có 3 người, nhưng trang chỉ hiện 1 — đúng hình dạng gây ra lỗi đếm. */
+    function givenPeriodOfThree() {
+      sheets.findMembersOfSheets?.mockResolvedValue(membersOf('e1', 'e2', 'e3'));
+      sheets.findMemberEmployeeIds?.mockResolvedValue(['e1', 'e2', 'e3']);
+      sheets.searchMemberEmployees?.mockResolvedValue({
+        items: [employee('e1', 'NV001')],
+        total: 3,
+      });
+      sheets.countScheduledDaysByEmployee?.mockResolvedValue(
+        new Map([
+          ['e1', 22],
+          ['e2', 22],
+          ['e3', 20],
+        ]),
+      );
+      sheets.sumDailiesByEmployee?.mockResolvedValue([
+        {
+          employeeId: 'e1',
+          standardDays: 21.5,
+          workedMinutes: 10000,
+          otMinutes: 120,
+          lateMinutes: 30,
+          earlyLeaveMinutes: 0,
+        },
+        {
+          employeeId: 'e2',
+          standardDays: 22,
+          workedMinutes: 10560,
+          otMinutes: 60,
+          lateMinutes: 0,
+          earlyLeaveMinutes: 15,
+        },
+        {
+          employeeId: 'e3',
+          standardDays: 18,
+          workedMinutes: 8640,
+          otMinutes: 0,
+          lateMinutes: 0,
+          earlyLeaveMinutes: 0,
+        },
+      ]);
+    }
+
+    const summary = (query: Record<string, unknown> = {}) =>
+      service.getMonthSummary(
+        'cmp_1',
+        { month: '2026-08-01', page: 1, pageSize: 20, ...query } as never,
+        null,
+      );
+
+    /** Gán mọi người trong danh sách vào cùng một bảng của tháng. */
+    const membersOf = (...employeeIds: string[]) =>
+      employeeIds.map((employeeId) => ({ employeeId, sheetId: 'sheet_1' }));
+
+    it('cộng thẻ chỉ số trên CẢ KỲ, không phải trên trang đang mở', async () => {
+      givenPeriodOfThree();
+
+      const result = await summary();
+
+      // Trang chỉ có 1 dòng, nhưng kỳ có 3 người: 22+22+20 công chuẩn và
+      // 21,5+22+18 công thực tế. Cộng theo trang sẽ ra 22 và 21,5.
+      expect(result.rows).toHaveLength(1);
+      expect(result.totals.employeeCount).toBe(3);
+      expect(result.totals.standardDays).toBe(64);
+      expect(result.totals.actualDays).toBe(61.5);
+      expect(result.totals.otMinutes).toBe(180);
+    });
+
+    it('thiếu công là HIỆU công chuẩn − công thực tế, kẹp ở 0', async () => {
+      sheets.findMembersOfSheets?.mockResolvedValue(membersOf('e1', 'e2'));
+      sheets.findMemberEmployeeIds?.mockResolvedValue(['e1', 'e2']);
+      sheets.searchMemberEmployees?.mockResolvedValue({
+        items: [employee('e1', 'NV001'), employee('e2', 'NV002')],
+        total: 2,
+      });
+      sheets.countScheduledDaysByEmployee?.mockResolvedValue(
+        new Map([
+          ['e1', 22],
+          ['e2', 22],
+        ]),
+      );
+      sheets.sumDailiesByEmployee?.mockResolvedValue([
+        {
+          employeeId: 'e1',
+          standardDays: 20,
+          workedMinutes: 0,
+          otMinutes: 0,
+          lateMinutes: 0,
+          earlyLeaveMinutes: 0,
+        },
+        // Làm DƯ công (nhận thêm ca ngoài lịch) — không phải thiếu công âm.
+        {
+          employeeId: 'e2',
+          standardDays: 24,
+          workedMinutes: 0,
+          otMinutes: 0,
+          lateMinutes: 0,
+          earlyLeaveMinutes: 0,
+        },
+      ]);
+
+      const result = await summary();
+
+      expect(result.rows[0]?.missingDays).toBe(2);
+      expect(result.rows[1]?.missingDays).toBe(0);
+    });
+
+    it('người thuộc bảng ĐÃ CHỐT hiện "đã khoá", kể cả khi còn ngày phải rà', async () => {
+      sheets.listSheetsInMonth?.mockResolvedValue([sheet({ status: 'CLOSED' })]);
+      sheets.findMembersOfSheets?.mockResolvedValue(membersOf('e1'));
+      sheets.findMemberEmployeeIds?.mockResolvedValue(['e1']);
+      sheets.searchMemberEmployees?.mockResolvedValue({
+        items: [employee('e1', 'NV001')],
+        total: 1,
+      });
+      sheets.findEmployeesNeedingReview?.mockResolvedValue({
+        needsReview: new Set(['e1']),
+        missingCheckOut: new Set(['e1']),
+      });
+
+      const result = await summary();
+
+      expect(result.rows[0]?.status).toBe('LOCKED');
+      // Thẻ chỉ số vẫn nói sự thật: khoá bảng không làm ngày thiếu biến mất.
+      expect(result.totals.needsReviewCount).toBe(1);
+    });
+
+    it('lọc "chỉ người cần đối soát" thu hẹp DÒNG, không đụng thẻ chỉ số', async () => {
+      sheets.findMembersOfSheets?.mockResolvedValue(membersOf('e1', 'e2', 'e3'));
+      sheets.findMemberEmployeeIds?.mockResolvedValue(['e1', 'e2', 'e3']);
+      sheets.findEmployeesNeedingReview?.mockResolvedValue({
+        needsReview: new Set(['e2']),
+        missingCheckOut: new Set(),
+      });
+      sheets.searchMemberEmployees?.mockResolvedValue({
+        items: [employee('e2', 'NV002')],
+        total: 1,
+      });
+
+      const result = await summary({ needsReviewOnly: true });
+
+      // Truy vấn trang chỉ hỏi đúng những người cần rà…
+      expect(sheets.searchMemberEmployees).toHaveBeenCalledWith(
+        'cmp_1',
+        expect.objectContaining({ memberIds: ['e2'] }),
+      );
+      // …còn "Tổng nhân viên" vẫn là cả kỳ, nếu không thì bấm vào cảnh báo xong
+      // hàng thẻ tự viết lại chính nó.
+      expect(result.totals.employeeCount).toBe(3);
+      expect(result.totals.needsReviewCount).toBe(1);
+    });
+
+    it('lọc theo employeeId đi thẳng xuống repository, không qua ô tìm kiếm', async () => {
+      sheets.findMembersOfSheets?.mockResolvedValue(membersOf('e1', 'e2'));
+      sheets.findMemberEmployeeIds?.mockResolvedValue(['e1']);
+      sheets.searchMemberEmployees?.mockResolvedValue({
+        items: [employee('e1', 'NV001')],
+        total: 1,
+      });
+
+      await summary({ employeeId: 'e1' });
+
+      // Màn chi tiết của một CBNV phải hỏi ĐÚNG người đó. Trước đây nó đi bằng
+      // `q = mã nhân viên`, mà `q` khớp theo `contains` — "NV001" kéo về cả
+      // "NV0011", và màn "chi tiết của một người" hiện ra hai người.
+      expect(sheets.findMemberEmployeeIds).toHaveBeenCalledWith(
+        'cmp_1',
+        expect.objectContaining({ employeeId: 'e1' }),
+      );
+      expect(sheets.searchMemberEmployees).toHaveBeenCalledWith(
+        'cmp_1',
+        expect.objectContaining({ employeeId: 'e1' }),
+      );
+    });
+
+    it('tháng chưa lập bảng nào → khung rỗng, KHÔNG phải lỗi', async () => {
+      // Màn "Bảng công" phải mở được từ ngày đầu tiên, trước khi kế toán lập
+      // bảng đầu tiên. Ném 404 ở đây thì cửa vào của cả module là một trang lỗi.
+      sheets.listSheetsInMonth?.mockResolvedValue([]);
+      sheets.findMembersOfSheets?.mockResolvedValue([]);
+
+      const result = await summary();
+
+      expect(result.sheets).toEqual([]);
+      expect(result.rows).toEqual([]);
+      expect(result.totals.employeeCount).toBe(0);
+    });
+
+    it('đếm người cần đối soát cho TỪNG bảng, không theo bộ lọc màn hình', async () => {
+      sheets.listSheetsInMonth?.mockResolvedValue([
+        sheet({ id: 'sheet_1', name: 'Kế toán' }),
+        sheet({ id: 'sheet_2', name: 'Kho vận' }),
+      ]);
+      sheets.findMembersOfSheets?.mockResolvedValue([
+        { employeeId: 'e1', sheetId: 'sheet_1' },
+        { employeeId: 'e2', sheetId: 'sheet_2' },
+      ]);
+      // Màn hình đang lọc còn mỗi e1…
+      sheets.findMemberEmployeeIds
+        ?.mockResolvedValueOnce(['e1'])
+        .mockResolvedValueOnce(['e1', 'e2']);
+      sheets.searchMemberEmployees?.mockResolvedValue({
+        items: [employee('e1', 'NV001')],
+        total: 1,
+      });
+      sheets.findEmployeesNeedingReview
+        ?.mockResolvedValueOnce({ needsReview: new Set(['e1']), missingCheckOut: new Set() })
+        .mockResolvedValueOnce({
+          needsReview: new Set(['e1', 'e2']),
+          missingCheckOut: new Set(),
+        });
+
+      const result = await summary({ q: 'Người' });
+
+      // …nhưng hộp thoại chốt vẫn phải nói sự thật về CẢ HAI bảng. Lọc "Kế toán"
+      // rồi thấy Kho vận ghi 0 người cần rà là dẫn thẳng tới một lần chốt sai.
+      expect(result.sheets.find((item) => item.id === 'sheet_1')?.needsReviewCount).toBe(1);
+      expect(result.sheets.find((item) => item.id === 'sheet_2')?.needsReviewCount).toBe(1);
+      // Thẻ chỉ số thì theo đúng bộ lọc đang bật.
+      expect(result.totals.needsReviewCount).toBe(1);
     });
   });
 

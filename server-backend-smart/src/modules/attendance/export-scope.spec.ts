@@ -1,6 +1,9 @@
 import { SystemRole } from '@prisma/client';
 import { resolveDepartmentScope } from 'src/common/guards/scope.guard';
-import { resolveExportDepartmentFilter } from './attendance-admin.service';
+import {
+  resolveExportDepartmentFilter,
+  resolveExportEmployeeFilter,
+} from './attendance-admin.service';
 
 /**
  * `BR-09` — phạm vi phòng ban của job xuất bảng công.
@@ -31,10 +34,7 @@ describe('resolveExportDepartmentFilter (BR-09)', () => {
     });
 
     it('gửi bộ lọc → dùng nguyên', () => {
-      expect(resolveExportDepartmentFilter([KY_THUAT, KE_TOAN], null)).toEqual([
-        KY_THUAT,
-        KE_TOAN,
-      ]);
+      expect(resolveExportDepartmentFilter([KY_THUAT, KE_TOAN], null)).toEqual([KY_THUAT, KE_TOAN]);
     });
   });
 
@@ -102,5 +102,54 @@ describe('resolveExportDepartmentFilter (BR-09)', () => {
       const scope = resolveDepartmentScope(buildCtx([SystemRole.MANAGER], [KY_THUAT]));
       expect(resolveExportDepartmentFilter(undefined, scope)).toEqual([KY_THUAT]);
     });
+  });
+});
+
+/**
+ * Thu hẹp export xuống vài CBNV — nút "Xuất chi tiết" ở màn chi tiết bảng công.
+ *
+ * Cùng mối lo với bộ test bên trên, chỉ khác trục: ở đó là phòng ban, ở đây là
+ * từng người. Nguy hiểm nằm ở chỗ danh sách này do CLIENT gửi lên, nên nó phải
+ * là bộ lọc tiện lợi, tuyệt đối không được trở thành đường vòng qua phạm vi.
+ */
+describe('resolveExportEmployeeFilter', () => {
+  const DUC = 'emp_duc';
+  const BINH = 'emp_binh';
+  const NGOAI = 'emp_ngoai_pham_vi';
+
+  it('không gửi danh sách → giữ nguyên phạm vi phòng ban', () => {
+    expect(resolveExportEmployeeFilter([DUC, BINH], undefined)).toEqual([DUC, BINH]);
+  });
+
+  it('mảng rỗng cũng là "không thu hẹp", không phải "không ai"', () => {
+    expect(resolveExportEmployeeFilter([DUC, BINH], [])).toEqual([DUC, BINH]);
+  });
+
+  it('HR không giới hạn phòng ban → dùng nguyên danh sách gửi lên', () => {
+    expect(resolveExportEmployeeFilter(undefined, [DUC])).toEqual([DUC]);
+  });
+
+  it('HR không giới hạn và không gửi danh sách → undefined, nghĩa là toàn công ty', () => {
+    // `undefined` để worker BỎ mệnh đề `IN` đi, không phải dựng `IN ()` rỗng.
+    expect(resolveExportEmployeeFilter(undefined, undefined)).toBeUndefined();
+  });
+
+  it('chọn người trong phạm vi → chỉ người đó', () => {
+    expect(resolveExportEmployeeFilter([DUC, BINH], [DUC])).toEqual([DUC]);
+  });
+
+  it('lén thêm người ngoài phạm vi → bị loại, KHÔNG được thêm vào', () => {
+    expect(resolveExportEmployeeFilter([DUC, BINH], [DUC, NGOAI])).toEqual([DUC]);
+  });
+
+  it('chỉ gửi người ngoài phạm vi → rỗng, không rơi về cả phòng ban', () => {
+    // Fail-closed: file trắng còn hơn file có dữ liệu của người không được xem.
+    expect(resolveExportEmployeeFilter([DUC, BINH], [NGOAI])).toEqual([]);
+  });
+
+  it('không sửa vào mảng phạm vi gốc', () => {
+    const scope = [DUC, BINH];
+    resolveExportEmployeeFilter(scope, [DUC]);
+    expect(scope).toEqual([DUC, BINH]);
   });
 });

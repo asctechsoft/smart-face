@@ -10,11 +10,28 @@ export const SystemRole = {
 export type SystemRole = (typeof SystemRole)[keyof typeof SystemRole];
 
 export const ROLE_LABEL: Record<SystemRole, string> = {
-  SYSTEM_ADMIN: 'Admin hệ thống',
-  COMPANY_ADMIN: 'Admin công ty',
+  SYSTEM_ADMIN: 'Quản trị nền tảng',
+  COMPANY_ADMIN: 'Giám đốc / Quản trị công ty',
   MANAGER: 'Quản lý',
   HR_PAYROLL: 'Kế toán / HR',
   EMPLOYEE: 'Nhân viên',
+};
+
+/**
+ * Nhãn cho mã vai trò của `GET /v1/access/me` — khác `ROLE_LABEL` ở chỗ nó bám
+ * mô hình v2.1, có `OWNER` và tách `PLATFORM_ADMIN` khỏi `SYSTEM_ADMIN`.
+ *
+ * Vai trò tuỳ biến do tenant tự tạo (`FR-GDW-ROLE-01`) không có ở đây — chúng
+ * rơi về chính mã của mình, và đó là hành vi đúng: tên do khách hàng đặt thì
+ * hiển thị nguyên văn, không dịch.
+ */
+export const ACCESS_ROLE_LABEL: Record<string, string> = {
+  OWNER: 'Chủ sở hữu',
+  COMPANY_ADMIN: 'Giám đốc',
+  HR_PAYROLL: 'Kế toán / HR',
+  MANAGER: 'Quản lý',
+  EMPLOYEE: 'Nhân viên',
+  PLATFORM_ADMIN: 'Quản trị nền tảng',
 };
 
 /** `enum EmployeeStatus`. */
@@ -73,7 +90,7 @@ export const PERIOD_STATUS_LABEL: Record<string, string> = {
 };
 
 /**
- * Mã cờ nghi vấn — `FraudFlag.code`, xem docs/06-anti-fraud.md.
+ * Mã cờ nghi vấn — `FraudFlag.code`, xem docs/09-anti-fraud.md.
  *
  * Không dùng enum ở Backend (cột `String`) nên bảng này là ánh xạ hiển thị, và
  * phải chịu được mã lạ: code không có trong bảng thì hiện nguyên mã.

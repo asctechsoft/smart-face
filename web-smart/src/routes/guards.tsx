@@ -1,8 +1,9 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Spin } from 'antd';
 import { useAuth } from '@/lib/auth/auth-context';
+import { useAccess } from '@/lib/rbac/access-context';
 import { hasPermission, type Permission } from '@/lib/rbac/permissions';
-import { EmptyState } from '@/components/EmptyState';
+import { EmptyState } from '@/components/ui';
 
 function FullPageLoading() {
   return (
@@ -53,7 +54,10 @@ export function RequireAnonymous() {
 
   if (status === 'loading') return <FullPageLoading />;
   if (status === 'authenticated') {
-    return <Navigate to={mustChangePassword ? '/doi-mat-khau' : '/dashboard'} replace />;
+    // Về `/` chứ không phải `/dashboard`: `HomeRoute` mới biết vai trò này nên
+    // vào trang nào. Đưa thẳng tới dashboard là giả định mọi người đều có
+    // `report.view`, và quản trị nền tảng thì không.
+    return <Navigate to={mustChangePassword ? '/doi-mat-khau' : '/'} replace />;
   }
 
   return <Outlet />;
@@ -65,10 +69,30 @@ export function RequireAnonymous() {
  * ⚠ Đây là trải nghiệm, không phải bảo mật: người dùng gõ thẳng URL sẽ thấy màn
  * hình "không có quyền", nhưng dữ liệu thật vẫn do Backend gác. Xem docs/04 mục 12.2.
  */
-export function RequirePermission({ permission }: { permission: Permission }) {
-  const { roles } = useAuth();
+/**
+ * `anyOf`: qua cổng khi có ÍT NHẤT MỘT trong các quyền.
+ *
+ * Cần cho trang gộp nhiều phần vào tab — "Thiết lập" chứa cả chính sách, luồng
+ * duyệt, phân quyền và nhật ký. Gác nó bằng một quyền duy nhất sẽ chặn nhầm
+ * người chỉ có quyền của một tab: Kế toán không có `policy.view` vẫn phải xem
+ * được tab Nhật ký. Từng tab tự lọc tiếp bên trong trang.
+ */
+export function RequirePermission({
+  permission,
+  anyOf,
+}: {
+  permission?: Permission;
+  anyOf?: Permission[];
+}) {
+  const { access, isLoading } = useAccess();
 
-  if (!hasPermission(roles, permission)) {
+  // Chưa biết quyền thì chưa kết luận. Vẽ "không có quyền" trong lúc còn đang
+  // hỏi server là nói với người dùng một điều sai, và họ sẽ rời trang trước khi
+  // câu trả lời thật về tới.
+  if (isLoading) return null;
+
+  const required = anyOf ?? (permission ? [permission] : []);
+  if (!required.some((code) => hasPermission(access, code))) {
     return (
       <div style={{ padding: 24 }}>
         <EmptyState

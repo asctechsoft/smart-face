@@ -22,11 +22,20 @@ export function ExportAttendanceModal({
   open,
   defaultFrom,
   defaultTo,
+  employee,
   onClose,
 }: {
   open: boolean;
   defaultFrom?: string;
   defaultTo?: string;
+  /**
+   * Xuất cho ĐÚNG một người — dùng từ màn "Chi tiết bảng công" của CBNV.
+   *
+   * Khi có, ô chọn phòng ban biến mất thay vì hiện ra rồi bị bỏ qua: một bộ lọc
+   * hiện trên màn hình mà không tác động tới kết quả là một lời nói dối nhỏ,
+   * và người dùng sẽ tin nó.
+   */
+  employee?: { id: string; fullName: string };
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -56,13 +65,16 @@ export function ExportAttendanceModal({
   // bấm thêm lần nữa chỉ vì file phải chạy nền là thừa một bước.
   useEffect(() => {
     if (job.data?.status === 'COMPLETED' && job.data.downloadUrl) {
-      downloadFromUrl(job.data.downloadUrl, `bang-cong-${from}-${to}.${format.toLowerCase()}`);
+      downloadFromUrl(
+        job.data.downloadUrl,
+        `bang-cong-${employee ? 'ca-nhan-' : ''}${from}-${to}.${format.toLowerCase()}`,
+      );
       toast.success('Đã tải file bảng công');
     }
     if (job.data?.status === 'FAILED') {
       setError(job.data.error ?? 'Không tạo được file. Thử thu hẹp khoảng ngày rồi xuất lại.');
     }
-  }, [job.data, from, to, format, toast]);
+  }, [job.data, from, to, format, employee, toast]);
 
   async function submit() {
     setError(null);
@@ -70,7 +82,8 @@ export function ExportAttendanceModal({
       const result = await startExport.mutateAsync({
         from,
         to,
-        departmentIds: departmentIds.length > 0 ? departmentIds : undefined,
+        departmentIds: employee || departmentIds.length === 0 ? undefined : departmentIds,
+        employeeIds: employee ? [employee.id] : undefined,
         format,
       });
       setJobId(result.jobId);
@@ -89,7 +102,7 @@ export function ExportAttendanceModal({
       open={open}
       onCancel={onClose}
       onOk={() => void submit()}
-      title="Xuất bảng công"
+      title={employee ? `Xuất chi tiết công · ${employee.fullName}` : 'Xuất bảng công'}
       okText={done ? 'Xuất file khác' : 'Bắt đầu xuất'}
       cancelText="Đóng"
       okButtonProps={{
@@ -117,7 +130,7 @@ export function ExportAttendanceModal({
           />
         </div>
 
-        <div>
+        <div hidden={Boolean(employee)}>
           <label
             className="sf-field__label"
             htmlFor="exp-dept"
@@ -140,6 +153,13 @@ export function ExportAttendanceModal({
             }))}
           />
         </div>
+
+        {employee ? (
+          <p className="sf-body-sm sf-text-variant" style={{ margin: 0 }}>
+            File chỉ chứa ngày công của <strong>{employee.fullName}</strong> trong khoảng ngày ở
+            trên.
+          </p>
+        ) : null}
 
         <div>
           <label className="sf-field__label" style={{ display: 'block', marginBottom: 8 }}>
@@ -172,7 +192,7 @@ export function ExportAttendanceModal({
             <Progress
               percent={done ? 100 : (job.data?.progress ?? 30)}
               status={job.data?.status === 'FAILED' ? 'exception' : done ? 'success' : 'active'}
-              strokeColor="var(--sf-teal-700)"
+              strokeColor="var(--sf-blue-700)"
             />
             {done && job.data?.downloadUrl ? (
               <a

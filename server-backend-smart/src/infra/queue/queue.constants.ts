@@ -1,5 +1,5 @@
 /**
- * Hàng đợi BullMQ — docs/02-kien-truc-he-thong.md mục 10.
+ * Hàng đợi BullMQ — docs/11-kien-truc-va-technology-stack.md mục 10.
  *
  * | Queue          | Job                                   | Trigger                  | Retry |
  * |----------------|---------------------------------------|--------------------------|-------|

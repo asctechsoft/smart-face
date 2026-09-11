@@ -8,7 +8,7 @@ export type ErrorDetails = Record<string, unknown>;
  *
  * KHÔNG ném `BadRequestException`/`ForbiddenException`… trực tiếp trong service —
  * mọi lỗi phải đi qua đây để đảm bảo error contract thống nhất
- * (docs/02-kien-truc-he-thong.md mục 9).
+ * (docs/11-kien-truc-va-technology-stack.md mục 9).
  *
  * ```ts
  * throw new AppException('ATT_ALREADY_CHECKED_IN');

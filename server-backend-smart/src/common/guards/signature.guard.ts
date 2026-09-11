@@ -12,7 +12,7 @@ import type { AuthenticatedRequest } from '../types/request-context';
 /**
  * AF-12 — ký số request + timestamp + nonce dùng một lần.
  *
- * Thứ tự kiểm tra (docs/06-anti-fraud.md mục 4.2):
+ * Thứ tự kiểm tra (docs/09-anti-fraud.md mục 4.2):
  *   1. |serverTime - timestamp| ≤ 120s   → ngoài ngưỡng: 400 FRAUD_CLOCK_SKEW
  *   2. nonce chưa từng dùng (SET NX EX)  → đã tồn tại: 409 FRAUD_REPLAY_DETECTED
  *   3. Chữ ký khớp deviceSecret          → sai: 401 AUTH_SIGNATURE_INVALID

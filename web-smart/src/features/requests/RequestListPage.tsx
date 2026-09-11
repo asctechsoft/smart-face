@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Button, DatePicker, Modal, Select, Tabs } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PageHeader } from '@/components/PageHeader';
@@ -7,9 +7,7 @@ import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmployeeCell } from '@/components/EmployeeCell';
-import { StatusBadge, requestStatusTone } from '@/components/StatusBadge';
 import { ReasonDialog } from '@/components/ReasonDialog';
-import { Icon } from '@/components/Icon';
 import { useAuth } from '@/lib/auth/auth-context';
 import { useCan } from '@/lib/rbac/Can';
 import { REQUEST_STATUS_LABEL, DEFAULT_PAGE_SIZE } from '@/config/constants';
@@ -25,11 +23,11 @@ import {
   type LeaveRequest,
   type RequestQuery,
 } from './requests.api';
-import { RequestDetailDrawer } from './RequestDetailDrawer';
 import { CreateRequestOnBehalfModal } from './CreateRequestOnBehalfModal';
 import { Can } from '@/lib/rbac/Can';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Badge as StatusBadge, Icon, requestStatusTone } from '@/components/ui';
 
 const { RangePicker } = DatePicker;
 
@@ -50,7 +48,6 @@ export function RequestListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const tab = searchParams.get('tab') ?? (canApprove ? 'pending' : 'all');
-  const [detailId, setDetailId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [rejectTarget, setRejectTarget] = useState<LeaveRequest | null>(null);
@@ -192,9 +189,14 @@ export function RequestListPage() {
       width: 220,
       render: (_, row) => (
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button size="small" onClick={() => setDetailId(row.id)}>
+          {/*
+            The `<a>`, khong phai `<button onClick={navigate}>` — nguoi duyet
+            thuong mo vai don ra tab rieng de doi chieu, va Ctrl+click chi hoat
+            dong tren the neo.
+          */}
+          <Link to={`/requests/${row.id}`} className="ant-btn ant-btn-sm ant-btn-default">
             Chi tiết
-          </Button>
+          </Link>
           {canApprove && row.status === 'PENDING' ? (
             <>
               <Button
@@ -383,15 +385,6 @@ export function RequestListPage() {
           </button>
         </div>
       ) : null}
-
-      <RequestDetailDrawer
-        requestId={detailId}
-        onClose={() => setDetailId(null)}
-        onReject={(request) => {
-          setDetailId(null);
-          setRejectTarget(request);
-        }}
-      />
 
       {/* FR-WEB-REQ-04: bắt buộc nhập lý do khi từ chối. */}
       <ReasonDialog

@@ -25,11 +25,7 @@ const COMBINING_MARKS = new RegExp('[\\u0300-\\u036f]', 'g');
 
 /** Bỏ dấu tiếng Việt (bao gồm đ/Đ mà NFD không tách được). */
 export function removeVietnameseTones(input: string): string {
-  return input
-    .normalize('NFD')
-    .replace(COMBINING_MARKS, '')
-    .replace(/đ/g, 'd')
-    .replace(/Đ/g, 'D');
+  return input.normalize('NFD').replace(COMBINING_MARKS, '').replace(/đ/g, 'd').replace(/Đ/g, 'D');
 }
 
 /** Chuẩn hoá họ tên: bỏ dấu, chữ thường, gộp khoảng trắng thừa. */

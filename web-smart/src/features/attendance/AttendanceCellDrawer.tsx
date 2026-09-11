@@ -1,7 +1,5 @@
 import { Alert, Button, Drawer, Empty } from 'antd';
 import { DetailField, DetailGrid, DetailSection } from '@/components/DetailField';
-import { StatusBadge, dailyStatusTone, requestStatusTone } from '@/components/StatusBadge';
-import { Icon } from '@/components/Icon';
 import { Can } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { DAILY_STATUS_LABEL, REQUEST_STATUS_LABEL } from '@/config/constants';
@@ -10,6 +8,7 @@ import { formatStandardDays } from '@/lib/utils/format';
 import type { Shift } from '@/features/policy/policy.api';
 import type { AttendanceDaily } from './attendance.api';
 import type { AttendanceSheetEmployee, SheetRequest } from './attendance-sheets.api';
+import { Badge as StatusBadge, Icon, dailyStatusTone, requestStatusTone } from '@/components/ui';
 
 /**
  * Số công ĐI LÀM THỰC TẾ của một ngày.

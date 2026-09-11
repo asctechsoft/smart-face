@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Alert, Button, Input } from 'antd';
+import { Alert } from 'antd';
 import { authApi, type SessionTokens } from '@/lib/auth/auth.api';
 import { toUserMessage } from '@/lib/errors/api-error';
+import { Button, Field, TextInput } from '@/components/ui';
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -67,19 +68,26 @@ export function TwoFactorStep({
     <div style={{ display: 'grid', gap: 16 }}>
       {error ? <Alert type="error" showIcon message={error} role="alert" /> : null}
 
-      <div>
-        <label
-          className="sf-field__label"
-          htmlFor="otp"
-          style={{ display: 'block', marginBottom: 4 }}
-        >
-          Mã xác thực
-        </label>
-        <Input
+      {/*
+        Một ô văn bản tự do, KHÔNG phải sáu ô như màn kích hoạt (`OtpInput`).
+        Ô này còn nhận mã dự phòng — dài hơn sáu ký tự và có cả chữ — và người
+        mất điện thoại chỉ còn đúng lối vào đó.
+      */}
+      <Field
+        label="Mã xác thực"
+        htmlFor="otp"
+        hint="Mất điện thoại? Nhập một mã dự phòng đã lưu — mỗi mã chỉ dùng được một lần."
+      >
+        <TextInput
           id="otp"
           value={code}
           onChange={(event) => setCode(event.target.value)}
-          onPressEnter={() => void submit()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault();
+              void submit();
+            }
+          }}
           placeholder="123456"
           inputMode="numeric"
           autoComplete="one-time-code"
@@ -87,27 +95,24 @@ export function TwoFactorStep({
           style={{ letterSpacing: '4px', fontSize: 20, fontWeight: 600 }}
           aria-invalid={Boolean(error)}
         />
-        <p className="sf-body-sm sf-text-variant" style={{ margin: '4px 0 0' }}>
-          Mất điện thoại? Nhập một mã dự phòng đã lưu — mỗi mã chỉ dùng được một lần.
-        </p>
-      </div>
+      </Field>
 
-      <Button type="primary" size="large" block loading={submitting} onClick={() => void submit()}>
+      <Button size="md" block loading={submitting} onClick={() => void submit()}>
         Xác nhận
       </Button>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Button type="link" onClick={onCancel} style={{ paddingInline: 0 }}>
+      <div className="sf-auth-row">
+        <button type="button" className="sf-link-button" onClick={onCancel}>
           Quay lại đăng nhập
-        </Button>
-        <Button
-          type="link"
+        </button>
+        <button
+          type="button"
+          className="sf-link-button"
           disabled={cooldown > 0}
           onClick={() => void resend()}
-          style={{ paddingInline: 0 }}
         >
           {cooldown > 0 ? `Gửi lại sau ${cooldown}s` : 'Gửi lại mã'}
-        </Button>
+        </button>
       </div>
     </div>
   );

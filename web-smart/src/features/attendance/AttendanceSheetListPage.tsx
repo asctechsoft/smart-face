@@ -6,8 +6,6 @@ import { PageHeader } from '@/components/PageHeader';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { DataTable } from '@/components/DataTable';
 import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
-import { StatusBadge } from '@/components/StatusBadge';
-import { Icon } from '@/components/Icon';
 import { Can, useCan } from '@/lib/rbac/Can';
 import { ConfirmDialog, useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
@@ -19,13 +17,27 @@ import {
   useDeleteAttendanceSheet,
   type AttendanceSheet,
 } from './attendance-sheets.api';
+import { Badge as StatusBadge, Icon } from '@/components/ui';
 
 /**
  * Danh sách bảng chấm công — FR-WEB-ATT-08.
  *
- * Cửa vào của việc rà công, và cố ý giống hệt danh sách bảng phân ca: người
- * dùng nghĩ theo đơn vị "bảng chấm công tháng 8 phòng Kho", không theo từng
- * dòng (nhân viên, ngày) rời rạc. Mở một bảng ra mới tới lưới người × ngày.
+ * ## Đây KHÔNG còn là cửa vào của việc rà công
+ *
+ * Cửa vào là `/attendance` — tổng hợp theo THÁNG, mỗi dòng một người. Màn này
+ * lùi xuống một bậc và chỉ còn một việc: **lập, mở và xoá bảng**.
+ *
+ * Bảng chấm công vẫn là đơn vị tổ chức thật — nó chốt danh sách thành viên của
+ * kỳ, và nó là thứ được chốt. Nhưng nó là khái niệm của người QUẢN TRỊ kỳ công,
+ * không phải của người rà công hằng ngày: kế toán mở màn hình để hỏi "tháng 5
+ * còn ai chưa xong", và câu đó không cần biết tháng 5 được chia thành mấy bảng.
+ *
+ * ## Vì sao ở đây không còn hàng thẻ chỉ số
+ *
+ * Trước đây màn này có hàng thẻ và cảnh báo "cần đối soát" của cả kỳ. Giờ chúng
+ * nằm ở `/attendance`, đúng một cú bấm bên cạnh. Giữ thêm một bản sao là dựng
+ * hai chỗ hiển thị cùng một con số — và ngày chúng lệch nhau (một bên lọc theo
+ * kỳ lương, một bên theo tháng của bảng) thì không ai biết bên nào đúng.
  */
 export function AttendanceSheetListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -33,7 +45,7 @@ export function AttendanceSheetListPage() {
   const showError = useErrorToast();
   // Lập bảng và xoá bảng là hai mức quyền khác nhau: Quản lý tổ chức được bảng
   // của phòng mình, nhưng xoá cả một bảng đã rà là việc của Kế toán/HR.
-  const canManage = useCan('attendance.sheet');
+  const canManage = useCan('attendance.sheet_manage');
 
   const departments = useDepartments();
   const remove = useDeleteAttendanceSheet();
@@ -47,6 +59,7 @@ export function AttendanceSheetListPage() {
   const pageSize = Number(searchParams.get('pageSize') ?? 20);
 
   const sheets = useAttendanceSheets({ month, departmentId, page, pageSize });
+
   const departmentName = new Map((departments.data ?? []).map((d) => [d.id, d.name]));
 
   function patchQuery(patch: Record<string, string | undefined>) {
@@ -168,10 +181,19 @@ export function AttendanceSheetListPage() {
   return (
     <>
       <PageHeader
-        title="Chấm công"
-        description="Mỗi bảng chấm công là công của một tháng cho một nhóm phòng ban. Thành viên và lịch ca lấy từ bảng phân ca tương ứng; đơn từ trong tháng được ghép sẵn vào từng ngày."
+        breadcrumb={
+          <nav aria-label="Đường dẫn" className="sf-body-sm">
+            <Link to="/attendance">Bảng công</Link>
+            <span className="sf-text-variant" style={{ margin: '0 8px' }}>
+              /
+            </span>
+            <span className="sf-text-variant">Danh sách bảng</span>
+          </nav>
+        }
+        title="Danh sách bảng chấm công"
+        description="Mỗi bảng là công của một tháng cho một nhóm phòng ban — nó chốt xem AI thuộc kỳ, và nó là thứ được chốt. Số liệu công của cả tháng nằm ở màn Bảng công."
         actions={
-          <Can do="attendance.sheet">
+          <Can do="attendance.sheet_manage">
             <Button
               type="primary"
               icon={<Icon name="add" size={20} />}

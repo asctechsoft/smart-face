@@ -170,6 +170,7 @@ export class BiometricService {
     const result = await this.ai.enroll(image, {
       requireLiveness: requireLiveness && step.action !== null,
       livenessAction: step.action ?? undefined,
+      correlationId: ctx.correlationId,
     });
 
     if (!result.face_found) {

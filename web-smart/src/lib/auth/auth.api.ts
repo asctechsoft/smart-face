@@ -45,6 +45,26 @@ export interface CompanyInfo {
   logoUrl?: string | null;
 }
 
+/**
+ * Hồ sơ cá nhân — `GET /me/profile`.
+ *
+ * ⚠ Gọi được CHỈ KHI `mustChangePassword` đã tắt. `PasswordChangeGuard` chặn mọi
+ * endpoint nghiệp vụ trong lúc tài khoản còn dùng mật khẩu tạm; chỉ
+ * `password/change`, `logout` và `auth/me` đi qua được. Đó là lý do màn kích
+ * hoạt tài khoản chỉ hỏi được tên và số điện thoại SAU bước đổi mật khẩu.
+ */
+export interface MyProfile {
+  id: string;
+  employeeCode: string;
+  fullName: string;
+  phone: string;
+  email: string | null;
+  position: string | null;
+  roles: SystemRole[];
+  department?: { id: string; name: string } | null;
+  company: { id: string; name: string; code: string; timezone: string };
+}
+
 export const authApi = {
   /**
    * Đổi Firebase ID token lấy phiên Backend.
@@ -86,6 +106,10 @@ export const authApi = {
 
   company() {
     return api.get<CompanyInfo>('/company/me');
+  },
+
+  myProfile() {
+    return api.get<MyProfile>('/me/profile');
   },
 
   setupTwoFactor(phone: string) {

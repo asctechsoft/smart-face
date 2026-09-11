@@ -75,6 +75,30 @@ export interface ImportExecuteResult {
   failedCount: number;
 }
 
+export interface EmployeeSummary {
+  total: number;
+  active: number;
+  pendingActivation: number;
+  /** Tam ngung + nghi viec gop lai — ca hai deu la "khong con cham cong". */
+  inactive: number;
+  byStatus: Record<string, number>;
+}
+
+/**
+ * Dem theo trang thai cho hang the tren dau danh sach.
+ *
+ * KHONG nhan `query`: con so nay la moc doi chieu cua ca cong ty, khong doi
+ * theo bo loc dang chon. Truyen bo loc vao thi "Tong nhan vien" nhay moi lan
+ * doi phong ban va khong con la mot con so de nho.
+ */
+export function useEmployeeSummary() {
+  return useQuery({
+    queryKey: [...qk.employees, 'summary'] as const,
+    queryFn: () => api.get<EmployeeSummary>('/admin/employees/summary'),
+    staleTime: 60_000,
+  });
+}
+
 export function useEmployeeList(query: EmployeeQuery) {
   return useQuery({
     queryKey: qk.employeeList(query),

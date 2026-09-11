@@ -1,14 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
 import { Alert, Button, DatePicker, Input, Pagination, Progress, Tooltip } from 'antd';
-import { qk } from '@/lib/api/query-client';
 import { PageHeader } from '@/components/PageHeader';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { ApiErrorState } from '@/components/ApiErrorState';
 import { ConfirmDialog, EmptyState, useToast } from '@/components/ui';
-import { TableSkeleton } from '@/components/Skeleton';
-import { Icon } from '@/components/Icon';
 import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { Can, useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
@@ -21,17 +17,21 @@ import { AttendanceCellDrawer, readDayCredit } from './AttendanceCellDrawer';
 import { AddSheetMembersModal } from './AddSheetMembersModal';
 import { AttendanceDetailDrawer } from './AttendanceDetailDrawer';
 import { AdjustAttendanceModal } from './AdjustAttendanceModal';
+// Lịch của kỳ nằm ở module riêng: bảng chi tiết theo ngày của từng CBNV dựng
+// đúng dãy ngày này, và hai bản sao sẽ lệch nhau ngay lần đầu ai đó sửa một bên.
+import { cellKey, eachDateString, eachDay } from './attendance-calendar';
+import { useRecalculateSheets } from './use-recalculate-sheet';
 import { ExportAttendanceModal } from './ExportAttendanceModal';
-import { useExportJob, type AttendanceDaily } from './attendance.api';
+import type { AttendanceDaily } from './attendance.api';
 import {
   useAttendanceSheet,
   useAttendanceSheetBoard,
   useCloseAttendanceSheet,
-  useRecalculateAttendanceSheet,
   useRemoveSheetMembers,
   type AttendanceSheetEmployee,
   type SheetRequest,
 } from './attendance-sheets.api';
+import { Icon, TableSkeleton } from '@/components/ui';
 
 /**
  * Chi tiết một bảng chấm công — FR-WEB-ATT-09.
@@ -58,12 +58,11 @@ export function AttendanceSheetPage() {
   const { timezone } = useAuth();
   const toast = useToast();
   const showError = useErrorToast();
-  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
 
   // Tổ chức bảng (thêm/bớt người) là quyền của Quản lý; chốt bảng và hiệu chỉnh
   // công thì không — hai việc sau chạm vào số liệu bàn giao cho tính lương.
-  const canManage = useCan('attendance.sheet');
+  const canManage = useCan('attendance.sheet_manage');
 
   const [addMembersOpen, setAddMembersOpen] = useState(false);
   const [removeOpen, setRemoveOpen] = useState(false);
@@ -86,14 +85,16 @@ export function AttendanceSheetPage() {
   const shifts = useShifts();
   const removeMembers = useRemoveSheetMembers();
   const closeSheet = useCloseAttendanceSheet();
-  const recalculate = useRecalculateAttendanceSheet();
 
-  /** Job tính lại đang chạy. `null` = không có lượt cập nhật nào đang chờ. */
-  const [recalcJobId, setRecalcJobId] = useState<string | null>(null);
-  const recalcJob = useExportJob(recalcJobId);
-  const recalcRunning =
-    recalculate.isPending ||
-    (recalcJobId !== null && recalcJob.data?.status !== 'COMPLETED' && recalcJob.data?.status !== 'FAILED');
+  /*
+   * Tính lại công dùng chung một hook với màn Tổng hợp công. Luật "chỉ làm mới
+   * khi job báo xong, không làm mới lúc nhận job" nằm trong `useRecalculateSheet`
+   * — chép nó ra hai chỗ là để một ngày nào đó chúng lệch nhau, và khi đó một
+   * trong hai màn hình đứng im sau khi bấm nút.
+   */
+  // Mảng một phần tử: lưới thuộc về đúng một bảng. Cùng hook với màn tháng —
+  // luật "chỉ làm mới khi job báo xong" chỉ có một bản khai.
+  const recalc = useRecalculateSheets([sheetId]);
 
   /** Kỳ của bảng — mọi bộ lọc ngày phải nằm trong đây, Backend cũng từ chối nếu ra ngoài. */
   const period = useMemo(() => {
@@ -222,45 +223,6 @@ export function AttendanceSheetPage() {
     }
     return count;
   }, [days, employees, shiftIndex, dailyIndex, requestIndex]);
-
-  /**
-   * Job tính lại kết thúc thì mới làm mới lưới.
-   *
-   * Không làm mới ngay lúc bấm nút: khi request trả về, job mới chỉ vừa được
-   * nhận và số liệu chưa đổi — tải lại lúc đó chỉ lấy về đúng những con số cũ
-   * rồi đứng im, và người dùng kết luận nút không hoạt động.
-   *
-   * Quét cả nhánh `attendance` chứ không chỉ `refetch()` lưới: tính lại chạm vào
-   * `AttendanceDaily`, cùng nguồn với drawer chi tiết ô và danh sách lượt chấm
-   * công đang mở bên cạnh.
-   */
-  useEffect(() => {
-    const status = recalcJob.data?.status;
-    if (!recalcJobId || (status !== 'COMPLETED' && status !== 'FAILED')) return;
-
-    if (status === 'COMPLETED') {
-      toast.success(
-        'Đã cập nhật bảng công',
-        'Số liệu trên lưới là kết quả tính mới nhất. Ngày thuộc kỳ lương đã chốt được giữ nguyên.',
-      );
-      void queryClient.invalidateQueries({ queryKey: qk.attendance });
-    } else {
-      toast.error(
-        'Cập nhật bảng công thất bại',
-        recalcJob.data?.error ?? recalcJob.data?.errorMessage ?? undefined,
-      );
-    }
-    setRecalcJobId(null);
-  }, [recalcJob.data, recalcJobId, toast, queryClient]);
-
-  async function startRecalculate() {
-    try {
-      const started = await recalculate.mutateAsync(sheetId);
-      setRecalcJobId(started.jobId);
-    } catch (caught) {
-      showError(caught);
-    }
-  }
 
   function patchQuery(patch: Record<string, string | undefined>) {
     const next = new URLSearchParams(searchParams);
@@ -396,8 +358,18 @@ export function AttendanceSheetPage() {
         }
         actions={
           <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-            <Link to="/attendance">
+            <Link to="/attendance/sheets">
               <Button icon={<Icon name="arrow_back" size={20} />}>Danh sách bảng</Button>
+            </Link>
+            {/*
+              Về màn "Bảng công" của ĐÚNG THÁNG này — nơi mỗi dòng là một người
+              và mọi bảng của tháng đã gộp lại. Đặt ngay cạnh "Danh sách bảng"
+              vì nó cũng là một bước điều hướng, không phải thao tác lên dữ liệu.
+            */}
+            <Link
+              to={`/attendance?month=${sheet.data ? dayjs(sheet.data.periodMonth).format('YYYY-MM-01') : ''}`}
+            >
+              <Button icon={<Icon name="summarize" size={20} />}>Tổng hợp công</Button>
             </Link>
             {/*
               Đứng ngay sau "Danh sách bảng" chứ không lẫn vào cụm sửa dữ liệu:
@@ -408,13 +380,13 @@ export function AttendanceSheetPage() {
               tính lại không sửa gì thủ công, nó chỉ chạy lại đúng luật đã cấu
               hình trên dữ liệu đã có.
             */}
-            <Can do="attendance.sheet">
+            <Can do="attendance.sheet_manage">
               <Button
                 icon={<Icon name="refresh" size={20} />}
-                loading={recalcRunning}
-                onClick={() => void startRecalculate()}
+                loading={recalc.running}
+                onClick={recalc.start}
               >
-                {recalcRunning ? 'Đang cập nhật…' : 'Cập nhật bảng công'}
+                {recalc.running ? 'Đang cập nhật…' : 'Cập nhật bảng công'}
               </Button>
             </Can>
             <Can do="attendance.export">
@@ -422,7 +394,7 @@ export function AttendanceSheetPage() {
                 Xuất Excel
               </Button>
             </Can>
-            <Can do="attendance.sheet">
+            <Can do="attendance.sheet_manage">
               <Button
                 icon={<Icon name="person_add" size={20} />}
                 disabled={isClosed}
@@ -431,7 +403,7 @@ export function AttendanceSheetPage() {
                 Thêm CBNV
               </Button>
             </Can>
-            <Can do="attendance.sheet">
+            <Can do="attendance.sheet_manage">
               <Button
                 danger
                 disabled={isClosed || selectedIds.length === 0}
@@ -461,7 +433,7 @@ export function AttendanceSheetPage() {
         người dùng bấm lại lần hai, rồi lần ba — mỗi lần là một job thật chạy
         song song trên cùng dữ liệu.
       */}
-      {recalcRunning ? (
+      {recalc.running ? (
         <Alert
           type="info"
           showIcon
@@ -473,7 +445,7 @@ export function AttendanceSheetPage() {
                 Lưới sẽ tự làm mới khi xong. Bạn vẫn xem được bảng trong lúc chờ — số đang hiện là
                 kết quả của lần tính trước.
               </p>
-              <Progress percent={recalcJob.data?.progress ?? 0} size="small" />
+              <Progress percent={recalc.progress} size="small" />
             </div>
           }
         />
@@ -876,7 +848,7 @@ const TONE_STYLE: Record<CellTone, { background: string; label: string }> = {
   missing: { background: 'var(--sf-error-50)', label: 'Không chấm công' },
   // Nghỉ CÓ lương đã tô "Đủ công" — nhãn này chỉ còn cho nghỉ không tính công,
   // và phải nói ra điều đó, nếu không hai loại nghỉ trông giống hệt nhau.
-  leave: { background: 'var(--sf-teal-50)', label: 'Nghỉ không tính công' },
+  leave: { background: 'var(--sf-blue-50)', label: 'Nghỉ không tính công' },
   holiday: { background: 'var(--sf-warning-100)', label: 'Ngày lễ' },
   weekend: { background: 'var(--sf-neutral-100)', label: 'Cuối tuần' },
   idle: { background: 'transparent', label: 'Không có ca' },
@@ -1055,7 +1027,7 @@ function AttendanceCell({
             fontSize: 11,
             lineHeight: '18px',
             fontWeight: 600,
-            background: 'var(--sf-teal-700)',
+            background: 'var(--sf-blue-700)',
             color: '#FFFFFF',
           }}
         >
@@ -1101,7 +1073,7 @@ function AttendanceCell({
             fontSize: 10,
             lineHeight: '12px',
             fontWeight: 600,
-            color: 'var(--sf-teal-800)',
+            color: 'var(--sf-blue-800)',
           }}
         >
           ĐƠN
@@ -1273,63 +1245,11 @@ function BoardSummary({
 //  Tiện ích ngày
 // =============================================================================
 
-function cellKey(employeeId: string, date: string): string {
-  return `${employeeId}|${date}`;
-}
-
 /** Giữ mốc ngày trong kỳ của bảng — URL cũ hoặc kỳ khác đều không kéo bảng ra ngoài tháng. */
 function clampToPeriod(value: string, period: { from: string; to: string }): string {
   if (value < period.from) return period.from;
   if (value > period.to) return period.to;
   return value;
-}
-
-const WEEKDAY_LABELS = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-
-interface BoardDay {
-  date: string;
-  dayOfMonth: number;
-  weekdayLabel: string;
-  isWeekend: boolean;
-}
-
-/**
- * Dãy ngày của bảng.
- *
- * Dựng bằng `Date.UTC` chứ không phải `new Date(chuỗi)` rồi cộng ngày theo giờ
- * địa phương: máy người dùng ở múi giờ âm sẽ cho ra ngày lùi một đơn vị, và cả
- * bảng lệch một cột so với dữ liệu Backend trả về.
- */
-function eachDay(from: string, to: string): BoardDay[] {
-  const start = Date.parse(`${from}T00:00:00Z`);
-  const end = Date.parse(`${to}T00:00:00Z`);
-  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return [];
-
-  const days: BoardDay[] = [];
-  for (let time = start; time <= end; time += 86_400_000) {
-    const date = new Date(time);
-    const weekday = date.getUTCDay();
-    days.push({
-      date: date.toISOString().slice(0, 10),
-      dayOfMonth: date.getUTCDate(),
-      weekdayLabel: WEEKDAY_LABELS[weekday] as string,
-      isWeekend: weekday === 0 || weekday === 6,
-    });
-  }
-  return days;
-}
-
-/** Các ngày `YYYY-MM-DD` mà một đơn phủ lên, hai đầu bao gồm. */
-function eachDateString(from: string, to: string): string[] {
-  const start = Date.parse(`${from}T00:00:00Z`);
-  const end = Date.parse(`${to}T00:00:00Z`);
-  if (Number.isNaN(start) || Number.isNaN(end) || end < start) return [];
-
-  const dates: string[] = [];
-  for (let time = start; time <= end; time += 86_400_000) {
-    dates.push(new Date(time).toISOString().slice(0, 10));
-  }
-  return dates;
 }
 
 const headerCellStyle: React.CSSProperties = {

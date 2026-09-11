@@ -1,8 +1,14 @@
 import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiProperty, ApiPropertyOptional, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiProperty,
+  ApiPropertyOptional,
+  ApiTags,
+} from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
 import { IsBoolean, IsDateString, IsIn, IsOptional, IsString, Length } from 'class-validator';
-import { Audit, CurrentTenant, Roles } from 'src/common/decorators';
+import { Audit, CurrentTenant, RequirePermission, Roles } from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
 import { RateLimit } from 'src/common/guards/rate-limit.guard';
 import type { TenantContext } from 'src/common/types/request-context';
@@ -98,7 +104,7 @@ class ExportPayrollDto {
 }
 
 /**
- * docs/08-hop-dong-api.md mục 6.3 — Tính công / Tính lương.
+ * docs/15-hop-dong-api.md mục 6.3 — Tính công / Tính lương.
  *
  * Chỉ HR_PAYROLL và COMPANY_ADMIN, không có MANAGER ở bất kỳ endpoint nào —
  * kể cả endpoint chỉ đọc. Bảng công tổng hợp cho thấy giờ làm, OT, ngày nghỉ của
@@ -120,6 +126,7 @@ export class PayrollController {
 
   @Get('periods')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('timesheet.view')
   @ApiOperation({ summary: 'Danh sách kỳ lương' })
   listPeriods(@CurrentTenant() ctx: TenantContext) {
     return this.payroll.listPeriods(ctx.companyId);
@@ -127,6 +134,7 @@ export class PayrollController {
 
   @Post('periods')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('timesheet.calculate')
   @Audit({ action: 'PAYROLL_PERIOD_CREATE', targetType: 'PAYROLL_PERIOD' })
   @ApiOperation({ summary: 'Tạo kỳ lương' })
   @ApiErrors('PAY_PERIOD_OVERLAP')
@@ -136,6 +144,7 @@ export class PayrollController {
 
   @Get('periods/:id/summary')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('timesheet.view')
   @ApiOperation({
     summary: 'Bảng công tổng hợp của kỳ',
     description:
@@ -148,6 +157,7 @@ export class PayrollController {
 
   @Post('periods/:id/recalculate')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('timesheet.calculate')
   @HttpCode(HttpStatus.ACCEPTED)
   @Audit({ action: 'PAYROLL_RECALCULATE', targetType: 'PAYROLL_PERIOD' })
   @ApiOperation({
@@ -162,6 +172,7 @@ export class PayrollController {
 
   @Get('periods/:id/pre-close-report')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('period.submit_lock')
   @ApiOperation({
     summary: 'Báo cáo tiền chốt',
     description:
@@ -172,35 +183,77 @@ export class PayrollController {
     return this.payroll.preCloseReport(ctx.companyId, id);
   }
 
-  @Post('periods/:id/close')
+  @Post('periods/:id/submit-lock')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('period.submit_lock')
   @HttpCode(HttpStatus.OK)
-  @Audit({ action: 'PAYROLL_CLOSE', targetType: 'PAYROLL_PERIOD', requireReason: true })
+  @Audit({ action: 'PAYROLL_SUBMIT_LOCK', targetType: 'PAYROLL_PERIOD', requireReason: true })
   @ApiOperation({
-    summary: 'Chốt kỳ lương',
+    summary: 'Gửi đề nghị chốt kỳ (FR-WEB-PERIOD-08)',
     description:
-      'Snapshot bảng công vào PayrollSummary rồi KHOÁ kỳ (BR-07): không chấm công, không sửa công, không duyệt đơn vào kỳ. Còn blocker mà vẫn muốn chốt thì phải truyền `force: true` — lý do được ghi vào audit.',
+      'Kế toán GỬI, Giám đốc DUYỆT — hai việc của hai người (docs/08 §1.1). Bước này tính bảng công, ghi thành một `PayrollPeriodVersion` mới rồi chuyển kỳ sang `PENDING_APPROVAL`. Từ lúc này dữ liệu trong kỳ bị khoá sửa để Giám đốc duyệt đúng bộ số đã xem. Còn blocker mà vẫn muốn gửi thì truyền `force: true` — lý do vào audit.',
   })
-  @ApiErrors('PAY_PERIOD_NOT_FOUND', 'PAY_PERIOD_CLOSED', 'PAY_PERIOD_HAS_BLOCKERS', 'PAY_REASON_REQUIRED')
-  close(@CurrentTenant() ctx: TenantContext, @Param('id') id: string, @Body() dto: ClosePeriodDto) {
-    return this.payroll.closePeriod(ctx, id, dto.reason, dto.force ?? false);
+  @ApiErrors(
+    'PAY_PERIOD_NOT_FOUND',
+    'PERIOD_INVALID_TRANSITION',
+    'PAY_PERIOD_HAS_BLOCKERS',
+    'PAY_REASON_REQUIRED',
+  )
+  submitLock(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: ClosePeriodDto,
+  ) {
+    return this.payroll.submitLock(ctx, id, dto.reason, dto.force ?? false);
   }
 
-  @Post('periods/:id/reopen')
+  @Post('periods/:id/request-reopen')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('period.request_reopen')
   @HttpCode(HttpStatus.OK)
-  @Audit({ action: 'PAYROLL_REOPEN', targetType: 'PAYROLL_PERIOD', requireReason: true })
+  @Audit({ action: 'PAYROLL_REOPEN_REQUESTED', targetType: 'PAYROLL_PERIOD', requireReason: true })
   @ApiOperation({
-    summary: 'Mở lại kỳ đã chốt',
-    description: 'Thao tác ĐẶC QUYỀN. Bắt buộc lý do và ghi audit log (BR-07).',
+    summary: 'Đề nghị mở lại kỳ đã chốt',
+    description:
+      'KHÔNG mở kỳ. Chỉ báo cho Giám đốc; việc mở thật nằm ở `POST /v1/exec/periods/:id/approve-reopen` và cần step-up (BR-07).',
   })
-  @ApiErrors('PAY_PERIOD_NOT_FOUND', 'PAY_REASON_REQUIRED')
-  reopen(@CurrentTenant() ctx: TenantContext, @Param('id') id: string, @Body() dto: ReopenPeriodDto) {
-    return this.payroll.reopenPeriod(ctx, id, dto.reason);
+  @ApiErrors('PAY_PERIOD_NOT_FOUND', 'PERIOD_INVALID_TRANSITION', 'PAY_REASON_REQUIRED')
+  requestReopen(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: ReopenPeriodDto,
+  ) {
+    return this.payroll.requestReopen(ctx, id, dto.reason);
+  }
+
+  @Get('periods/:id/versions')
+  @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('timesheet.view')
+  @ApiOperation({
+    summary: 'Lịch sử các lần tính của kỳ (FR-WEB-PERIOD-07)',
+    description:
+      'Mỗi lần gửi đề nghị chốt sinh một version, kèm ảnh chụp chính sách đã dùng. Đây là thứ trả lời được câu "vì sao kỳ mở lại ra số khác lần chốt đầu".',
+  })
+  @ApiErrors('PAY_PERIOD_NOT_FOUND')
+  versions(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
+    return this.payroll.listPeriodVersions(ctx.companyId, id);
+  }
+
+  @Get('periods/:id/transitions')
+  @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('timesheet.view')
+  @ApiOperation({
+    summary: 'Nhật ký chuyển trạng thái của kỳ (FR-WEB-PERIOD-06)',
+    description: 'Giữ đủ chuỗi, kể cả các lần bị Giám đốc từ chối và các lần mở lại trước đó.',
+  })
+  @ApiErrors('PAY_PERIOD_NOT_FOUND')
+  transitions(@CurrentTenant() ctx: TenantContext, @Param('id') id: string) {
+    return this.payroll.listPeriodTransitions(ctx.companyId, id);
   }
 
   @Post('recalculate')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('timesheet.calculate')
   @HttpCode(HttpStatus.ACCEPTED)
   @Audit({ action: 'PAYROLL_RECALCULATE_RANGE' })
   @ApiOperation({
@@ -208,16 +261,12 @@ export class PayrollController {
     description: 'Ngày thuộc kỳ đã chốt sẽ bị BỎ QUA kèm cảnh báo, không ghi đè (BR-07).',
   })
   recalculateRange(@CurrentTenant() ctx: TenantContext, @Body() dto: RecalculateRangeDto) {
-    return this.payroll.requestRecalculateRange(
-      ctx.companyId,
-      dto.from,
-      dto.to,
-      dto.employeeIds,
-    );
+    return this.payroll.requestRecalculateRange(ctx.companyId, dto.from, dto.to, dto.employeeIds);
   }
 
   @Post('export')
   @Roles(SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @RequirePermission('report.export')
   @HttpCode(HttpStatus.ACCEPTED)
   @RateLimit({ bucket: 'export', limit: 5, windowSeconds: 3600, by: 'account' })
   @ApiOperation({ summary: 'Xuất bảng công/lương ra Excel (bất đồng bộ)' })

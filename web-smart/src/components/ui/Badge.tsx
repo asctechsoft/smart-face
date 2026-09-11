@@ -13,7 +13,13 @@ import type { ReactNode } from 'react';
  * Đây cũng là lý do component không nhận `color` tuỳ ý: mở cửa cho màu tự do là
  * mở đường cho đúng lỗi vừa sửa quay lại.
  */
-export type BadgeTone = 'success' | 'warning' | 'error' | 'teal' | 'neutral';
+/**
+ * `violet` là tông PHÂN LOẠI, không phải trạng thái: nó không nói tốt hay hỏng,
+ * nó chỉ nói "khác nhóm bên cạnh". Có mặt vì chip ký hiệu ca cần bốn tông phân
+ * biệt bốn khung giờ, và ba tông trạng thái không đủ — dùng `error` cho ca đêm
+ * thì cả bảng trông như đang báo lỗi.
+ */
+export type BadgeTone = 'success' | 'warning' | 'error' | 'teal' | 'violet' | 'neutral';
 
 const TONE: Record<BadgeTone, { bg: string; fg: string; softBg: string; softFg: string }> = {
   success: {
@@ -35,10 +41,16 @@ const TONE: Record<BadgeTone, { bg: string; fg: string; softBg: string; softFg: 
     softFg: 'var(--sf-error-700)',
   },
   teal: {
-    bg: 'var(--sf-teal-100)',
-    fg: 'var(--sf-teal-800)',
-    softBg: 'var(--sf-teal-50)',
-    softFg: 'var(--sf-teal-700)',
+    bg: 'var(--sf-blue-100)',
+    fg: 'var(--sf-blue-800)',
+    softBg: 'var(--sf-blue-50)',
+    softFg: 'var(--sf-blue-700)',
+  },
+  violet: {
+    bg: 'var(--sf-violet-100)',
+    fg: 'var(--sf-violet-800)',
+    softBg: 'var(--sf-violet-50)',
+    softFg: 'var(--sf-violet-800)',
   },
   neutral: {
     bg: 'var(--sf-neutral-200)',

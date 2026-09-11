@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-/** docs/08-hop-dong-api.md mục 1.3 */
+/** docs/15-hop-dong-api.md mục 1.3 */
 export class PaginationMetaDto {
   @ApiProperty({ example: 1 })
   page!: number;

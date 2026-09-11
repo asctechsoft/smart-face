@@ -26,6 +26,7 @@ import {
   UpsertShiftDto,
 } from './dto/policy.dto';
 import { PolicyRepository, ShiftCatalogRow, ShiftScheduleRow } from './policy.repository';
+import { PlanService } from '../tenant/plan.service';
 import { PolicyService } from './policy.service';
 import { AssignedShiftIndex, addDays } from './shift-overlap.util';
 
@@ -45,6 +46,7 @@ export class PolicyAdminService {
     private readonly policies: PolicyRepository,
     private readonly transactions: TransactionManager,
     private readonly policy: PolicyService,
+    private readonly plans: PlanService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -57,6 +59,12 @@ export class PolicyAdminService {
   }
 
   async createShift(companyId: string, dto: UpsertShiftDto) {
+    // FR-ADM-PKG-03 — giới hạn gói cưỡng chế ở Backend, không chỉ ẩn nút.
+    await this.plans.assertLimit(
+      companyId,
+      'maxShifts',
+      await this.policies.countActiveShifts(companyId),
+    );
     this.validateShiftTimes(dto);
     this.validateShiftCatalog(dto);
     await this.assertCodeAvailable(companyId, dto.code, null);
@@ -104,7 +112,12 @@ export class PolicyAdminService {
    * hiện tại bằng `effectiveTo` rồi tạo bản mới. Nhờ vậy tính lại công của ngày
    * trước đó vẫn ra đúng giờ ca cũ.
    */
-  async updateShift(companyId: string, shiftId: string, dto: UpsertShiftDto) {
+  async updateShift(
+    companyId: string,
+    shiftId: string,
+    dto: UpsertShiftDto,
+    expectedVersion?: number,
+  ) {
     const existing = await this.policies.findShift(companyId, shiftId);
     if (!existing) {
       throw new AppException('POL_SHIFT_NOT_FOUND');
@@ -157,6 +170,7 @@ export class PolicyAdminService {
           effectiveTo: dto.effectiveTo ? new Date(dto.effectiveTo) : undefined,
           ...resolveCatalogFields(dto),
         },
+        expectedVersion,
         tx,
       );
       if (!updated) {
@@ -875,6 +889,11 @@ export class PolicyAdminService {
   }
 
   async createDepartment(companyId: string, dto: UpsertDepartmentDto) {
+    await this.plans.assertLimit(
+      companyId,
+      'maxDepartments',
+      await this.policies.countDepartments(companyId),
+    );
     return this.policies.createDepartment(companyId, {
       name: dto.name,
       branchId: dto.branchId,

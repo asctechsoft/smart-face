@@ -12,7 +12,14 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
-import { Audit, CurrentTenant, DepartmentScoped, Roles } from 'src/common/decorators';
+import {
+  Audit,
+  CurrentTenant,
+  DepartmentScoped,
+  IfMatch,
+  RequireVersion,
+  Roles,
+} from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
 import { AppException } from 'src/common/errors';
 import { resolveDepartmentScope } from 'src/common/guards/scope.guard';
@@ -30,7 +37,7 @@ import {
 import { EmployeeService } from './employee.service';
 
 /**
- * docs/08-hop-dong-api.md mục 6.2 — Web Quản lý · Nhân sự.
+ * docs/15-hop-dong-api.md mục 6.2 — Web Quản lý · Nhân sự.
  *
  * Phân quyền theo một quy tắc nhất quán trong cả class:
  *
@@ -52,6 +59,18 @@ export class EmployeeAdminController {
   @ApiOperation({ summary: 'Danh sách nhân viên' })
   list(@CurrentTenant() ctx: TenantContext, @Query() query: EmployeeQueryDto) {
     return this.employees.list(ctx.companyId, query, resolveDepartmentScope(ctx));
+  }
+
+  /*
+   * PHAI khai truoc `@Get(':id')` — NestJS khop theo thu tu khai bao, va neu
+   * duong dong dung truoc thi "summary" bi doc thanh mot id nhan vien.
+   */
+  @Get('summary')
+  @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
+  @ApiOperation({ summary: 'Dem nhan vien theo trang thai (cho hang the tren danh sach)' })
+  employeeSummary(@CurrentTenant() ctx: TenantContext) {
+    return this.employees.summary(ctx.companyId, resolveDepartmentScope(ctx));
   }
 
   // POST mà `@HttpCode(200)` vì endpoint này KHÔNG tạo gì cả — chỉ tính thử rồi
@@ -103,13 +122,15 @@ export class EmployeeAdminController {
     summary: 'Sửa hồ sơ nhân viên',
     description: 'BR-04: mã nhân viên bị khoá sau lần chấm công đầu tiên, không sửa được nữa.',
   })
-  @ApiErrors('EMP_NOT_FOUND', 'EMP_CODE_LOCKED', 'EMP_CODE_TAKEN')
+  @ApiErrors('EMP_NOT_FOUND', 'EMP_CODE_LOCKED', 'EMP_CODE_TAKEN', 'VERSION_CONFLICT')
+  @RequireVersion()
   update(
     @CurrentTenant() ctx: TenantContext,
     @Param('id') id: string,
     @Body() dto: UpdateEmployeeDto,
+    @IfMatch() expectedVersion?: number,
   ) {
-    return this.employees.update(ctx, id, dto);
+    return this.employees.update(ctx, id, dto, expectedVersion);
   }
 
   /**

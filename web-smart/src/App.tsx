@@ -4,6 +4,7 @@ import { App as AntApp, ConfigProvider } from 'antd';
 import viVN from 'antd/locale/vi_VN';
 import { queryClient } from '@/lib/api/query-client';
 import { AuthProvider } from '@/lib/auth/auth-context';
+import { AccessProvider } from '@/lib/rbac/access-context';
 import { smartFaceTheme } from '@/theme/antd-theme';
 import { AppRouter } from '@/routes/router';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
@@ -29,9 +30,15 @@ export default function App() {
           <QueryClientProvider client={queryClient}>
             <BrowserRouter>
               <AuthProvider>
-                <ErrorBoundary>
-                  <AppRouter />
-                </ErrorBoundary>
+                {/*
+                  `AccessProvider` nằm TRONG `AuthProvider`: nó chỉ hỏi quyền khi
+                  đã có phiên, và phải hỏi lại khi người dùng khác đăng nhập.
+                */}
+                <AccessProvider>
+                  <ErrorBoundary>
+                    <AppRouter />
+                  </ErrorBoundary>
+                </AccessProvider>
               </AuthProvider>
             </BrowserRouter>
           </QueryClientProvider>

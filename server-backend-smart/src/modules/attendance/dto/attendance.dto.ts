@@ -252,6 +252,101 @@ export class AttendanceHistoryQueryDto extends PaginationQueryDto {
   status?: DailyStatus;
 }
 
+/**
+ * Một lượt chấm công đã ghi lại trên máy lúc mất mạng (`FR-APP-STAT-06`).
+ *
+ * Không có `nonce`: nonce do server cấp và có hạn, nên lúc mất mạng App không
+ * xin được. Đó chính là lý do bản ghi offline KHÔNG chống được replay như bản
+ * ghi trực tuyến, và cũng là lý do nó luôn phải qua người duyệt.
+ */
+export class OfflineRecordDto {
+  @ApiProperty({ description: 'Id do App tự sinh — dùng để đối chiếu kết quả từng bản ghi' })
+  @IsString()
+  @Length(1, 64)
+  localId!: string;
+
+  @ApiProperty({ enum: [AttendanceType.CHECK_IN, AttendanceType.CHECK_OUT] })
+  @IsEnum(AttendanceType)
+  type!: AttendanceType;
+
+  /**
+   * Thời điểm chấm theo đồng hồ MÁY NGƯỜI DÙNG.
+   *
+   * Đây là điểm mâu thuẫn với `BR-01` mà không có cách nào khoả lấp: lúc mất
+   * mạng không có giờ server nào để lấy. Server nhận con số này, ghi lại nguyên
+   * văn, và bù bằng việc bắt buộc có người duyệt.
+   */
+  @ApiProperty({ description: 'Giờ máy lúc chấm — server ghi nguyên văn và bắt buộc duyệt' })
+  @IsDateString()
+  capturedAt!: string;
+
+  @ApiProperty({ enum: [AuthMethod.FACE, AuthMethod.FINGERPRINT] })
+  @IsEnum(AuthMethod)
+  authMethod!: AuthMethod;
+
+  @ApiProperty({ type: LocationDto })
+  @IsObject()
+  @ValidateNested()
+  @Type(() => LocationDto)
+  location!: LocationDto;
+
+  @ApiProperty({ type: DeviceContextDto })
+  @IsObject()
+  @ValidateNested()
+  @Type(() => DeviceContextDto)
+  deviceContext!: DeviceContextDto;
+
+  @ApiPropertyOptional({ description: 'Ảnh khuôn mặt lúc chấm, base64 (không có tiền tố data:)' })
+  @IsOptional()
+  @IsString()
+  imageBase64?: string;
+}
+
+export class SyncOfflineDto {
+  /**
+   * Giới hạn 50 bản ghi mỗi lượt.
+   *
+   * Mỗi bản ghi là một lượt gọi AI Server để đối chiếu khuôn mặt, nên một gói
+   * quá lớn vừa treo request vừa chiếm sạch hàng đợi suy luận của cả công ty.
+   * App đồng bộ nhiều lượt thay vì một lượt khổng lồ.
+   */
+  @ApiProperty({ type: [OfflineRecordDto], maxItems: 50 })
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => OfflineRecordDto)
+  records!: OfflineRecordDto[];
+}
+
+export class PendingReviewQueryDto extends PaginationQueryDto {
+  @ApiPropertyOptional({ example: '2026-08-01' })
+  @IsOptional()
+  @IsString()
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-08-31' })
+  @IsOptional()
+  @IsString()
+  to?: string;
+}
+
+export class ReviewPendingLogDto {
+  @ApiProperty({ enum: ['ACCEPT', 'REJECT'] })
+  @IsIn(['ACCEPT', 'REJECT'])
+  decision!: 'ACCEPT' | 'REJECT';
+
+  /**
+   * Bắt buộc ở CẢ HAI chiều, không chỉ khi bác.
+   *
+   * Chiều chấp nhận mới là chiều cần giải thích nhất: nó biến một lượt hệ thống
+   * đã nghi ngờ thành công được trả lương. "Đã xác minh với quản lý trực tiếp,
+   * nhân viên đi công trường" là một câu trả lời; bấm nút không lý do thì không.
+   */
+  @ApiProperty({ minLength: 10 })
+  @IsString()
+  @Length(10, 500)
+  reason!: string;
+}
+
 export class AdminAttendanceQueryDto extends PaginationQueryDto {
   @ApiPropertyOptional({ example: '2026-08-01' })
   @IsOptional()
@@ -372,6 +467,22 @@ export class ExportAttendanceDto extends DateRangeQueryDto {
   @IsArray()
   @IsString({ each: true })
   departmentIds?: string[];
+
+  /**
+   * Bỏ trống = mọi người trong phạm vi phòng ban ở trên.
+   *
+   * Có mặt vì màn "Chi tiết bảng công" của MỘT CBNV cũng có nút xuất: xuất cả
+   * phòng ban khi người dùng đang xem đúng một người là trả về một file mà họ
+   * phải tự lọc lại — và với công ty 500 người thì đó là một file không mở nổi.
+   *
+   * KHÔNG nới quyền: danh sách này bị GIAO với phạm vi phòng ban đã chốt ở
+   * `requestExport`, nên gửi id ngoài phạm vi cũng không lấy được gì.
+   */
+  @ApiPropertyOptional({ type: [String], description: 'Bỏ trống = mọi CBNV trong phạm vi' })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  employeeIds?: string[];
 
   @ApiPropertyOptional({ enum: ['XLSX', 'CSV'], default: 'XLSX' })
   @IsOptional()

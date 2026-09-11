@@ -26,6 +26,7 @@ import type {
   AttendanceSheetBoardQueryDto,
   AttendanceSheetMemberDto,
   AttendanceSheetQueryDto,
+  AttendanceMonthSummaryQueryDto,
   CreateAttendanceSheetDto,
 } from './dto/attendance-sheet.dto';
 
@@ -427,6 +428,7 @@ export class AttendanceSheetService {
         ? await this.policies.expandDepartmentIds(companyId, [query.departmentId])
         : undefined,
       departmentScope,
+      employeeId: query.employeeId,
       q: query.q,
       skip: (query.page - 1) * query.pageSize,
       take: query.pageSize,
@@ -471,6 +473,192 @@ export class AttendanceSheetService {
         date: formatWorkDate(holiday.date),
       })),
       meta: buildMeta(query.page, query.pageSize, total),
+    };
+  }
+
+  /**
+   * Tổng hợp công của một THÁNG — mỗi dòng một NGƯỜI, không còn trục ngày.
+   *
+   * ## Vì sao trục là tháng chứ không phải từng bảng
+   *
+   * Một tháng được chia thành nhiều bảng chấm công theo nhóm phòng ban. Đó là
+   * đơn vị TỔ CHỨC (ai thuộc kỳ này, ai chốt bảng nào), không phải đơn vị người
+   * dùng nghĩ tới: kế toán mở màn hình để hỏi "tháng 5 còn ai chưa xong", không
+   * phải "bảng tháng 5 của Kho vận còn ai chưa xong". Bắt họ chọn bảng trước là
+   * bắt họ trả lời một câu hỏi mà chính họ không đặt ra.
+   *
+   * Các bảng không biến mất — chúng đi kèm trong `sheets`, và trạng thái khoá
+   * của từng dòng lấy theo bảng giữ người đó, vì một tháng chốt DẦN từng bảng.
+   *
+   * ## Vì sao không phải là lưới đã gộp ở client
+   *
+   * Lưới người × ngày trả dữ liệu thô của TRANG đang mở (25 người). Cộng ở
+   * client thì từng dòng đúng, nhưng hàng thẻ chỉ số phía trên — "256 nhân
+   * viên", "5.632 công chuẩn", "24 cần đối soát" — chỉ nói về 25 người đó, và
+   * con số nhảy mỗi lần lật trang trong khi nhãn vẫn ghi "Tổng". Endpoint này
+   * gộp trên TOÀN BỘ người khớp bộ lọc, rồi mới cắt trang để lấy dòng hiển thị.
+   *
+   * ## Ba cột "công" và ba nguồn khác nhau
+   *
+   * | Cột | Nguồn | Nghĩa |
+   * |---|---|---|
+   * | Công chuẩn | `ShiftAssignment` | số ngày ĐƯỢC XẾP ca |
+   * | Công thực tế | `AttendanceDaily.standardDays` | công engine đã tính |
+   * | Thiếu công | hiệu hai cột trên | phần chưa giải trình được |
+   *
+   * "Thiếu công" là HIỆU chứ không phải một cột lưu sẵn: nó luôn khớp với hai
+   * con số đứng ngay cạnh, và không thể lệch khỏi chúng sau một lần tính lại.
+   * Kẹp ở 0 vì làm dư giờ không phải là thiếu công — OT đã có cột riêng.
+   *
+   * ## Hai tập người, hai mục đích
+   *
+   * `scopeIds`    — mọi người của tháng mà NGƯỜI HỎI được xem (chỉ áp phạm vi
+   *                 phòng ban). Dùng để đếm "còn bao nhiêu người phải rà" cho
+   *                 TỪNG BẢNG, phục vụ hộp thoại chốt.
+   * `filteredIds` — thêm bộ lọc chi nhánh / phòng ban / tìm kiếm trên màn hình.
+   *                 Dùng cho hàng thẻ chỉ số và các dòng.
+   *
+   * Tách ra vì hộp thoại chốt phải nói sự thật về cả bảng: lọc "Kế toán" rồi
+   * bấm Chốt mà hộp thoại ghi "0 người cần đối soát" trong khi Kho vận còn 24
+   * người là dẫn thẳng tới một lần chốt sai.
+   */
+  async getMonthSummary(
+    companyId: string,
+    query: AttendanceMonthSummaryQueryDto,
+    departmentScope: string[] | null,
+  ) {
+    const month = query.month ? startOfMonth(parseWorkDate(query.month)) : startOfMonth(new Date());
+    const from = month;
+    const to = endOfMonth(month);
+
+    const sheets = await this.sheets.listSheetsInMonth(companyId, month);
+    const members = await this.sheets.findMembersOfSheets(sheets.map((sheet) => sheet.id));
+
+    const sheetIdByEmployee = new Map(members.map((row) => [row.employeeId, row.sheetId]));
+    const memberIds = [...sheetIdByEmployee.keys()];
+
+    const departmentIds = query.departmentId
+      ? await this.policies.expandDepartmentIds(companyId, [query.departmentId])
+      : undefined;
+
+    const filter = {
+      memberIds,
+      departmentIds,
+      departmentScope,
+      branchId: query.branchId,
+      employeeId: query.employeeId,
+      q: query.q,
+    };
+
+    // Bộ lọc màn hình có đang thu hẹp gì không. Không thì hai tập trùng nhau và
+    // bỏ được một lượt đọc — đây là trường hợp thường gặp nhất khi mở màn hình.
+    const narrowed = Boolean(query.branchId || query.departmentId || query.employeeId || query.q);
+
+    const filteredIds = await this.sheets.findMemberEmployeeIds(companyId, filter);
+    const scopeIds = narrowed
+      ? await this.sheets.findMemberEmployeeIds(companyId, { memberIds, departmentScope })
+      : filteredIds;
+
+    const [sums, statusCounts, review, scheduledDays, lastCalculatedAt, scopeReview] =
+      await Promise.all([
+        this.sheets.sumDailiesByEmployee(companyId, filteredIds, from, to),
+        this.sheets.countDailyStatusByEmployee(companyId, filteredIds, from, to),
+        this.sheets.findEmployeesNeedingReview(companyId, filteredIds, from, to),
+        this.sheets.countScheduledDaysByEmployee(companyId, filteredIds, from, to),
+        this.sheets.findLastCalculatedAt(companyId, filteredIds, from, to),
+        narrowed
+          ? this.sheets.findEmployeesNeedingReview(companyId, scopeIds, from, to)
+          : Promise.resolve(null),
+      ]);
+
+    const reviewAcrossScope = scopeReview ?? review;
+
+    /*
+     * Trang đọc SAU các phép gộp vì bộ lọc "chỉ người cần đối soát" là kết quả
+     * của chính chúng — ai cần rà chỉ biết được sau khi đã soi ngày công.
+     *
+     * Thu hẹp bằng `memberIds` chứ không thêm điều kiện mới: tập cần đối soát
+     * đã đi qua đúng bộ lọc phòng ban/chi nhánh/tìm kiếm ở trên, nên giao lại
+     * với chính nó là phép an toàn và không cần một nhánh SQL thứ hai.
+     */
+    const page = await this.sheets.searchMemberEmployees(companyId, {
+      ...filter,
+      memberIds: query.needsReviewOnly ? [...review.needsReview] : filter.memberIds,
+      skip: (query.page - 1) * query.pageSize,
+      take: query.pageSize,
+    });
+
+    const sumByEmployee = new Map(sums.map((row) => [row.employeeId, row]));
+    const leaveDays = new Map<string, number>();
+    for (const row of statusCounts) {
+      if (row.status === 'ON_LEAVE') leaveDays.set(row.employeeId, row.days);
+    }
+
+    const closedSheetIds = new Set(
+      sheets.filter((sheet) => sheet.status === 'CLOSED').map((sheet) => sheet.id),
+    );
+
+    const rows = page.items.map((employee) => {
+      const sum = sumByEmployee.get(employee.id);
+      const standardDays = scheduledDays.get(employee.id) ?? 0;
+      const actualDays = sum?.standardDays ?? 0;
+      const sheetId = sheetIdByEmployee.get(employee.id) ?? null;
+
+      return {
+        employeeId: employee.id,
+        employeeCode: employee.employeeCode,
+        fullName: employee.fullName,
+        department: employee.department,
+        // Màn chi tiết của một CBNV nằm dưới BẢNG giữ họ; không trả kèm id này
+        // thì client phải tự dò xem người này thuộc bảng nào.
+        sheetId,
+        standardDays,
+        actualDays,
+        missingDays: Math.max(0, standardDays - actualDays),
+        otMinutes: sum?.otMinutes ?? 0,
+        workedMinutes: sum?.workedMinutes ?? 0,
+        lateMinutes: sum?.lateMinutes ?? 0,
+        earlyLeaveMinutes: sum?.earlyLeaveMinutes ?? 0,
+        leaveDays: leaveDays.get(employee.id) ?? 0,
+        status: rowStatus({
+          // Khoá theo BẢNG của người đó, không theo cả tháng: tháng chốt dần
+          // từng bảng, và người của bảng chưa chốt vẫn còn sửa được.
+          isClosed: sheetId !== null && closedSheetIds.has(sheetId),
+          missingCheckOut: review.missingCheckOut.has(employee.id),
+          needsReview: review.needsReview.has(employee.id),
+        }),
+      };
+    });
+
+    // Đếm người còn phải rà của TỪNG bảng — hộp thoại chốt cần đúng con số này
+    // để người bấm biết mình đang chốt cái gì.
+    const needsReviewBySheet = new Map<string, number>();
+    for (const employeeId of reviewAcrossScope.needsReview) {
+      const sheetId = sheetIdByEmployee.get(employeeId);
+      if (sheetId) needsReviewBySheet.set(sheetId, (needsReviewBySheet.get(sheetId) ?? 0) + 1);
+    }
+
+    return {
+      period: { month: formatWorkDate(month), from: formatWorkDate(from), to: formatWorkDate(to) },
+      sheets: sheets.map((sheet) => ({
+        id: sheet.id,
+        name: sheet.name,
+        status: sheet.status,
+        departmentIds: sheet.departmentIds,
+        memberCount: sheet._count.members,
+        needsReviewCount: needsReviewBySheet.get(sheet.id) ?? 0,
+      })),
+      lastCalculatedAt,
+      totals: {
+        employeeCount: filteredIds.length,
+        // Cộng trên TOÀN kỳ, không phải cộng cột của trang đang mở.
+        standardDays: [...scheduledDays.values()].reduce((total, days) => total + days, 0),
+        actualDays: sums.reduce((total, row) => total + row.standardDays, 0),
+        otMinutes: sums.reduce((total, row) => total + row.otMinutes, 0),
+        needsReviewCount: review.needsReview.size,
+      },
+      rows,
+      meta: buildMeta(query.page, query.pageSize, page.total),
     };
   }
 
@@ -522,6 +710,33 @@ export class AttendanceSheetService {
 //  Ánh xạ ra DTO
 // =============================================================================
 
+/**
+ * Trạng thái của MỘT DÒNG trên bảng tổng hợp — bốn nhãn, xếp theo thứ tự việc.
+ *
+ * Thứ tự kiểm chính là thứ tự ưu tiên, và nó có nghĩa nghiệp vụ:
+ *
+ *  1. `LOCKED` — bảng đã chốt, mọi dòng đều khoá. Không có gì để làm nữa, kể cả
+ *     khi bên dưới còn ngày lệch; sửa được thì phải mở lại bảng trước.
+ *  2. `MISSING_CHECK_OUT` — có giờ vào, không có giờ ra. Nêu riêng vì đây là
+ *     loại lỗi duy nhất có cách sửa hiển nhiên: bổ sung giờ ra.
+ *  3. `NEEDS_REVIEW` — còn ngày phải quyết (vắng, thiếu giờ, nghi gian lận).
+ *  4. `VALID` — không còn gì vướng.
+ *
+ * Khoá là trạng thái của cả BẢNG chứ không của từng người: hệ thống chốt theo
+ * bảng (`AttendanceSheet.status`), không có cơ chế khoá lẻ một dòng. Trả về
+ * theo dòng vì bảng đọc theo dòng, nhưng giá trị thì giống nhau ở mọi dòng.
+ */
+function rowStatus(input: {
+  isClosed: boolean;
+  missingCheckOut: boolean;
+  needsReview: boolean;
+}): 'LOCKED' | 'MISSING_CHECK_OUT' | 'NEEDS_REVIEW' | 'VALID' {
+  if (input.isClosed) return 'LOCKED';
+  if (input.missingCheckOut) return 'MISSING_CHECK_OUT';
+  if (input.needsReview) return 'NEEDS_REVIEW';
+  return 'VALID';
+}
+
 function toSheetDto(row: AttendanceSheetRow) {
   return {
     id: row.id,
@@ -572,6 +787,13 @@ function defaultSheetName(periodMonth: Date): string {
   return `Bảng chấm công Tháng ${formatWorkDate(periodMonth).slice(5, 7)}/${formatWorkDate(periodMonth).slice(0, 4)}`;
 }
 
+/**
+ * Ngày 01 của tháng chứa `date`, theo UTC.
+ *
+ * Kỳ của bảng chấm công LUÔN neo ở ngày 01 (`AttendanceSheet.periodMonth`), nên
+ * client gửi "2026-08-17" vẫn phải tìm ra bảng của tháng 8 — chuẩn hoá ở đây
+ * thay vì bắt mọi nơi gọi tự nhớ.
+ */
 function startOfMonth(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
 }

@@ -52,6 +52,8 @@ export class AuditService {
         before: entry.before,
         after: entry.after,
         traceId: ctx.traceId,
+        correlationId: ctx.correlationId,
+        supportSessionId: ctx.supportSessionId,
       });
     } catch (error) {
       this.logger.error(`Không ghi được audit log (${entry.action}): ${(error as Error).message}`);

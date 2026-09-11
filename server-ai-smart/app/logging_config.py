@@ -16,6 +16,8 @@ import logging
 import re
 import sys
 
+from .correlation import CorrelationIdFilter
+
 #: base64 dài liên tục ~ ảnh; dãy số dài phân tách bởi dấu phẩy ~ embedding.
 _SUSPICIOUS = re.compile(
     r"(data:image/[a-z]+;base64,[A-Za-z0-9+/=]+)"
@@ -39,9 +41,14 @@ class SensitivePayloadFilter(logging.Filter):
 
 def configure_logging(level: str) -> None:
     handler = logging.StreamHandler(sys.stdout)
+    # `correlation_id` nằm ngay sau mức log để `grep <id>` ra đủ chuỗi của một
+    # nghiệp vụ — xem `app/correlation.py`.
     handler.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)-7s [%(name)s] %(message)s")
+        logging.Formatter(
+            "%(asctime)s %(levelname)-7s [%(correlation_id)s] [%(name)s] %(message)s"
+        )
     )
+    handler.addFilter(CorrelationIdFilter())
     handler.addFilter(SensitivePayloadFilter())
 
     root = logging.getLogger()

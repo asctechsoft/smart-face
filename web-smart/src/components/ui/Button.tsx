@@ -1,19 +1,40 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { Icon } from './Icon';
 
 /**
- * Nút — docs/16 mục 11.1.
+ * Nút.
  *
- * Sáu biến thể × ba kích thước, mọi ô đều đã kiểm chứng tương phản (mục 14.1).
- * Điểm phải nhớ: **nút amber SÁNG LÊN khi hover, không tối đi** — lập luận đầy
- * đủ ở mục 0.1 và ở `components.css`.
+ * Mọi cặp màu đã qua `npm run check:contrast`.
+ *
+ * | Biến thể | Màu | Dùng khi |
+ * |---|---|---|
+ * | `primary` | xanh dương đặc | Hành động chính của màn hình: Lưu, Tạo mới, Tiếp tục |
+ * | `action` | xanh lá đặc | CHỐT một quy trình: Phê duyệt, Xác nhận chốt kỳ |
+ * | `secondary` | viền xanh | Hành động phụ đứng cạnh nút chính |
+ * | `tertiary` | chữ trơn | Huỷ, Đóng, thao tác trong bảng |
+ * | `destructive` | đỏ đặc | Xoá, thu hồi, khoá tài khoản |
+ * | `destructive-ghost` | chữ đỏ | Từ chối, huỷ đơn — hành động ngược nhưng không phá huỷ |
+ *
+ * `action` là biến thể **hiếm**: một màn hình có nhiều lắm một nút xanh lá. Khi
+ * mọi nút đều nhấn mạnh thì không nút nào nhấn mạnh nữa — đó là chỗ bản trước
+ * đã sai khi lấy màu nhấn mạnh làm màu mặc định.
+ *
+ * `teal` là tên cũ, còn dùng được nhưng nay ra màu xanh dương như `primary`.
  *
  * `loading` giữ nguyên bề rộng nút và khoá tương tác. Nút co lại hay đổi chữ
  * lúc đang gửi làm con trỏ chuột trượt ra ngoài, và người dùng bấm tiếp vào chỗ
  * trống — với "duyệt đơn" hay "chốt kỳ" thì lần bấm thứ hai không vô hại.
  */
 export type ButtonVariant =
-  'primary' | 'teal' | 'secondary' | 'tertiary' | 'destructive' | 'destructive-ghost';
+  | 'primary'
+  | 'action'
+  | 'secondary'
+  | 'tertiary'
+  | 'destructive'
+  | 'destructive-ghost'
+  /** @deprecated Tên cũ của `primary`. */
+  | 'teal';
 
 export type ButtonSize = 'sm' | 'md' | 'lg';
 
@@ -78,6 +99,62 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     </button>
   );
 });
+
+/**
+ * Nut DAN sang mot trang khac — the `<a>`, khong phai `<button>`.
+ *
+ * ## Vi sao khong dung `<Button onClick={() => navigate(to)}>`
+ *
+ * Mot `<button>` dieu huong lam hong ba thu ma nguoi dung mac nhien co:
+ * bam giua de mo tab moi, Ctrl/Cmd+click, va menu chuot phai "Mo trong tab
+ * moi". Ca ba deu la hanh vi cua trinh duyet tren the `<a href>`, khong co
+ * cach nao mo phong lai bang JavaScript. Trinh doc man hinh cung doc sai vai
+ * tro: "button" thay vi "link", nen nguoi dung khong biet minh sap roi trang.
+ *
+ * Dung `Button` cho HANH DONG (luu, duyet, xoa), `LinkButton` cho DIEU HUONG.
+ */
+export interface LinkButtonProps {
+  to: string;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
+  icon?: string;
+  iconAfter?: string;
+  block?: boolean;
+  children?: ReactNode;
+  className?: string;
+}
+
+export function LinkButton({
+  to,
+  variant = 'primary',
+  size = 'md',
+  icon,
+  iconAfter,
+  block = false,
+  children,
+  className,
+}: LinkButtonProps) {
+  const iconSize = size === 'sm' ? 18 : 20;
+
+  return (
+    <Link
+      to={to}
+      className={[
+        'sf-btn',
+        `sf-btn--${size}`,
+        `sf-btn--${variant}`,
+        block ? 'sf-btn--block' : '',
+        className ?? '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      {icon ? <Icon name={icon} size={iconSize} /> : null}
+      {children}
+      {iconAfter ? <Icon name={iconAfter} size={iconSize} /> : null}
+    </Link>
+  );
+}
 
 /**
  * Nút chỉ có icon.

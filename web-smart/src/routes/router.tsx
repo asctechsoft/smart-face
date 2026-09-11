@@ -3,9 +3,11 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { Spin } from 'antd';
 import { ManagerLayout } from './layouts/ManagerLayout';
 import { RequireAnonymous, RequireAuth, RequirePermission } from './guards';
+import { HomeRoute } from './home-route';
 import { LoginPage } from '@/features/auth/LoginPage';
 import { ChangePasswordPage } from '@/features/auth/ChangePasswordPage';
-import { EmptyState } from '@/components/EmptyState';
+import { PlatformBootstrapPage } from '@/features/provisioning/PlatformBootstrapPage';
+import { EmptyState } from '@/components/ui';
 
 /**
  * Mỗi màn hình nghiệp vụ là một chunk riêng.
@@ -33,6 +35,16 @@ const AttendanceSheetPage = lazy(() =>
     default: m.AttendanceSheetPage,
   })),
 );
+const AttendanceSummaryPage = lazy(() =>
+  import('@/features/attendance/AttendanceSummaryPage').then((m) => ({
+    default: m.AttendanceSummaryPage,
+  })),
+);
+const AttendanceEmployeeDetailPage = lazy(() =>
+  import('@/features/attendance/AttendanceEmployeeDetailPage').then((m) => ({
+    default: m.AttendanceEmployeeDetailPage,
+  })),
+);
 const RequestListPage = lazy(() =>
   import('@/features/requests/RequestListPage').then((m) => ({ default: m.RequestListPage })),
 );
@@ -44,19 +56,50 @@ const EmployeeDetailPage = lazy(() =>
     default: m.EmployeeDetailPage,
   })),
 );
-const ShiftScheduleListPage = lazy(() =>
-  import('@/features/shifts/ShiftScheduleListPage').then((m) => ({
-    default: m.ShiftScheduleListPage,
+const ShiftsPage = lazy(() =>
+  import('@/features/shifts/ShiftsPage').then((m) => ({
+    default: m.ShiftsPage,
   })),
 );
 const ShiftSchedulePage = lazy(() =>
   import('@/features/shifts/ShiftSchedulePage').then((m) => ({ default: m.ShiftSchedulePage })),
 );
-const RequestTypesPage = lazy(() =>
-  import('@/features/requests/RequestTypesPage').then((m) => ({ default: m.RequestTypesPage })),
+const RequestDetailPage = lazy(() =>
+  import('@/features/requests/RequestDetailPage').then((m) => ({ default: m.RequestDetailPage })),
 );
-const RolesPage = lazy(() =>
-  import('@/features/access/RolesPage').then((m) => ({ default: m.RolesPage })),
+const ExecApprovalsPage = lazy(() =>
+  import('@/features/exec/ExecApprovalsPage').then((m) => ({ default: m.ExecApprovalsPage })),
+);
+const PeriodsPage = lazy(() =>
+  import('@/features/exec/PeriodsPage').then((m) => ({ default: m.PeriodsPage })),
+);
+const SetupStepPage = lazy(() =>
+  import('@/features/provisioning/SetupStepPage').then((m) => ({ default: m.SetupStepPage })),
+);
+const SetupWizardPage = lazy(() =>
+  import('@/features/provisioning/SetupWizardPage').then((m) => ({ default: m.SetupWizardPage })),
+);
+const SystemHealthPage = lazy(() =>
+  import('@/features/provisioning/SystemHealthPage').then((m) => ({ default: m.SystemHealthPage })),
+);
+const PlatformOverviewPage = lazy(() =>
+  import('@/features/provisioning/PlatformOverviewPage').then((m) => ({
+    default: m.PlatformOverviewPage,
+  })),
+);
+const TenantListPage = lazy(() =>
+  import('@/features/provisioning/TenantListPage').then((m) => ({ default: m.TenantListPage })),
+);
+const CreateTenantPage = lazy(() =>
+  import('@/features/provisioning/CreateTenantPage').then((m) => ({ default: m.CreateTenantPage })),
+);
+const PackagesPage = lazy(() =>
+  import('@/features/provisioning/PackagesPage').then((m) => ({ default: m.PackagesPage })),
+);
+const SupportSessionsPage = lazy(() =>
+  import('@/features/provisioning/SupportSessionsPage').then((m) => ({
+    default: m.SupportSessionsPage,
+  })),
 );
 const PolicyPage = lazy(() =>
   import('@/features/policy/PolicyPage').then((m) => ({ default: m.PolicyPage })),
@@ -96,6 +139,12 @@ export function AppRouter() {
 
         <Route element={<RequireAnonymous />}>
           <Route path="/login" element={<LoginPage />} />
+          {/*
+            Khởi tạo nền tảng nằm ngoài mọi guard đăng nhập vì chưa có ai để
+            đăng nhập. Thứ giữ an toàn là điều kiện "hệ thống chưa có tài khoản
+            nền tảng nào" ở Backend — xem docblock của `PlatformBootstrapPage`.
+          */}
+          <Route path="/khoi-tao-nen-tang" element={<PlatformBootstrapPage />} />
         </Route>
 
         <Route element={<RequireAuth />}>
@@ -104,9 +153,12 @@ export function AppRouter() {
           <Route path="/doi-mat-khau" element={<ChangePasswordPage />} />
 
           <Route element={<ManagerLayout />}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            {/* Trang chủ giải theo quyền — xem `HomeRoute`. Điều hướng cứng về
+                `/dashboard` làm quản trị nền tảng đăng nhập xong nhận ngay màn
+                "không có quyền", cho đúng một trang họ không bao giờ cần. */}
+            <Route index element={<HomeRoute />} />
 
-            <Route element={<RequirePermission permission="dashboard.view" />}>
+            <Route element={<RequirePermission permission="report.view" />}>
               <Route path="/dashboard" element={<DashboardPage />} />
             </Route>
 
@@ -118,19 +170,30 @@ export function AppRouter() {
                   ngừng sáng đúng lúc người dùng đang ở màn hình khác. */}
               <Route path="/work-status" element={<WorkStatusPage />} />
 
-              {/* Danh sách bảng chấm công là cửa vào; lưới người × ngày nằm trong một bảng. */}
-              <Route path="/attendance" element={<AttendanceSheetListPage />} />
+              {/* Cửa vào là TỔNG HỢP THEO THÁNG, không phải danh sách bảng.
+
+                  Bảng chấm công vẫn là đơn vị tổ chức (nó giữ danh sách thành
+                  viên và là thứ được chốt), nhưng người rà công hỏi "tháng 5
+                  còn ai chưa xong" chứ không hỏi "bảng tháng 5 của Kho vận còn
+                  ai chưa xong". Danh sách bảng lùi xuống `/attendance/sheets` —
+                  nơi lập và xoá bảng. */}
+              <Route path="/attendance" element={<AttendanceSummaryPage />} />
+              <Route path="/attendance/sheets" element={<AttendanceSheetListPage />} />
               <Route path="/attendance/:id" element={<AttendanceSheetPage />} />
+              {/* Chi tiết một CBNV nằm DƯỚI bảng, không ở gốc `/employees/:id`:
+                  nó là công của người đó TRONG MỘT KỲ cụ thể, và kỳ đó do bảng
+                  quyết định. Treo ở hồ sơ nhân sự thì không có gì nói tháng nào. */}
+              <Route
+                path="/attendance/:id/employees/:employeeId"
+                element={<AttendanceEmployeeDetailPage />}
+              />
             </Route>
 
             <Route element={<RequirePermission permission="request.view" />}>
               <Route path="/requests" element={<RequestListPage />} />
-            </Route>
-
-            {/* Cấu hình loại đơn nằm dưới /requests nhưng cần quyền KHÁC: duyệt
-                đơn là việc của Quản lý, còn đổi luồng duyệt là chính sách công ty. */}
-            <Route element={<RequirePermission permission="request.configure" />}>
-              <Route path="/requests/settings" element={<RequestTypesPage />} />
+              {/* React Router xep doan tinh tren doan dong, nen `/requests/settings`
+                  ben duoi van thang `/requests/:id` du khai sau. */}
+              <Route path="/requests/:id" element={<RequestDetailPage />} />
             </Route>
 
             <Route element={<RequirePermission permission="employee.view" />}>
@@ -138,26 +201,103 @@ export function AppRouter() {
               <Route path="/employees/:id" element={<EmployeeDetailPage />} />
             </Route>
 
+            {/* `anyOf`: màn "Ca làm & Phân ca" gộp danh mục ca (Kế toán đọc
+                được) với lịch phân ca (`shift.assign`). Gác cả trang bằng
+                `shift.assign` sẽ khoá Kế toán khỏi chính danh mục ca mà họ vẫn
+                mở được hôm qua ở trang Thiết lập. */}
+            <Route
+              element={
+                <RequirePermission anyOf={['shift.assign', 'shift_template.view', 'policy.view']} />
+              }
+            >
+              <Route path="/shifts" element={<ShiftsPage />} />
+            </Route>
+
+            {/* Lưới người × ngày thì vẫn CHỈ `shift.assign`: đọc được danh mục ca
+                không có nghĩa là mở được bảng phân ca của một phòng ban. */}
             <Route element={<RequirePermission permission="shift.assign" />}>
-              {/* Danh sách bảng phân ca là cửa vào; lưới người × ngày nằm trong một bảng. */}
-              <Route path="/shifts" element={<ShiftScheduleListPage />} />
               <Route path="/shifts/:id" element={<ShiftSchedulePage />} />
             </Route>
 
-            <Route element={<RequirePermission permission="role.manage" />}>
-              <Route path="/access" element={<RolesPage />} />
-            </Route>
+            {/*
+              `/access`, `/audit-logs` và `/requests/settings` đã thành ba tab
+              của trang Thiết lập. Giữ lại dưới dạng CHUYỂN HƯỚNG chứ không xoá
+              route: những đường dẫn này nằm trong bookmark, trong email, và
+              trong các bản chụp màn hình gửi cho nhau — xoá hẳn thì chúng thành
+              404 mà không ai biết trang đã đi đâu.
+            */}
+            <Route path="/access" element={<Navigate to="/policy?tab=access" replace />} />
+            <Route path="/audit-logs" element={<Navigate to="/policy?tab=audit" replace />} />
+            <Route
+              path="/requests/settings"
+              element={<Navigate to="/policy?tab=request-types" replace />}
+            />
 
             <Route element={<RequirePermission permission="report.view" />}>
               <Route path="/reports" element={<ReportsPage />} />
             </Route>
 
-            <Route element={<RequirePermission permission="policy.view" />}>
+            {/* `anyOf`: trang Thiết lập gộp bốn nhóm quyền, và người chỉ có
+                một trong số đó vẫn phải vào được — tab nào không có quyền thì
+                trang tự ẩn. */}
+            <Route
+              element={
+                <RequirePermission
+                  anyOf={['policy.view', 'request.configure_flow', 'role.assign', 'audit.view']}
+                />
+              }
+            >
               <Route path="/policy" element={<PolicyPage />} />
             </Route>
 
             <Route element={<RequirePermission permission="audit.view" />}>
-              <Route path="/audit-logs" element={<AuditLogPage />} />
+              {/* Cùng màn hình với tab "Nhật ký hoạt động", khác lối vào: quản
+                  trị nền tảng gọi nó là "Nhật ký hệ thống" vì với họ nó xuyên
+                  tenant, và họ KHÔNG có trang Thiết lập của một công ty. */}
+              <Route path="/system/logs" element={<AuditLogPage />} />
+            </Route>
+
+            {/* --- Màn hình của Giám đốc ---
+                `/exec/periods` cố ý mở cho CẢ Kế toán: cùng một danh sách kỳ,
+                khác bộ nút. Xem docblock của `PeriodsPage` — tách hai trang thì
+                câu "kỳ tháng 8 đang ở đâu" có hai câu trả lời tuỳ người hỏi. */}
+            <Route element={<RequirePermission permission="request.approve" />}>
+              <Route path="/exec/approvals" element={<ExecApprovalsPage />} />
+            </Route>
+
+            <Route element={<RequirePermission permission="timesheet.view" />}>
+              <Route path="/exec/periods" element={<PeriodsPage />} />
+            </Route>
+
+            {/* --- Thiết lập ban đầu của Tổng giám đốc --- */}
+            <Route element={<RequirePermission permission="setup.run" />}>
+              <Route path="/thiet-lap" element={<SetupWizardPage />} />
+              <Route path="/thiet-lap/:step" element={<SetupStepPage />} />
+            </Route>
+
+            {/* --- Quản trị nền tảng ---
+                Cùng ứng dụng với web của tenant, đúng ADR-03. `RequirePermission`
+                ở đây chỉ để người không có quyền khỏi thấy một trang lỗi — chặn
+                thật nằm ở Backend, xem docblock của `nav-items.ts`. */}
+            <Route element={<RequirePermission permission="tenant.view" />}>
+              <Route path="/system" element={<PlatformOverviewPage />} />
+              <Route path="/system/tenants" element={<TenantListPage />} />
+            </Route>
+
+            <Route element={<RequirePermission permission="tenant.manage" />}>
+              <Route path="/system/tenants/new" element={<CreateTenantPage />} />
+            </Route>
+
+            <Route element={<RequirePermission permission="tenant.billing" />}>
+              <Route path="/system/packages" element={<PackagesPage />} />
+            </Route>
+
+            <Route element={<RequirePermission permission="platform.support_access" />}>
+              <Route path="/system/support" element={<SupportSessionsPage />} />
+            </Route>
+
+            <Route element={<RequirePermission permission="platform.config" />}>
+              <Route path="/system/health" element={<SystemHealthPage />} />
             </Route>
 
             <Route

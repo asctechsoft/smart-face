@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Alert, Button, Drawer, InputNumber, Select, Switch } from 'antd';
-import { Icon } from '@/components/Icon';
 import {
   APPROVER_ROLE_LABEL,
   useReplaceApprovalFlow,
@@ -9,6 +8,7 @@ import {
 } from './request-config.api';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Icon } from '@/components/ui';
 
 /**
  * Cấu hình luồng duyệt của một loại đơn — docs/04 mục 4.1 (`FR-WEB-REQ-05`).

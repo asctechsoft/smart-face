@@ -2,7 +2,7 @@ import { SystemRole } from '@prisma/client';
 import type { Request } from 'express';
 
 /**
- * Payload của access token (docs/02-kien-truc-he-thong.md mục 8.1).
+ * Payload của access token (docs/11-kien-truc-va-technology-stack.md mục 8.1).
  *
  * ```
  * { sub, employeeId, companyId, roles, deviceId, jti, iat, exp }
@@ -48,10 +48,28 @@ export interface RequestContext {
   ip?: string;
   userAgent?: string;
   traceId: string;
+  /** Xem `AuditLogRecord.correlationId`. Nhận từ header `X-Correlation-Id` nếu có. */
+  correlationId: string;
+  /** Phiên hỗ trợ tenant đang mở, nếu hành động này chạy trong một phiên như vậy. */
+  supportSessionId?: string | null;
 }
 
 export interface AuthenticatedRequest extends Request {
   ctx?: RequestContext;
+  correlationId?: string;
+  /**
+   * Quyền đã giải xong, do `PermissionGuard` gắn vào.
+   *
+   * Có để service khỏi giải quyền lần thứ hai trong cùng một request — mỗi lần
+   * giải là bốn bảng. Kiểu là `unknown` ở đây thay vì `EffectiveAccess` để
+   * `common/` không phải phụ thuộc ngược lên `modules/access`; chỗ dùng ép kiểu
+   * qua `AccessService`.
+   */
+  access?: unknown;
+  /** Id thử thách step-up đã tiêu thụ cho request này (NFR-AUD-02). */
+  stepUpChallengeId?: string;
+  /** Phiên bản bản ghi client kỳ vọng, do `VersionGuard` bóc từ `If-Match`. */
+  expectedVersion?: number;
   traceId?: string;
   /** Body thô — SignatureGuard cần để tính HMAC (AF-12) */
   rawBody?: Buffer;

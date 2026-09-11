@@ -4,7 +4,7 @@ import { SystemRole } from '@prisma/client';
 export const ROLES_KEY = 'roles';
 
 /**
- * RBAC — 5 vai trò (docs/02-kien-truc-he-thong.md mục 8.1).
+ * RBAC — 5 vai trò (docs/11-kien-truc-va-technology-stack.md mục 8.1).
  * `SYSTEM_ADMIN` luôn được RolesGuard cho qua.
  *
  * ```ts

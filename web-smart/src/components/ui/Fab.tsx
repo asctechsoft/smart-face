@@ -4,8 +4,8 @@ import { Icon } from './Icon';
 /**
  * FAB — docs/16 mục 11.16.
  *
- * `64 × 64`, nền `amber-500`, radius `16px`, icon `18px` `amber-900`,
- * `shadow-xl`. Hover sáng lên `amber-400`, active thêm bóng lõm + dịch 1px —
+ * `64 × 64`, nền `--sf-action` (xanh lá), radius `16px`, icon `18px` trắng,
+ * `shadow-xl`. Hover đậm lên `--sf-action-hover`, active thêm bóng lõm + dịch 1px —
  * cùng quy tắc với nút primary (mục 0.1).
  *
  * Tooltip hiện khi rê chuột HOẶC khi nhận tiêu điểm bàn phím. Chỉ bắt `hover`

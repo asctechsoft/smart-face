@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { Alert, Button } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
-import { StatusBadge } from '@/components/StatusBadge';
 import { ReasonDialog } from '@/components/ReasonDialog';
 import { Can } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
@@ -10,6 +9,7 @@ import { formatDateTime, formatRelativeDay } from '@/lib/utils/date';
 import { useEmployeeDevices, useRevokeDevice, type DeviceBinding } from '../employees.api';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Badge as StatusBadge } from '@/components/ui';
 
 /**
  * Thiết bị đã liên kết — docs/04 mục 11.2 (`FR-WEB-INV-06`).

@@ -1,8 +1,5 @@
 import { useMemo, useState } from 'react';
 import { Badge, Button, Popover } from 'antd';
-import { Icon } from '@/components/Icon';
-import { EmptyState } from '@/components/EmptyState';
-import { CardSkeleton } from '@/components/Skeleton';
 import { ApiErrorState } from '@/components/ApiErrorState';
 import { NotificationItem } from '@/components/ui';
 import { useAuth } from '@/lib/auth/auth-context';
@@ -14,6 +11,7 @@ import {
   useUnreadCount,
   type Notification,
 } from './notifications.api';
+import { CardSkeleton, EmptyState, Icon } from '@/components/ui';
 
 /**
  * Chuông thông báo trên header — thay cho trang `/notifications` cũ.

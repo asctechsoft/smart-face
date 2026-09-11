@@ -1,5 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
 import { CurrentTenant, DepartmentScoped, Roles } from 'src/common/decorators';
 import { AppException } from 'src/common/errors';
@@ -8,7 +8,7 @@ import type { TenantContext } from 'src/common/types/request-context';
 import { ReportService } from './report.service';
 
 /**
- * docs/08-hop-dong-api.md mục 6.3 — Dashboard & báo cáo.
+ * docs/15-hop-dong-api.md mục 6.3 — Dashboard & báo cáo.
  *
  * Toàn bộ là truy vấn TỔNG HỢP trên khoảng thời gian dài, nên hai điểm chi phối
  * thiết kế của controller này:
@@ -40,6 +40,30 @@ export class ReportController {
     return this.reports.dashboard(ctx.companyId, resolveDepartmentScope(ctx));
   }
 
+  @Get('dashboard/reconciliation')
+  @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
+  @DepartmentScoped()
+  @ApiOperation({
+    summary: 'Tien do doi soat ky cong (FR-WEB-DASH-07)',
+    description:
+      'So lieu theo KY, khac `GET dashboard` (theo NGAY). Dung cho man hinh Tong quan cua Ke toan: con bao nhieu nguoi phai doi soat truoc han chot ky.',
+  })
+  @ApiQuery({ name: 'periodId', required: false, description: 'Ky cong. Bo trong = ky dang mo.' })
+  @ApiQuery({ name: 'branchId', required: false, description: 'Loc theo chi nhanh/van phong.' })
+  @ApiQuery({ name: 'departmentId', required: false, description: 'Loc theo phong ban.' })
+  reconciliation(
+    @CurrentTenant() ctx: TenantContext,
+    @Query('periodId') periodId?: string,
+    @Query('branchId') branchId?: string,
+    @Query('departmentId') departmentId?: string,
+  ) {
+    return this.reports.reconciliation(ctx.companyId, resolveDepartmentScope(ctx), {
+      periodId: periodId || null,
+      branchId: branchId || null,
+      departmentId: departmentId || null,
+    });
+  }
+
   @Get('dashboard/alerts')
   @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
   @DepartmentScoped()
@@ -52,11 +76,7 @@ export class ReportController {
   @Roles(SystemRole.MANAGER, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN)
   @DepartmentScoped()
   @ApiOperation({ summary: 'Biểu đồ chuyên cần theo ngày (FR-WEB-REP-01)' })
-  trend(
-    @CurrentTenant() ctx: TenantContext,
-    @Query('from') from: string,
-    @Query('to') to: string,
-  ) {
+  trend(@CurrentTenant() ctx: TenantContext, @Query('from') from: string, @Query('to') to: string) {
     this.assertRange(from, to);
     return this.reports.attendanceTrend(ctx.companyId, from, to, resolveDepartmentScope(ctx));
   }

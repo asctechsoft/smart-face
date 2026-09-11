@@ -28,7 +28,7 @@ import type {
 } from 'src/common/types/request-context';
 import { AttendanceAdminService } from './attendance-admin.service';
 import { AttendanceService } from './attendance.service';
-import { AttendanceHistoryQueryDto, CheckInDto } from './dto/attendance.dto';
+import { AttendanceHistoryQueryDto, CheckInDto, SyncOfflineDto } from './dto/attendance.dto';
 
 // Trần 5MB cho ảnh chấm công. Ảnh selfie từ điện thoại đời mới cỡ 2–4MB; đặt
 // cao hơn nữa chỉ khiến người dùng ở vùng sóng yếu chờ lâu rồi timeout, mà độ
@@ -36,7 +36,7 @@ import { AttendanceHistoryQueryDto, CheckInDto } from './dto/attendance.dto';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 /**
- * docs/08-hop-dong-api.md mục 4 — API Chấm công (App Nhân viên).
+ * docs/15-hop-dong-api.md mục 4 — API Chấm công (App Nhân viên).
  *
  * Mọi endpoint ở đây đều thao tác trên CHÍNH người đang đăng nhập, lấy từ JWT.
  * Không endpoint nào nhận `employeeId` từ client — nhận là mở đường cho việc
@@ -153,6 +153,34 @@ export class AttendanceController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.attendance.punch(ctx, dto, image?.buffer, AttendanceType.CHECK_OUT, request.ip);
+  }
+
+  @Post('sync-offline')
+  @HttpCode(HttpStatus.OK)
+  // Hạn mức rộng hơn chấm công thường vì mỗi lượt gửi được nhiều bản ghi, nhưng
+  // vẫn phải có: mỗi bản ghi là một lượt gọi AI Server.
+  @RateLimit({ bucket: 'attendance-sync', limit: 12, windowSeconds: 3600, by: 'account+device' })
+  @ApiOperation({
+    summary: 'Đồng bộ bản ghi chấm công offline (FR-APP-STAT-06)',
+    description:
+      'Chỉ chạy khi công ty bật `attendance.offline.enabled` (mặc định TẮT). Mọi bản ghi vào `PENDING_REVIEW` và KHÔNG tự lên bảng công — giờ và vị trí do máy khai, hành động sống không xác minh được. Khuôn mặt thì vẫn đối chiếu thật: sai người là loại ngay. Một bản ghi lỗi không làm hỏng cả gói; kết quả trả về theo từng `localId`.',
+  })
+  @ApiErrors(
+    'ATT_OFFLINE_DISABLED',
+    'ATT_OFFLINE_TOO_OLD',
+    'ATT_PERIOD_LOCKED',
+    'FACE_NOT_MATCHED',
+    'FACE_NOT_ENROLLED',
+    'FRAUD_CLOCK_SKEW',
+    'SYS_RATE_LIMITED',
+    'SYS_AI_UNAVAILABLE',
+  )
+  syncOffline(
+    @CurrentUser() ctx: RequestContext,
+    @Body() dto: SyncOfflineDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.attendance.syncOffline(ctx, dto, request.ip);
   }
 
   @Get('today')

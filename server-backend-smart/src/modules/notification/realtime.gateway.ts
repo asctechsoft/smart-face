@@ -11,7 +11,7 @@ import { Server, Socket } from 'socket.io';
 import type { JwtPayload } from 'src/common/types/request-context';
 
 /**
- * WebSocket — docs/08-hop-dong-api.md mục 9.
+ * WebSocket — docs/15-hop-dong-api.md mục 9.
  *
  * ```
  * wss://api.smartface.vn/ws?token=<accessToken>

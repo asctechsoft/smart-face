@@ -226,6 +226,27 @@ export class RejectRequestDto {
 }
 
 /**
+ * Hỏi thêm thông tin thay vì từ chối (`docs/08` §3.2).
+ *
+ * `question` bắt buộc và không cho để trống: "cần bổ sung thông tin" mà không
+ * nói thiếu gì thì nhân viên chỉ đoán, và đơn đi vòng thêm một lượt nữa.
+ */
+export class NeedMoreInfoDto {
+  @ApiProperty({ example: 'Bổ sung giấy khám bệnh có dấu của cơ sở y tế.' })
+  @IsString()
+  @Length(5, 500)
+  question!: string;
+}
+
+export class ProvideInfoDto {
+  @ApiPropertyOptional({ description: 'Ghi chú gửi kèm cho người duyệt' })
+  @IsOptional()
+  @IsString()
+  @Length(0, 500)
+  note?: string;
+}
+
+/**
  * Duyệt hàng loạt — quản lý tick nhiều đơn rồi duyệt một lượt.
  *
  * ⚠ Chỉ có duyệt hàng loạt, KHÔNG có từ chối hàng loạt. Từ chối cần lý do riêng

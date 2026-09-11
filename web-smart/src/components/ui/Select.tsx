@@ -4,13 +4,13 @@ import { Icon } from './Icon';
 /**
  * Select — docs/16 mục 11.4.
  *
- * Cao `42px`, radius `8px`, viền `neutral-300` khi đóng và `teal-900` + ring
- * `3px teal-100` khi mở.
+ * Cao `42px`, radius `8px`, viền `neutral-300` khi đóng và `blue-900` + ring
+ * `3px blue-100` khi mở.
  *
  * Dùng `<select>` thật của trình duyệt, không phải dropdown tự vẽ. Đánh đổi có
  * chủ đích:
  *
- *   Mất: không tô được nền `teal-100` cho mục đang chọn trong danh sách xổ
+ *   Mất: không tô được nền `blue-100` cho mục đang chọn trong danh sách xổ
  *        xuống (trình duyệt vẽ phần đó, CSS không với tới).
  *   Được: bàn phím, tìm-theo-chữ-cái, danh sách xổ dạng bánh xe trên mobile,
  *        và trình đọc màn hình — tất cả hoạt động đúng mà không phải viết dòng

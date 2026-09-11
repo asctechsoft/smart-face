@@ -2,13 +2,13 @@
 
 Service Python độc lập, chỉ nhận request từ Backend Core trong mạng nội bộ.
 
-> Tài liệu gốc: [ADR-01](../docs/02-kien-truc-he-thong.md#adr-01--tách-ai-server-thành-service-python-độc-lập) ·
-> [Thiết kế AI Server](../docs/02-kien-truc-he-thong.md#6-ai-server--thiết-kế) ·
-> [Hợp đồng API](../docs/08-hop-dong-api.md#8-api-ai-server-nội-bộ) ·
-> [Cách chấm công hoạt động](../docs/11-cach-hoat-dong-cham-cong-mat-va-van-tay.md)
+> Tài liệu gốc: [ADR-01](../docs/11-kien-truc-va-technology-stack.md#adr-01--tách-ai-server-thành-service-python-độc-lập) ·
+> [Thiết kế AI Server](../docs/11-kien-truc-va-technology-stack.md#6-ai-server--thiết-kế) ·
+> [Hợp đồng API](../docs/15-hop-dong-api.md#8-api-ai-server-nội-bộ) ·
+> [Cách chấm công hoạt động](../docs/17-cach-hoat-dong-cham-cong-mat-va-van-tay.md)
 >
 > 👉 **Chưa hình dung được service này nằm ở đâu trong luồng chấm công?** Đọc
-> [12 — Một lượt chấm công đi qua những đâu](../docs/12-luong-cham-cong-chi-tiet.md)
+> [18 — Một lượt chấm công đi qua những đâu](../docs/18-luong-cham-cong-chi-tiet.md)
 > trước: nó thuật lại toàn bộ đường đi App → Backend → AI Server kèm payload thật
 > ở từng chặng.
 
@@ -50,7 +50,7 @@ sai, và hàm đó chỉ có trong hệ sinh thái Python.
 
 **Cái giá phải trả:** thêm một service để vận hành, phải định nghĩa hợp đồng API
 rõ ràng, phải xử lý timeout và circuit breaker phía Backend. Ba việc đó đã làm
-xong: hợp đồng ở `docs/08` mục 8, circuit breaker ở
+xong: hợp đồng ở `docs/15` mục 8, circuit breaker ở
 `server-backend-smart/src/modules/ai-gateway/ai-gateway.service.ts`.
 
 ---
@@ -265,7 +265,7 @@ Tài liệu tương tác: `http://localhost:8000/docs`.
 
 ### Ghi chú: ba chỗ lệch so với tài liệu
 
-**1. Định dạng của `/v1/enroll`.** `docs/08` mô tả `multipart/form-data`, nhưng
+**1. Định dạng của `/v1/enroll`.** `docs/15` mô tả `multipart/form-data`, nhưng
 `AiGatewayService.enroll()` phía Backend lại gửi JSON `image_base64`. Đây là
 lệch pha có sẵn giữa tài liệu và code. Tôi cho AI Server nhận **cả hai** —
 `/v1/enroll` nhận JSON (đúng cái Backend đang gửi), `/v1/enroll/multipart` nhận
@@ -362,7 +362,7 @@ mã không nằm trong danh sách, và có test đối chiếu hai phía.
 `logging_config.py` có bộ lọc chặn lại như lưới an toàn cuối cùng — không phải
 giấy phép để viết ẩu.
 
-### Không expose ra internet (docs/02 mục 6.2)
+### Không expose ra internet (docs/11 mục 6.2)
 
 `docker-compose.yml` bind `127.0.0.1:8000`. Trên Kubernetes phải dùng
 `ClusterIP`, không dùng `LoadBalancer`.
@@ -395,7 +395,7 @@ mỗi worker nạp một bản model riêng vào RAM.
 
 | Chỉ số | Vì sao |
 |---|---|
-| `ai_inference_seconds` | Cảnh báo p95 > 2s trong 5 phút (docs/02 mục 12) |
+| `ai_inference_seconds` | Cảnh báo p95 > 2s trong 5 phút (docs/11 mục 12) |
 | `ai_image_rejected_total{error_code}` | `FACE_NOT_FOUND` tăng vọt = App đổi cách chụp, hoặc model hỏng |
 | `ai_match_score` | Phân bố lệch dần theo thời gian = model đang suy giảm |
 | `ai_concurrent_inferences` | Chạm trần `MAX_CONCURRENCY` liên tục = cần thêm replica |
@@ -431,7 +431,7 @@ rằng ai cũng chấm công được bằng ảnh in.
 | # | Việc | Vì sao quan trọng |
 |---|---|---|
 | 1 | ~~**Lấy model chống giả mạo thật**~~ **XONG** | MiniFASNetV2 (Apache-2.0) đã chuyển sang ONNX bằng `scripts/convert_anti_spoof.py`. `/health` trả `healthy`. Mỗi môi trường phải tự chạy lệnh đó vì `models/` không vào git |
-| 2 | **Hiệu chỉnh ngưỡng bằng dữ liệu thật** | 0.45 và 0.70 chỉ là điểm khởi đầu. `docs/02` mục 6.4 nói rõ phải đo FAR/FRR trên dữ liệu khách hàng trước khi go-live. Ngưỡng đặt ở Backend nên việc này không cần đụng tới AI Server. **Riêng với chống giả mạo, việc này càng cần**: model huấn luyện trên dữ liệu công khai, chủ yếu không phải người Việt |
+| 2 | **Hiệu chỉnh ngưỡng bằng dữ liệu thật** | 0.45 và 0.70 chỉ là điểm khởi đầu. `docs/11` mục 6.4 nói rõ phải đo FAR/FRR trên dữ liệu khách hàng trước khi go-live. Ngưỡng đặt ở Backend nên việc này không cần đụng tới AI Server. **Riêng với chống giả mạo, việc này càng cần**: model huấn luyện trên dữ liệu công khai, chủ yếu không phải người Việt |
 | 3 | **Xác minh `BLINK` bằng chuỗi khung hình** | Một ảnh tĩnh chỉ trả lời "mắt có đang nhắm không", không trả lời được "có vừa chớp không". `verify_action_sequence` trong `landmarks.py` đã viết sẵn và có test, nhưng App phải gửi nhiều khung và hợp đồng API phải mở rộng. **Đã xử lý tạm:** `LIVENESS_ACTIONS` phía Backend đã bỏ `BLINK`, còn `TURN_LEFT`/`TURN_RIGHT`/`NOD`/`SMILE`. AI Server vẫn nhận `BLINK` như giá trị hợp lệ để không phải sửa hợp đồng khi bật lại |
 | 4 | **Kiểm chứng chỉ số điểm mốc với đúng phiên bản model** | `landmarks.py` dùng bố cục iBUG-68, là quy ước ổn định. Vẫn nên chạy thử trên vài chục ảnh thật để xác nhận `landmark_3d_68` của bản buffalo_l đang dùng trả đúng bố cục đó |
 | 5 | **Đo lại sau mỗi lần nâng cấp thư viện** | `requirements.txt` ghim phiên bản có chủ đích. Model nhận diện rất nhạy với thay đổi onnxruntime/numpy — nâng cấp phải đo lại FAR/FRR |

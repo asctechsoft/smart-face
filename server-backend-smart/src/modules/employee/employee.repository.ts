@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Employee, EmployeeStatus, Prisma, SystemRole } from '@prisma/client';
 import { withDescendantDepartments } from 'src/common/utils';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
+import { assertNotVersionConflict, versionedWhere } from 'src/infra/prisma/optimistic-lock';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
 export type EmployeeListItem = Prisma.EmployeeGetPayload<{
@@ -166,6 +167,34 @@ export class EmployeeRepository extends BaseRepository {
     return { items, total };
   }
 
+  /**
+   * Dem nhan vien theo trang thai, trong PHAM VI phong ban duoc phan cong.
+   *
+   * `groupBy` mot lan thay vi bon lan `count`: bon truy van song song van la bon
+   * vong toi database cho mot hang the duy nhat, va chung co the tra ve so lieu
+   * cua bon thoi diem khac nhau neu co ai do doi trang thai o giua.
+   *
+   * KHONG nhan bo loc cua danh sach. Hang the tra loi "cong ty co bao nhieu
+   * nguoi o moi trang thai" — loc theo phong ban dang chon roi hien o day thi
+   * con so nhay moi lan doi bo loc va khong con la mot moc de doi chieu.
+   */
+  async countByStatus(
+    companyId: string,
+    departmentScope: string[] | null,
+  ): Promise<Record<string, number>> {
+    const rows = await this.db().employee.groupBy({
+      by: ['status'],
+      where: {
+        companyId,
+        deletedAt: null,
+        ...(departmentScope ? { departmentId: { in: departmentScope } } : {}),
+      },
+      _count: { _all: true },
+    });
+
+    return Object.fromEntries(rows.map((row) => [row.status, row._count._all]));
+  }
+
   async findById(companyId: string, employeeId: string): Promise<Employee | null> {
     return this.db().employee.findFirst({
       where: { id: employeeId, companyId, deletedAt: null },
@@ -304,13 +333,18 @@ export class EmployeeRepository extends BaseRepository {
     companyId: string,
     employeeId: string,
     data: UpdateEmployeeData,
+    expectedVersion?: number,
     tx?: Prisma.TransactionClient,
   ): Promise<Employee | null> {
+    const where = { id: employeeId, companyId, deletedAt: null };
     const updated = await this.db(tx).employee.updateMany({
-      where: { id: employeeId, companyId, deletedAt: null },
-      data,
+      where: versionedWhere(where, expectedVersion),
+      data: { ...data, rowVersion: { increment: 1 } },
     });
-    if (updated.count === 0) return null;
+    if (updated.count === 0) {
+      await assertNotVersionConflict(this.db(tx).employee, where, expectedVersion, 'EMPLOYEE');
+      return null;
+    }
     return this.findById(companyId, employeeId);
   }
 

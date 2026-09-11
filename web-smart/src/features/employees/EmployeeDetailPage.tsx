@@ -3,11 +3,8 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Alert, Breadcrumb, Button, Tabs } from 'antd';
 import { PageHeader } from '@/components/PageHeader';
 import { DetailField, DetailGrid, DetailSection } from '@/components/DetailField';
-import { StatusBadge, employeeStatusTone } from '@/components/StatusBadge';
 import { ReasonDialog } from '@/components/ReasonDialog';
 import { EmptyState } from '@/components/ui';
-import { CardSkeleton } from '@/components/Skeleton';
-import { Icon } from '@/components/Icon';
 import { Can, useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { EMPLOYEE_STATUS_LABEL, ROLE_LABEL } from '@/config/constants';
@@ -19,6 +16,7 @@ import { useEmployee, useResetBiometric } from './employees.api';
 import { ApiErrorState } from '@/components/ApiErrorState';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Badge as StatusBadge, CardSkeleton, Icon, employeeStatusTone } from '@/components/ui';
 
 /**
  * Hồ sơ nhân viên — docs/04 mục 8 (`FR-WEB-HR-01`, `FR-WEB-HR-02`).
@@ -36,7 +34,7 @@ export function EmployeeDetailPage() {
   const { timezone } = useAuth();
   const toast = useToast();
   const showError = useErrorToast();
-  const canEdit = useCan('employee.edit');
+  const canEdit = useCan('employee.update');
 
   const [searchParams, setSearchParams] = useSearchParams();
   const [editOpen, setEditOpen] = useState(false);

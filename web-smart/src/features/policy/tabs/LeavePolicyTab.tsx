@@ -2,8 +2,6 @@ import { useState } from 'react';
 import { Alert, Button, DatePicker, InputNumber, Modal, Select, Switch } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
-import { StatusBadge } from '@/components/StatusBadge';
-import { Icon } from '@/components/Icon';
 import { useCan } from '@/lib/rbac/Can';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatDay, toWorkDate } from '@/lib/utils/date';
@@ -11,6 +9,7 @@ import { toDayjs } from '@/lib/utils/dayjs';
 import { useLeavePolicies, useUpsertLeavePolicy, type LeavePolicy } from '../policy.api';
 import { Field, useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Badge as StatusBadge, Icon } from '@/components/ui';
 
 /** NFR-LEGAL-07 — Điều 113 Bộ luật Lao động 2019, điều kiện làm việc bình thường. */
 const STATUTORY_MIN_DAYS = 12;
@@ -31,7 +30,7 @@ const CONTRACT_TYPES = ['Chính thức', 'Thử việc', 'Thời vụ', 'Part-ti
  */
 export function LeavePolicyTab() {
   const { timezone } = useAuth();
-  const canEdit = useCan('policy.edit');
+  const canEdit = useCan('policy.update');
 
   const policies = useLeavePolicies();
   const [editing, setEditing] = useState<Partial<LeavePolicy> | null>(null);

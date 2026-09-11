@@ -28,10 +28,15 @@ describe('Phạm vi tính lại công', () => {
     };
     engine = { calculateAndPersist: jest.fn().mockResolvedValue(undefined) };
 
+    // Thứ tự tham số bám theo constructor của PayrollService:
+    //   payrolls, transactions, engine, policy, fraud, audit, notifications,
+    //   payrollQueue, exportQueue
+    // Bài test này chỉ chạm `payrolls` và `engine`; phần còn lại là chỗ giữ chỗ.
     service = new PayrollService(
       payrolls as never,
       {} as never,
       engine as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

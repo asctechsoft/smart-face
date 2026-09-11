@@ -1,8 +1,11 @@
 import { initializeApp, type FirebaseApp } from 'firebase/app';
 import {
   EmailAuthProvider,
+  browserLocalPersistence,
+  browserSessionPersistence,
   getAuth,
   reauthenticateWithCredential,
+  setPersistence,
   signInWithEmailAndPassword,
   signOut,
   updatePassword,
@@ -51,10 +54,31 @@ export class FirebaseNotConfiguredError extends Error {
   }
 }
 
-/** Đăng nhập với Firebase và trả về ID token còn mới. */
-export async function signInAndGetIdToken(email: string, password: string): Promise<string> {
-  const credential = await signInWithEmailAndPassword(firebaseAuth(), email, password);
+/**
+ * Đăng nhập với Firebase và trả về ID token còn mới.
+ *
+ * `remember` phải đặt TRƯỚC `signInWithEmailAndPassword`: Firebase gắn kiểu lưu
+ * trữ vào lúc tạo phiên, đổi sau khi đã đăng nhập thì phiên vừa tạo vẫn nằm ở
+ * kho cũ. Bỏ tích ô "Ghi nhớ đăng nhập" mà Firebase vẫn ghi vào `localStorage`
+ * thì đóng trình duyệt xong mở lại, người dùng vẫn còn đăng nhập ở Firebase —
+ * đúng thứ họ vừa từ chối, chỉ là ta không nhìn thấy vì token của Backend đã
+ * biến mất.
+ */
+export async function signInAndGetIdToken(
+  email: string,
+  password: string,
+  remember = true,
+): Promise<string> {
+  const auth = firebaseAuth();
+  await setPersistence(auth, remember ? browserLocalPersistence : browserSessionPersistence);
+  const credential = await signInWithEmailAndPassword(auth, email, password);
   return credential.user.getIdToken();
+}
+
+/** Email của tài khoản Firebase đang đăng nhập — dùng để hiện danh tính khi chưa gọi được API nghiệp vụ. */
+export function currentFirebaseEmail(): string | null {
+  if (!isFirebaseConfigured) return null;
+  return firebaseAuth().currentUser?.email ?? null;
 }
 
 /**

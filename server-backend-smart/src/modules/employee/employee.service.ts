@@ -66,6 +66,28 @@ export class EmployeeService {
   //  Đọc
   // ===========================================================================
 
+  /**
+   * So lieu cho hang the tren dau danh sach nhan su (mockup `63:71`).
+   *
+   * `total` la TONG cua cac trang thai, khong phai mot phep dem rieng — hai con
+   * so lech nhau tren cung mot man hinh la thu nguoi dung phat hien ngay va
+   * khong bao gio tin lai.
+   */
+  async summary(companyId: string, departmentScope: string[] | null) {
+    const byStatus = await this.employees.countByStatus(companyId, departmentScope);
+    const get = (status: string) => byStatus[status] ?? 0;
+
+    return {
+      total: Object.values(byStatus).reduce((sum, count) => sum + count, 0),
+      active: get('ACTIVE'),
+      pendingActivation: get('PENDING_ACTIVATION'),
+      // Tam ngung va nghi viec gop mot the: ca hai deu la "khong con cham cong",
+      // va tach doi thi moi the con mot con so nho den muc khong dang mot the.
+      inactive: get('SUSPENDED') + get('TERMINATED'),
+      byStatus,
+    };
+  }
+
   async list(companyId: string, query: EmployeeQueryDto, departmentScope: string[] | null) {
     const { items, total } = await this.employees.search(companyId, {
       status: query.status,
@@ -301,7 +323,12 @@ export class EmployeeService {
     };
   }
 
-  async update(ctx: TenantContext, employeeId: string, dto: UpdateEmployeeDto) {
+  async update(
+    ctx: TenantContext,
+    employeeId: string,
+    dto: UpdateEmployeeDto,
+    expectedVersion?: number,
+  ) {
     const employee = await this.employees.findById(ctx.companyId, employeeId);
     if (!employee) {
       throw new AppException('EMP_NOT_FOUND');
@@ -321,18 +348,23 @@ export class EmployeeService {
       }
     }
 
-    const updated = await this.employees.update(ctx.companyId, employeeId, {
-      fullName: dto.fullName,
-      employeeCode: dto.employeeCode,
-      email: dto.email,
-      departmentId: dto.departmentId,
-      branchId: dto.branchId,
-      position: dto.position,
-      contractType: dto.contractType,
-      joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : undefined,
-      roles: dto.roles,
-      managedDepartmentIds: dto.managedDepartmentIds,
-    });
+    const updated = await this.employees.update(
+      ctx.companyId,
+      employeeId,
+      {
+        fullName: dto.fullName,
+        employeeCode: dto.employeeCode,
+        email: dto.email,
+        departmentId: dto.departmentId,
+        branchId: dto.branchId,
+        position: dto.position,
+        contractType: dto.contractType,
+        joinedAt: dto.joinedAt ? new Date(dto.joinedAt) : undefined,
+        roles: dto.roles,
+        managedDepartmentIds: dto.managedDepartmentIds,
+      },
+      expectedVersion,
+    );
     if (!updated) {
       throw new AppException('EMP_NOT_FOUND');
     }

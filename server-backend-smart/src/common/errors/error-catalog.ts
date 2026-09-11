@@ -3,7 +3,7 @@ import { HttpStatus } from '@nestjs/common';
 /**
  * Bảng mã lỗi TẬP TRUNG của SmartFace.
  *
- * Nguồn: docs/02-kien-truc-he-thong.md mục 9 + docs/08-hop-dong-api.md.
+ * Nguồn: docs/11-kien-truc-va-technology-stack.md mục 9 + docs/15-hop-dong-api.md.
  *
  * Nguyên tắc (NFR-UX-02, FR-APP-FACE-06):
  *   - Mỗi lỗi có mã riêng + thông điệp tiếng Việt + tiếng Anh + hướng dẫn khắc phục.
@@ -1115,6 +1115,169 @@ export const ERROR_CATALOG = {
     message: 'Đã xảy ra lỗi hệ thống. Chúng tôi đã ghi nhận và sẽ xử lý.',
     messageEn: 'An internal error occurred. It has been logged for investigation.',
     retryable: true,
+  },
+
+  // ===========================================================================
+  //  v2.1 — RBAC, kỳ công, Owner, step-up, gói dịch vụ (docs/13 §5)
+  // ===========================================================================
+
+  RBAC_PERMISSION_DENIED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Tài khoản của bạn không có quyền thực hiện thao tác này.',
+    messageEn: 'Your account lacks the permission required for this action.',
+    hint: 'Liên hệ Giám đốc hoặc người quản trị công ty để được cấp quyền.',
+    retryable: false,
+  },
+  RBAC_SCOPE_DENIED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Dữ liệu này nằm ngoài phạm vi quản lý của bạn.',
+    messageEn: 'This record is outside your assigned data scope.',
+    hint: 'Bạn chỉ xem được dữ liệu thuộc phạm vi đã được phân công.',
+    retryable: false,
+  },
+  RBAC_ROLE_NOT_FOUND: {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Không tìm thấy vai trò.',
+    messageEn: 'Role not found.',
+    retryable: false,
+  },
+  RBAC_CANNOT_GRANT: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Bạn không thể cấp quyền cao hơn hoặc ngoài phạm vi quyền của chính mình.',
+    messageEn: 'You cannot grant a role broader than your own authority.',
+    retryable: false,
+  },
+  PERIOD_INVALID_TRANSITION: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Kỳ công đang ở trạng thái không cho phép thao tác này.',
+    messageEn: 'The payroll period is in a state that does not allow this transition.',
+    hint: 'Tải lại trang để xem trạng thái mới nhất của kỳ.',
+    retryable: false,
+  },
+  PERIOD_VERSION_NOT_FOUND: {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Không tìm thấy phiên bản này của kỳ công.',
+    messageEn: 'That version of the payroll period does not exist.',
+    retryable: false,
+  },
+  OWNER_LAST_ONE: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Không thể gỡ Owner cuối cùng của công ty.',
+    messageEn: 'Cannot revoke the last remaining company Owner.',
+    hint: 'Chỉ định một Owner khác trước khi gỡ người này (BR-15).',
+    retryable: false,
+  },
+  OWNER_ALREADY_GRANTED: {
+    status: HttpStatus.CONFLICT,
+    message: 'Người này đã là Owner của công ty.',
+    messageEn: 'This person is already a company Owner.',
+    retryable: false,
+  },
+  SELF_APPROVAL_FORBIDDEN: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Bạn không thể tự duyệt yêu cầu của chính mình.',
+    messageEn: 'You cannot approve your own request.',
+    hint: 'Yêu cầu này phải do người khác duyệt (BR-14).',
+    retryable: false,
+  },
+  DELEGATION_INVALID_RANGE: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Khoảng thời gian uỷ quyền không hợp lệ.',
+    messageEn: 'The delegation validity range is invalid.',
+    hint: 'Ngày kết thúc phải sau ngày bắt đầu, và uỷ quyền bắt buộc có ngày kết thúc.',
+    retryable: false,
+  },
+  STEPUP_REQUIRED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Thao tác này cần xác thực lại danh tính.',
+    messageEn: 'This action requires step-up authentication.',
+    hint: 'Xác thực lại rồi thực hiện lại thao tác trong vài phút tới.',
+    retryable: false,
+  },
+  STEPUP_EXPIRED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Phiên xác thực đã hết hạn. Vui lòng xác thực lại.',
+    messageEn: 'The step-up challenge has expired. Please verify again.',
+    retryable: false,
+  },
+  STEPUP_ACTION_MISMATCH: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Xác thực này được cấp cho một thao tác khác.',
+    messageEn: 'This step-up verification was issued for a different action.',
+    retryable: false,
+  },
+  VERSION_CONFLICT: {
+    status: HttpStatus.CONFLICT,
+    message: 'Bản ghi đã được người khác sửa trong lúc bạn đang thao tác.',
+    messageEn: 'This record was modified by someone else while you were editing.',
+    hint: 'Tải lại để xem thay đổi mới nhất rồi thực hiện lại.',
+    retryable: false,
+  },
+  SUPPORT_SESSION_REQUIRED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Truy cập dữ liệu công ty cần mở phiên hỗ trợ có mã phiếu và lý do.',
+    messageEn: 'Accessing tenant data requires an open support session with a ticket and purpose.',
+    retryable: false,
+  },
+  SUPPORT_SESSION_EXPIRED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Phiên hỗ trợ đã hết hạn.',
+    messageEn: 'The support access session has expired.',
+    retryable: false,
+  },
+  SYS_AI_BAD_REQUEST: {
+    status: HttpStatus.INTERNAL_SERVER_ERROR,
+    message: 'Đã xảy ra lỗi khi xử lý ảnh. Chúng tôi đã ghi nhận.',
+    messageEn: 'An error occurred while processing the image. It has been logged.',
+    // Người dùng cuối không làm gì được với lỗi này — đây là lời gọi sai từ
+    // Backend tới AI Server, tức là lỗi lập trình. Thông báo giữ trung tính,
+    // chi tiết nằm ở log kèm mã lỗi của AI Server.
+    retryable: false,
+  },
+  PLAN_NOT_FOUND: {
+    status: HttpStatus.NOT_FOUND,
+    message: 'Không tìm thấy gói dịch vụ.',
+    messageEn: 'Subscription plan not found.',
+    retryable: false,
+  },
+  PLAN_LIMIT_EXCEEDED: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Đã chạm giới hạn của gói dịch vụ hiện tại.',
+    messageEn: 'The current subscription plan limit has been reached.',
+    hint: 'Nâng gói dịch vụ hoặc liên hệ quản trị nền tảng để được nới giới hạn.',
+    retryable: false,
+  },
+  PLAN_FEATURE_DISABLED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Tính năng này không có trong gói dịch vụ của công ty bạn.',
+    messageEn: 'This feature is not included in your company subscription plan.',
+    retryable: false,
+  },
+  SETUP_STEP_INCOMPLETE: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Cần hoàn tất các bước thiết lập trước đó.',
+    messageEn: 'Previous setup steps must be completed first.',
+    retryable: false,
+  },
+  ATT_OFFLINE_DISABLED: {
+    status: HttpStatus.FORBIDDEN,
+    message: 'Công ty của bạn chưa bật chế độ chấm công offline.',
+    messageEn: 'Offline attendance is not enabled for your company.',
+    hint: 'Khi mất mạng, hãy chờ có kết nối rồi chấm công lại.',
+    retryable: false,
+  },
+  ATT_OFFLINE_TOO_OLD: {
+    status: HttpStatus.UNPROCESSABLE_ENTITY,
+    message: 'Bản ghi chấm công offline đã quá hạn đồng bộ.',
+    messageEn: 'This offline attendance record is too old to be synced.',
+    hint: 'Liên hệ bộ phận nhân sự để được bổ sung công thủ công.',
+    retryable: false,
+  },
+  PLATFORM_ALREADY_BOOTSTRAPPED: {
+    status: HttpStatus.CONFLICT,
+    message: 'Nền tảng đã có tài khoản quản trị. Không thể khởi tạo lại.',
+    messageEn: 'The platform already has an administrator. Bootstrap is not available.',
+    retryable: false,
   },
 } as const satisfies Record<string, ErrorDefinition>;
 

@@ -50,13 +50,19 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
  * `<input>` nên không dính.
  */
 export const PasswordInput = forwardRef<HTMLInputElement, TextInputProps>(function PasswordInput(
-  { className, ...rest },
+  { icon, className, ...rest },
   ref,
 ) {
   const [visible, setVisible] = useState(false);
 
   return (
-    <span className="sf-input-wrap" style={{ position: 'relative' }}>
+    <span
+      className={`sf-input-wrap${icon ? ' sf-input-wrap--has-icon' : ''}`}
+      style={{ position: 'relative' }}
+    >
+      {/* Icon dẫn đầu — cùng vị trí và cùng lớp với `TextInput`, để một hàng có
+          cả ô email lẫn ô mật khẩu không bị lệch icon vài pixel. */}
+      {icon ? <Icon name={icon} size={20} className="sf-input-wrap__icon" /> : null}
       <input
         {...rest}
         ref={ref}

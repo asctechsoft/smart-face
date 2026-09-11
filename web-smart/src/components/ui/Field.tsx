@@ -26,6 +26,7 @@ export function Field({
   hint,
   error,
   required = false,
+  labelHidden = false,
   htmlFor,
   children,
 }: {
@@ -33,6 +34,17 @@ export function Field({
   hint?: ReactNode;
   error?: string | null;
   required?: boolean;
+  /**
+   * Giấu nhãn khỏi mắt nhưng GIỮ nguyên cho trình đọc màn hình.
+   *
+   * Chỉ dùng khi ô đã tự nói ra nó hỏi gì bằng cách khác — ô email có icon
+   * phong bì kèm chữ gợi ý, trong một biểu mẫu hai ô mà không thể nhầm lẫn.
+   * Đây KHÔNG phải cách bỏ nhãn cho gọn: mục 14.2 điều 5 vẫn đúng, chữ gợi ý
+   * biến mất ngay khi người dùng gõ, nên nhãn phải còn đó cho công nghệ trợ
+   * giúp. Bỏ hẳn `label` thì ô nhập không còn tên, và trình đọc màn hình chỉ
+   * đọc được "hộp văn bản, trống".
+   */
+  labelHidden?: boolean;
   /** Chỉ dùng khi phải nối vào một control có `id` cố định sẵn. */
   htmlFor?: string;
   children: ReactNode | ((props: FieldRenderProps) => ReactNode);
@@ -48,7 +60,7 @@ export function Field({
 
   return (
     <div className="sf-field">
-      <label className="sf-field__label" htmlFor={id}>
+      <label className={labelHidden ? 'sf-visually-hidden' : 'sf-field__label'} htmlFor={id}>
         {label}
         {required ? (
           <span className="sf-field__required" aria-hidden="true">

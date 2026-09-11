@@ -41,7 +41,14 @@ describe('Cách ly dữ liệu multi-tenant (NFR-SEC-05)', () => {
 
   const suffix = `iso${Date.now().toString(36)}`;
   const fixtures = {
-    a: { companyId: '', hrToken: '', employeeToken: '', employeeId: '', attendanceLogId: '', requestId: '' },
+    a: {
+      companyId: '',
+      hrToken: '',
+      employeeToken: '',
+      employeeId: '',
+      attendanceLogId: '',
+      requestId: '',
+    },
     b: { companyId: '', hrToken: '', employeeId: '', attendanceLogId: '', requestId: '' },
   };
 

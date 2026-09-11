@@ -523,7 +523,10 @@ export class ClearShiftAssignmentDto {
  * vậy người xếp lịch không vô tình xếp ca của phòng khác vào bảng của mình.
  */
 export class CreateShiftScheduleDto {
-  @ApiProperty({ type: [String], description: 'Phòng ban áp dụng — lấy toàn bộ CBNV đang làm việc' })
+  @ApiProperty({
+    type: [String],
+    description: 'Phòng ban áp dụng — lấy toàn bộ CBNV đang làm việc',
+  })
   @IsArray()
   @ArrayNotEmpty()
   @IsString({ each: true })

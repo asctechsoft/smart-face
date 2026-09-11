@@ -66,6 +66,13 @@ export const configuration = () => ({
      * một khách hàng thật — trùng thì khách hàng đó không đăng nhập được.
      */
     systemAdminDomain: process.env.SYSTEM_ADMIN_DOMAIN ?? 'system',
+    /**
+     * Gốc URL của web quản lý — dùng dựng link mời trong email kích hoạt.
+     *
+     * Để rỗng thì link trả về là đường dẫn tương đối; email vẫn gửi được nhưng
+     * người nhận phải tự biết vào đâu, nên production PHẢI đặt biến này.
+     */
+    webBaseUrl: process.env.WEB_BASE_URL ?? '',
   },
 
   security: {
@@ -180,15 +187,30 @@ export const configuration = () => ({
     circuitOpenMs: int(process.env.AI_CIRCUIT_OPEN_MS, 30_000),
   },
 
+  /**
+   * Cloud Storage for Firebase — ảnh chấm công, ảnh hồ sơ khuôn mặt, file đính
+   * kèm và file export.
+   *
+   * Không có khoá truy cập riêng: Storage dùng chung service account với
+   * Firebase Authentication ở khối `firebase` bên trên. Khai thiếu `FIREBASE_*`
+   * là hỏng cả đăng nhập lẫn lưu trữ.
+   */
   storage: {
-    endpoint: process.env.S3_ENDPOINT ?? '',
-    region: process.env.S3_REGION ?? 'ap-southeast-1',
-    bucket: process.env.S3_BUCKET ?? 'smartface',
-    accessKey: process.env.S3_ACCESS_KEY ?? '',
-    secretKey: process.env.S3_SECRET_KEY ?? '',
-    forcePathStyle: bool(process.env.S3_FORCE_PATH_STYLE, true),
-    /** NFR-SEC-12: presigned URL TTL ≤ 5 phút. */
-    presignTtlSeconds: Math.min(int(process.env.S3_PRESIGN_TTL_SECONDS, 300), 300),
+    /**
+     * Bỏ trống thì lấy bucket mặc định `<FIREBASE_PROJECT_ID>.firebasestorage.app`.
+     * Dự án tạo trước tháng 10/2024 dùng `<projectId>.appspot.com` nên phải khai
+     * tường minh.
+     */
+    bucket: process.env.FIREBASE_STORAGE_BUCKET ?? '',
+    /**
+     * Trỏ SDK về Storage Emulator để dev không ghi lên bucket thật.
+     * Ví dụ: `localhost:9199`. Bỏ trống = dùng Firebase thật.
+     *
+     * ⚠ Emulator không ký được signed URL, xem `StorageService.getPresignedUrl`.
+     */
+    emulatorHost: process.env.FIREBASE_STORAGE_EMULATOR_HOST ?? '',
+    /** NFR-SEC-12: signed URL TTL ≤ 5 phút. */
+    presignTtlSeconds: Math.min(int(process.env.STORAGE_PRESIGN_TTL_SECONDS, 300), 300),
   },
 
   sms: {

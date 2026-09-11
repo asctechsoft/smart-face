@@ -38,7 +38,12 @@ interface AuditLog {
  * là LÝ DO và cặp giá trị cũ → mới. Ẩn chúng sau một nút "xem chi tiết" là bắt
  * người ta bấm 50 lần để tìm một dòng.
  */
-export function AuditLogPage() {
+/**
+ * `embedded`: bỏ tiêu đề trang khi component này nằm trong một tab của trang
+ * "Thiết lập". Trang đó đã có tiêu đề riêng, và hai tiêu đề chồng nhau đọc như
+ * một lỗi dựng trang.
+ */
+export function AuditLogPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { timezone } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -156,10 +161,12 @@ export function AuditLogPage() {
 
   return (
     <>
-      <PageHeader
-        title="Nhật ký kiểm toán"
-        description="Mọi thao tác ảnh hưởng tới dữ liệu công và lương đều để lại dấu vết: ai làm, làm gì, giá trị cũ và mới, lý do."
-      />
+      {embedded ? null : (
+        <PageHeader
+          title="Nhật ký kiểm toán"
+          description="Mọi thao tác ảnh hưởng tới dữ liệu công và lương đều để lại dấu vết: ai làm, làm gì, giá trị cũ và mới, lý do."
+        />
+      )}
 
       <FilterBar activeCount={activeFilters} onClear={() => setSearchParams({}, { replace: true })}>
         <FilterField label="Khoảng ngày" width={260}>

@@ -432,7 +432,12 @@ export class RequestService {
     return this.getDetail(ctx.companyId, request.id);
   }
 
-  async update(ctx: TenantContext, requestId: string, dto: UpdateRequestDto) {
+  async update(
+    ctx: TenantContext,
+    requestId: string,
+    dto: UpdateRequestDto,
+    expectedVersion?: number,
+  ) {
     const request = await this.requireOwnRequest(ctx, requestId);
     if (request.status !== RequestStatus.DRAFT) {
       throw new AppException('REQ_INVALID_STATUS', {
@@ -444,18 +449,23 @@ export class RequestService {
     const endAt = dto.endAt ? new Date(dto.endAt) : request.endAt;
     const requestType = await this.requireRequestTypeById(ctx.companyId, request.requestTypeId);
 
-    const updated = await this.requests.updateDraft(ctx.companyId, requestId, {
-      startAt,
-      endAt,
-      isHalfDay: dto.isHalfDay ?? request.isHalfDay,
-      reason: dto.reason ?? request.reason,
-      quantity: this.computeQuantity(
-        requestType,
+    const updated = await this.requests.updateDraft(
+      ctx.companyId,
+      requestId,
+      {
         startAt,
         endAt,
-        dto.isHalfDay ?? request.isHalfDay,
-      ),
-    });
+        isHalfDay: dto.isHalfDay ?? request.isHalfDay,
+        reason: dto.reason ?? request.reason,
+        quantity: this.computeQuantity(
+          requestType,
+          startAt,
+          endAt,
+          dto.isHalfDay ?? request.isHalfDay,
+        ),
+      },
+      expectedVersion,
+    );
     if (!updated) {
       throw new AppException('REQ_INVALID_STATUS', {
         reason: 'Chỉ sửa được đơn ở trạng thái nháp.',
@@ -586,6 +596,120 @@ export class RequestService {
       throw new AppException('REQ_REJECT_REASON_REQUIRED');
     }
     return this.decide(ctx, requestId, 'REJECTED', reason);
+  }
+
+  /**
+   * Người duyệt hỏi thêm thông tin thay vì từ chối (`docs/08` §3.2).
+   *
+   * ## Vì sao cần một trạng thái riêng
+   *
+   * Trước v2.1 người duyệt chỉ có hai nút: duyệt hoặc từ chối. Thiếu một tấm ảnh
+   * giấy khám bệnh mà phải bấm "Từ chối" thì nhân viên nhận thông báo đơn bị bác,
+   * phải nộp lại từ đầu, và số liệu thống kê tỉ lệ từ chối trở thành vô nghĩa vì
+   * lẫn cả những đơn thực ra chỉ thiếu giấy tờ.
+   *
+   * ## Vì sao bước duyệt vẫn PENDING
+   *
+   * Đơn lùi về `NEED_MORE_INFO` nhưng bước duyệt hiện tại KHÔNG bị đóng: bổ sung
+   * xong thì đơn quay lại đúng người đang hỏi, không chạy lại luồng từ cấp một.
+   * Nếu đóng bước rồi mở lại, người đã duyệt ở các cấp trước sẽ phải duyệt lần
+   * nữa cho cùng một đơn.
+   */
+  async requestMoreInfo(ctx: TenantContext, requestId: string, question: string) {
+    if (!question?.trim()) {
+      throw new AppException('SYS_VALIDATION_ERROR', {
+        reason: 'Phải nêu rõ cần bổ sung thông tin gì.',
+      });
+    }
+
+    const request = await this.requests.findForDecision(ctx.companyId, requestId);
+    if (!request) {
+      throw new AppException('REQ_NOT_FOUND');
+    }
+    if (request.status !== RequestStatus.PENDING) {
+      throw new AppException('REQ_ALREADY_DECIDED', { status: request.status });
+    }
+
+    const currentStep = request.approvalSteps.find((step) => step.status === 'PENDING');
+    if (!currentStep) {
+      throw new AppException('REQ_ALREADY_DECIDED');
+    }
+
+    // Cùng điều kiện "đến lượt anh" như khi duyệt — hỏi thêm cũng là một hành
+    // động của người duyệt, không phải ai đi ngang qua cũng chặn được đơn.
+    const canAct =
+      ctx.isSystemAdmin ||
+      currentStep.approverId === ctx.employeeId ||
+      this.roleMatchesApprover(ctx.roles, currentStep.approverRole);
+    if (!canAct) {
+      throw new AppException('REQ_NOT_YOUR_TURN', {
+        requiredRole: currentStep.approverRole,
+        assignedApproverId: currentStep.approverId,
+      });
+    }
+
+    await this.transactions.run(async (tx) => {
+      await this.requests.recordStepQuestion(ctx.companyId, currentStep.id, question, tx);
+      await this.requests.updateStatus(
+        ctx.companyId,
+        requestId,
+        { status: RequestStatus.NEED_MORE_INFO },
+        tx,
+      );
+    });
+
+    await this.audit.record(ctx, {
+      action: 'REQUEST_NEED_MORE_INFO',
+      targetType: 'LEAVE_REQUEST',
+      targetId: requestId,
+      reason: question,
+    });
+
+    await this.notifications.notify({
+      companyId: ctx.companyId,
+      employeeId: request.employeeId,
+      type: 'REQUEST_NEED_MORE_INFO',
+      title: `Đơn ${request.requestType.name} cần bổ sung thông tin`,
+      body: question,
+      data: { requestId },
+    });
+    this.realtime.emitToEmployee(request.employeeId, 'request.need_more_info', {
+      requestId,
+      question,
+    });
+
+    return this.getDetail(ctx.companyId, requestId);
+  }
+
+  /**
+   * Nhân viên bổ sung xong và đẩy đơn trở lại người duyệt.
+   *
+   * Có mặt vì `NEED_MORE_INFO` mà không có đường ra là một cái bẫy: đơn kẹt ở đó
+   * vĩnh viễn và cách duy nhất để thoát là huỷ rồi nộp lại — đúng cái việc trạng
+   * thái này sinh ra để tránh.
+   */
+  async provideMoreInfo(ctx: TenantContext, requestId: string, note?: string) {
+    const request = await this.requireOwnRequest(ctx, requestId);
+    if (request.status !== RequestStatus.NEED_MORE_INFO) {
+      throw new AppException('REQ_INVALID_STATUS', {
+        reason: 'Chỉ đơn đang chờ bổ sung thông tin mới dùng được thao tác này.',
+        status: request.status,
+      });
+    }
+
+    await this.requests.updateStatus(ctx.companyId, requestId, {
+      status: RequestStatus.PENDING,
+    });
+
+    await this.audit.record(ctx, {
+      action: 'REQUEST_INFO_PROVIDED',
+      targetType: 'LEAVE_REQUEST',
+      targetId: requestId,
+      reason: note,
+    });
+
+    await this.notifyApprovers(ctx.companyId, requestId);
+    return this.getDetail(ctx.companyId, requestId);
   }
 
   /**
@@ -1075,7 +1199,13 @@ export class RequestService {
    */
   private async applyMakeupCredit(
     ctx: TenantContext,
-    request: { id: string; employeeId: string; requestType: RequestType; startAt: Date; quantity: Prisma.Decimal | number },
+    request: {
+      id: string;
+      employeeId: string;
+      requestType: RequestType;
+      startAt: Date;
+      quantity: Prisma.Decimal | number;
+    },
   ): Promise<void> {
     if (request.requestType.deductFrom !== 'MAKEUP_CREDIT') return;
 

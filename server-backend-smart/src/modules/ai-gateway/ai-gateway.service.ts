@@ -50,13 +50,17 @@ export class AiGatewayService {
   /** Trích embedding từ ảnh đăng ký, kèm kiểm tra chất lượng + liveness. */
   async enroll(
     image: Buffer,
-    options: { requireLiveness: boolean; livenessAction?: LivenessAction },
+    options: { requireLiveness: boolean; livenessAction?: LivenessAction; correlationId?: string },
   ) {
-    return this.call<AiEnrollResponse>('/v1/enroll', {
-      image_base64: image.toString('base64'),
-      require_liveness: options.requireLiveness,
-      liveness_action: options.livenessAction ?? null,
-    });
+    return this.call<AiEnrollResponse>(
+      '/v1/enroll',
+      {
+        image_base64: image.toString('base64'),
+        require_liveness: options.requireLiveness,
+        liveness_action: options.livenessAction ?? null,
+      },
+      options.correlationId,
+    );
   }
 
   /**
@@ -68,14 +72,18 @@ export class AiGatewayService {
   async verify(
     image: Buffer,
     embeddings: number[][],
-    options: { requireLiveness: boolean; livenessAction?: LivenessAction },
+    options: { requireLiveness: boolean; livenessAction?: LivenessAction; correlationId?: string },
   ) {
-    return this.call<AiVerifyResponse>('/v1/verify', {
-      image_base64: image.toString('base64'),
-      embeddings,
-      require_liveness: options.requireLiveness,
-      liveness_action: options.livenessAction ?? null,
-    });
+    return this.call<AiVerifyResponse>(
+      '/v1/verify',
+      {
+        image_base64: image.toString('base64'),
+        embeddings,
+        require_liveness: options.requireLiveness,
+        liveness_action: options.livenessAction ?? null,
+      },
+      options.correlationId,
+    );
   }
 
   /**
@@ -99,20 +107,29 @@ export class AiGatewayService {
   async identify(
     image: Buffer,
     scope: { candidates: AiIdentifyCandidate[] } | { scopeIds: string[]; namespace: string },
-    options: { topK?: number; requireLiveness?: boolean; livenessAction?: LivenessAction } = {},
+    options: {
+      topK?: number;
+      requireLiveness?: boolean;
+      livenessAction?: LivenessAction;
+      correlationId?: string;
+    } = {},
   ) {
     const target =
       'candidates' in scope
         ? { candidates: scope.candidates }
         : { scope_ids: scope.scopeIds, namespace: scope.namespace };
 
-    return this.call<AiIdentifyResponse>('/v1/identify', {
-      image_base64: image.toString('base64'),
-      ...target,
-      top_k: options.topK ?? 5,
-      require_liveness: options.requireLiveness ?? false,
-      liveness_action: options.livenessAction ?? null,
-    });
+    return this.call<AiIdentifyResponse>(
+      '/v1/identify',
+      {
+        image_base64: image.toString('base64'),
+        ...target,
+        top_k: options.topK ?? 5,
+        require_liveness: options.requireLiveness ?? false,
+        liveness_action: options.livenessAction ?? null,
+      },
+      options.correlationId,
+    );
   }
 
   async health(): Promise<AiHealthResponse | null> {
@@ -169,29 +186,73 @@ export class AiGatewayService {
   // Circuit breaker
   // ---------------------------------------------------------------------------
 
-  private async call<T>(path: string, payload: Record<string, unknown>): Promise<T> {
+  private async call<T>(
+    path: string,
+    payload: Record<string, unknown>,
+    correlationId?: string,
+  ): Promise<T> {
     this.assertCircuitAllowsCall();
 
     try {
-      const { data } = await this.http.post<T>(path, payload);
+      const { data } = await this.http.post<T>(path, payload, {
+        // NFR-AUD-02 — nối được dòng log của AI Server với bản ghi chấm công đã
+        // sinh ra nó. Không có header này thì cách duy nhất để ghép hai bên là
+        // đoán theo mốc thời gian, và mốc thời gian trùng nhau hàng loạt vào
+        // giờ cao điểm.
+        headers: correlationId ? { 'X-Correlation-Id': correlationId } : undefined,
+      });
       this.onSuccess();
       return data;
     } catch (error) {
-      this.onFailure();
-
       if (isAxiosError(error)) {
+        const status = error.response?.status;
+
         if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
+          this.onFailure();
           this.logger.warn(`AI Server timeout tại ${path}`);
           throw new AppException('SYS_AI_TIMEOUT');
         }
+
+        // 4xx là LỖI CỦA LỜI GỌI, không phải AI Server hỏng.
+        //
+        // Trước đây mọi mã lỗi đều gọi `onFailure()`, nên một lỗi lập trình lặp
+        // lại — chẳng hạn quên trường `namespace`, trả 422 — cũng mở được circuit
+        // breaker và làm dừng chấm công của toàn bộ công ty. Thứ đáng lẽ là một
+        // dòng lỗi trong log lại thành sự cố diện rộng.
+        //
+        // 401 vẫn tính là hỏng: sai `X-Internal-Key` nghĩa là cấu hình sai, và
+        // mọi lượt gọi sau đều sẽ hỏng y hệt — mở circuit là đúng.
+        const isCallerError =
+          status !== undefined && status >= 400 && status < 500 && status !== 401;
+        if (!isCallerError) {
+          this.onFailure();
+        }
+
+        const code = this.extractErrorCode(error.response?.data);
         this.logger.error(
-          `AI Server lỗi tại ${path}: ${error.response?.status ?? ''} ${error.message}`,
+          `AI Server lỗi tại ${path}: ${status ?? ''} ${code ?? ''} ${error.message}`,
         );
+
+        if (isCallerError) {
+          throw new AppException('SYS_AI_BAD_REQUEST', { aiErrorCode: code, status });
+        }
       } else {
+        this.onFailure();
         this.logger.error(`AI Server lỗi không xác định tại ${path}: ${(error as Error).message}`);
       }
       throw new AppException('SYS_AI_UNAVAILABLE');
     }
+  }
+
+  /** Đọc `detail.code` trong envelope lỗi mới của AI Server; cũ thì trả null. */
+  private extractErrorCode(data: unknown): string | null {
+    if (!data || typeof data !== 'object') return null;
+    const detail = (data as { detail?: unknown }).detail;
+    if (detail && typeof detail === 'object' && 'code' in detail) {
+      const code = (detail as { code?: unknown }).code;
+      return typeof code === 'string' ? code : null;
+    }
+    return null;
   }
 
   private assertCircuitAllowsCall(): void {

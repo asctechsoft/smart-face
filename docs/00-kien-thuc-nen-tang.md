@@ -560,7 +560,7 @@ Nếu để client kiểm tra rồi báo về "tôi đã kiểm tra rồi, hợp
           │                            │  WORKER          │
           ▼                            │  Engine tính công│
  ┌────────────────┐                    └──────────────────┘
- │  MinIO / S3    │
+ │Firebase Storage│
  │  ảnh bằng chứng│
  └────────────────┘
 ```
@@ -626,7 +626,7 @@ Hai mô hình khác nhau hoàn toàn, ảnh hưởng tới toàn bộ thiết k�
 | Face | Python 3.11 + FastAPI + InsightFace + ONNXRuntime | Đóng gói Docker |
 | Anti-spoof | Silent-Face-Anti-Spoofing (MiniFASNet) | ONNX |
 | Queue | Redis + BullMQ | Job tính công, gửi thông báo |
-| Lưu ảnh | MinIO (self-host) hoặc S3 | Bật lifecycle tự xoá sau 90 ngày |
+| Lưu ảnh | Cloud Storage for Firebase | Bật lifecycle tự xoá sau 90 ngày |
 | Auth | Auth.js v5 hoặc Lucia | RBAC tự viết |
 | Xử lý thời gian | Luxon hoặc date-fns-tz | **Bắt buộc** thư viện có timezone |
 | Export Excel | ExcelJS | Kế toán sẽ đòi file Excel, không phải CSV |
@@ -963,7 +963,7 @@ model FaceProfile {
   embedding   Unsupported("vector(512)")
 
   // Ảnh gốc để audit — KHÔNG dùng để nhận diện, chỉ để đối chiếu khi tranh chấp
-  imageKey    String?   // key trên S3/MinIO
+  imageKey    String?   // key trên Firebase Storage
   pose        FacePose  @default(FRONTAL)
   quality     Float?    // điểm chất lượng lúc enroll
   isActive    Boolean   @default(true)
@@ -1642,7 +1642,7 @@ Hai mức bảo vệ:
 
 Lưu ý đánh đổi: mã hoá cột thì không dùng được index pgvector (vì phải giải mã mới so sánh được). Với N nhỏ, nạp toàn bộ vào RAM của face service rồi giải mã một lần lúc khởi động là phương án cân bằng tốt.
 
-**Ảnh bằng chứng:** đặt vòng đời tự xoá (90 ngày là hợp lý), lưu trên bucket private, chỉ truy cập qua presigned URL thời hạn ngắn.
+**Ảnh bằng chứng:** đặt vòng đời tự xoá (90 ngày là hợp lý), lưu trên bucket private, chỉ truy cập qua signed URL thời hạn ngắn.
 
 **Không bao giờ log embedding hay ảnh base64** vào file log ứng dụng. Rất dễ vô tình để lộ khi debug.
 

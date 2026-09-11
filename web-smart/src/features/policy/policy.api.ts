@@ -264,6 +264,32 @@ export const POLICY_FIELDS = [
     ],
   },
   {
+    group: 'Lịch chốt lương',
+    items: [
+      {
+        key: 'payroll.schedule.reviewDays',
+        label: 'Số ngày đối soát',
+        type: 'number' as const,
+        suffix: 'ngày',
+        hint: 'Tính từ ngày liền sau ngày cuối kỳ. Hiện trên khối "Lịch trình chốt lương" ở Tổng quan.',
+      },
+      {
+        key: 'payroll.schedule.calcDays',
+        label: 'Số ngày tính lương',
+        type: 'number' as const,
+        suffix: 'ngày',
+        hint: 'Tính tiếp ngay sau khoảng đối soát.',
+      },
+      {
+        key: 'payroll.schedule.payoutOffsetDays',
+        label: 'Ngày chi trả, tính từ cuối kỳ',
+        type: 'number' as const,
+        suffix: 'ngày',
+        hint: 'VD 5 = trả lương vào ngày thứ 5 sau ngày cuối kỳ.',
+      },
+    ],
+  },
+  {
     group: 'Tăng ca (OT)',
     items: [
       {

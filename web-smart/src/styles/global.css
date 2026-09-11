@@ -25,7 +25,12 @@ body {
   margin: 0;
   background: var(--sf-surface-bright);
   color: var(--sf-on-surface);
-  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
   font-size: 16px;
   line-height: 24px;
   -webkit-font-smoothing: antialiased;
@@ -88,7 +93,7 @@ body {
   font-size: 32px;
   line-height: 40px;
   letter-spacing: -0.64px;
-  color: var(--sf-teal-700);
+  color: var(--sf-blue-700);
   margin: 0;
 }
 
@@ -202,15 +207,145 @@ body {
  *  docs/16 mục 11.15 — Sidenav
  * ======================================================================== */
 
+/*
+ * Thanh dieu huong trai.
+ *
+ * Ba tang theo chieu doc: thuong hieu — danh sach muc — chan thanh (tro giup,
+ * tai khoan). Tang giua CHIEM HET phan con lai (`flex: 1`) de chan thanh luon
+ * dinh day, du danh sach chi con ba muc hay day mot man hinh: nguoi dung tim
+ * nut dang xuat bang VI TRI, va mot khoi tai khoan trong lung giua thanh la
+ * mot khoi khong ai tim thay.
+ *
+ * `overflow-y: auto` doi len tang giua chu khong o day nua: cuon ca thanh se
+ * keo luon khoi thuong hieu va khoi tai khoan ra khoi tam mat.
+ */
 .sf-sidenav {
   width: var(--sf-sidenav-width);
-  background: var(--sf-neutral-100);
+  background: var(--sf-sidenav-surface);
   padding: 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 16px;
   height: 100%;
+  overflow: hidden;
+}
+
+.sf-sidenav__brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+}
+
+.sf-sidenav__wordmark {
+  font-family: 'Plus Jakarta Sans', Inter, sans-serif;
+  font-weight: 700;
+  font-size: 17px;
+  line-height: 24px;
+  letter-spacing: -0.2px;
+  color: var(--sf-on-sidenav);
+}
+
+.sf-sidenav__groups {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  /* Thanh cuon mong va mo — tren nen navy, thanh cuon mac dinh cua he dieu
+     hanh la mot vach sang chay doc, doc nhu mot duong vien khong co that. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--sf-sidenav-item-hover) transparent;
+}
+
+.sf-sidenav__groups::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sf-sidenav__groups::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--sf-sidenav-item-hover);
+}
+
+/* ---------------------------------------------------------------------------
+ *  Chan thanh dieu huong
+ * ------------------------------------------------------------------------ */
+
+.sf-sidenav__footer {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 12px;
+  /* Duong ke MO (10% trang) chu khong phai mot mau xam co san: tren nen navy,
+     `--sf-outline-variant` cua nen sang doc ra thanh mot vach xam ban. */
+  border-top: 1px solid rgb(255 255 255 / 10%);
+}
+
+.sf-sidenav__account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--sf-sidenav-item);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--sf-motion-instant);
+}
+
+.sf-sidenav__account:hover {
+  background: var(--sf-sidenav-item-hover);
+}
+
+.sf-sidenav__avatar {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--sf-sidenav-item-hover);
+  color: var(--sf-on-sidenav);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sf-sidenav__identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Ten nguoi va ten cong ty deu cat bang dau ba cham. Cot chi rong 256px, ma
+ * "Cong ty TNHH Thuong mai va Dich vu ABC" la mot ten hoan toan binh thuong —
+ * cho no xuong dong se day khoi tai khoan cao gap doi va lam le ca chan thanh.
+ */
+.sf-sidenav__name,
+.sf-sidenav__org {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sf-sidenav__name {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--sf-on-sidenav);
+}
+
+.sf-sidenav__org {
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--sf-neutral-400);
 }
 
 .sf-nav-list {
@@ -223,12 +358,18 @@ body {
 }
 
 /*
- * Mục điều hướng — 36px, cùng nhịp với control 32px ở mục 11.1.
+ * Mục điều hướng — 36px, cùng nhịp với control 32px.
  *
- * Mục đang chọn được tô nền amber đặc, nên nó là KHỐI MÀU LỚN NHẤT trên màn
- * hình. Ở 48px với chữ 16px, khối đó nặng hơn cả tiêu đề trang và kéo mắt về
- * phía thanh điều hướng thay vì về phía dữ liệu — trong khi điều hướng là thứ
- * người dùng chỉ nhìn một lần rồi thôi.
+ * ## Thanh điều hướng nền tối
+ *
+ * Thiết kế v2.1 đặt sidenav trên nền navy. Đổi lại thì mọi màu trong thanh này
+ * phải lấy từ nhóm token `--sf-sidenav-*` chứ KHÔNG dùng `--sf-on-surface-*`:
+ * hai nhóm đó được tính cho hai nền khác nhau, và dùng nhầm là chữ xám trên nền
+ * navy — về mặt số là 1.4:1, tức là gần như không đọc được.
+ *
+ * Mục đang chọn tô nền xanh đặc nên nó là khối màu lớn nhất trong thanh. Giữ
+ * 40px thay vì 48px vì ở 48px khối đó nặng hơn cả tiêu đề trang và kéo mắt về
+ * phía điều hướng — thứ người dùng chỉ nhìn một lần rồi thôi.
  *
  * Vùng chạm 44px được khôi phục ở khối `pointer: coarse` cuối file (mục 10.2).
  */
@@ -236,29 +377,31 @@ body {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 36px;
+  height: 40px;
   padding: 8px 12px;
   border-radius: 8px;
-  color: var(--sf-on-surface-variant);
+  color: var(--sf-sidenav-item);
   font-size: 14px;
   line-height: 20px;
   text-decoration: none;
-  transition: background-color var(--sf-motion-instant), color var(--sf-motion-instant);
+  transition:
+    background-color var(--sf-motion-instant),
+    color var(--sf-motion-instant);
 }
 
 .sf-nav-item:hover {
-  background: var(--sf-neutral-200);
-  color: var(--sf-on-surface);
+  background: var(--sf-sidenav-item-hover);
+  color: var(--sf-on-sidenav);
 }
 
 .sf-nav-item[aria-current='page'] {
-  background: var(--sf-amber-500);
-  color: var(--sf-amber-900);
-  font-weight: 700;
+  background: var(--sf-sidenav-item-selected);
+  color: var(--sf-on-sidenav);
+  font-weight: 600;
 }
 
 .sf-nav-item[aria-current='page']:hover {
-  background: var(--sf-amber-400);
+  background: var(--sf-blue-700);
 }
 
 .sf-nav-group-label {
@@ -267,7 +410,9 @@ body {
   line-height: 16px;
   letter-spacing: 0.6px;
   text-transform: uppercase;
-  color: var(--sf-on-surface-variant);
+  /* Nhãn nhóm nằm trên nền navy nên phải mờ hơn mục nav, KHÔNG phải mờ theo
+     thang của nền sáng. `--sf-neutral-400` trên navy cho 6.2:1. */
+  color: var(--sf-neutral-400);
   padding: 0 12px;
   margin-bottom: 4px;
 }
@@ -309,13 +454,60 @@ body {
   box-shadow: var(--sf-shadow-xs);
 }
 
+/*
+ * Thẻ chỉ số — thẻ TRẮNG có viền, không phải khối xám.
+ *
+ * Nền trang nay là `surface-bright` (#f5f7fa). Một thẻ tô `neutral-100` trên
+ * nền đó gần như tàng hình: hai màu chỉ cách nhau vài phần trăm độ sáng, nên
+ * hàng thẻ trông như một dải xám liền chứ không phải năm ô riêng.
+ */
 .sf-stat-card {
-  background: var(--sf-neutral-100);
+  background: var(--sf-surface);
+  border: 1px solid var(--sf-outline-variant);
   border-radius: 12px;
-  padding: 12px;
+  padding: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: var(--sf-shadow-xs);
+}
+
+.sf-stat-medallion {
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sf-stat-body {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sf-stat-card--link {
+  text-decoration: none;
+  color: inherit;
+  transition:
+    border-color var(--sf-motion-fast),
+    box-shadow var(--sf-motion-fast);
+}
+
+.sf-stat-card--link:hover {
+  border-color: var(--sf-primary);
+  box-shadow: var(--sf-shadow-md);
+}
+
+/* Hàng thẻ chỉ số — dùng chung ở Tổng quan, Bảng công, Nhân sự. */
+.sf-stat-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 16px;
 }
 
 /* ===========================================================================
@@ -332,10 +524,12 @@ body {
   height: 56px;
   padding: 12px 24px;
   border-radius: 8px;
-  background: var(--sf-teal-700);
+  background: var(--sf-blue-700);
   color: #ffffff;
   box-shadow: var(--sf-shadow-lg);
-  transition: opacity var(--sf-motion-base), transform var(--sf-motion-base);
+  transition:
+    opacity var(--sf-motion-base),
+    transform var(--sf-motion-base);
 }
 
 .sf-bulk-divider {
@@ -386,7 +580,11 @@ body {
   white-space: nowrap;
   word-wrap: normal;
   direction: ltr;
-  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-variation-settings:
+    'FILL' 0,
+    'wght' 400,
+    'GRAD' 0,
+    'opsz' 24;
   -webkit-font-feature-settings: 'liga';
   -webkit-font-smoothing: antialiased;
   user-select: none;
@@ -396,35 +594,44 @@ body {
  *  Ghi đè Ant Design cho những chỗ `ConfigProvider` không với tới
  * ======================================================================== */
 
-/* Nút amber SÁNG LÊN khi hover (mục 0.1). Antd mặc định tối đi → 3.02:1, trượt AA. */
+/*
+ * Nút chính TỐI đi khi hover.
+ *
+ * Ngược với bản teal/amber trước: nút amber có chữ nâu sẫm nên tối nền đi làm
+ * tương phản TỤT (3.02:1, trượt AA) và phải sáng lên. Nút xanh dương có chữ
+ * trắng, nên tối đi làm tương phản TĂNG — `blue-800` cho 8.72:1 so với 6.70:1 ở
+ * trạng thái nghỉ. Ở đây hành vi mặc định của Ant Design là đúng, chỉ cần khai
+ * đúng màu.
+ */
 .ant-btn-primary:not(:disabled):not(.ant-btn-disabled):hover {
-  background: var(--sf-amber-400) !important;
-  color: var(--sf-amber-900) !important;
+  background: var(--sf-primary-surface-hover) !important;
+  color: var(--sf-on-primary-surface) !important;
 }
 
-/* Active dùng bóng lõm + dịch 1px, KHÔNG đổi màu (mục 0.1). */
+/* Nhấn: giữ nguyên màu, dùng bóng lõm + dịch 1px. Chuyển động truyền đạt cú
+   nhấn tốt hơn màu, và không tốn thêm một bậc tương phản nào. */
 .ant-btn-primary:not(:disabled):not(.ant-btn-disabled):active {
-  background: var(--sf-amber-500) !important;
+  background: var(--sf-primary-surface) !important;
   box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.15) !important;
   transform: translateY(1px);
 }
 
 /* Nút teal đặc — biến thể "Primary teal" ở mục 11.1. */
 .ant-btn.sf-btn-teal:not(:disabled) {
-  background: var(--sf-teal-700);
+  background: var(--sf-blue-700);
   color: #ffffff;
-  border-color: var(--sf-teal-700);
+  border-color: var(--sf-blue-700);
 }
 
 .ant-btn.sf-btn-teal:not(:disabled):hover {
-  background: var(--sf-teal-800) !important;
+  background: var(--sf-blue-800) !important;
   color: #ffffff !important;
-  border-color: var(--sf-teal-800) !important;
+  border-color: var(--sf-blue-800) !important;
 }
 
 .ant-btn.sf-btn-teal:not(:disabled):active {
-  background: var(--sf-teal-900) !important;
-  border-color: var(--sf-teal-900) !important;
+  background: var(--sf-blue-900) !important;
+  border-color: var(--sf-blue-900) !important;
 }
 
 /*
@@ -459,9 +666,85 @@ body {
   padding-block: 8px !important;
 }
 
-/* Dòng đã chọn: nền teal-50 + viền trái teal-700 (mục 11.10). */
+/* Dòng đã chọn: nền blue-50 + viền trái blue-700 (mục 11.10). */
 .ant-table-tbody > tr.ant-table-row-selected > td:first-child {
-  box-shadow: inset 2px 0 0 0 var(--sf-teal-700);
+  box-shadow: inset 2px 0 0 0 var(--sf-blue-700);
+}
+
+/*
+ * Chân bảng kiểu "tổng số bên trái, điều khiển bên phải".
+ *
+ * Ant Design dồn cả cụm sang phải theo thứ tự: tổng số → nút trang → ô chọn số
+ * dòng. Thiết kế màn "Ca làm & Phân ca" đặt tổng số ở mép trái, và ô chọn số
+ * dòng đứng TRƯỚC các nút trang. Hai luật dưới đây đảo bằng flex chứ không dựng
+ * lại phân trang bằng tay — dựng tay là mất `aria-label` tiếng Việt, phím tắt
+ * và trạng thái disabled mà antd đã làm đúng.
+ */
+.sf-table--split-footer .ant-table-pagination.ant-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sf-table--split-footer .ant-pagination-total-text {
+  /* `-2` chứ không `0`: ô chọn số dòng đã nhảy lên `-1`, nên tổng số phải nhỏ
+     hơn nữa mới đứng đầu hàng như thiết kế. */
+  order: -2;
+  margin-inline-end: auto;
+  color: var(--sf-on-surface-variant);
+}
+
+.sf-table--split-footer .ant-pagination-options {
+  order: -1;
+  margin-inline-start: 0;
+}
+
+/* ===========================================================================
+ *  Thang chữ thu gọn của bảng danh mục ca làm việc
+ *
+ *  Bảng này có 12 cột — nhiều nhất sản phẩm. Ở cỡ chữ chạy (`token.fontSize`
+ *  16px) mỗi ô phải rộng hơn, nên ở bề rộng thật của ứng dụng bảng vừa phải
+ *  cuộn ngang vừa cao hơn mức cần thiết, và người dùng phải liếc xa mới nối
+ *  được mã ca ở cột đầu với hệ số ở cột cuối.
+ *
+ *  Hạ xuống 13px Ở ĐÂY chứ không sửa `token.fontSize` toàn cục: thang chữ là
+ *  tài sản chung của mọi màn hình và docs/20 mục 3.2 chốt nó. Cùng cách làm với
+ *  `.sf-dash` của màn Tổng quan.
+ * ======================================================================== */
+
+.sf-shift-catalog .ant-table {
+  font-size: 13px;
+}
+
+.sf-shift-catalog .ant-table-thead > tr > th {
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  /* Ant Design cho phép ngắt GIỮA TỪ trong ô tiêu đề, nên ở cột hẹp nó cho ra
+     "HỆ SỐ NGÀY THƯỜN / G" và "THA / O TÁC". Ngắt chỉ ở khoảng trắng: tiêu đề
+     xuống hai dòng thì được, cắt đôi một từ thì không. */
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+/* `className` của một cột Ant Design rơi vào CẢ `th` lẫn `td`. Cấm ngắt dòng là
+   ý định dành cho Ô DỮ LIỆU (giờ giấc, hệ số — luôn ngắn và luôn một dòng);
+   ép cả tiêu đề theo thì "HỆ SỐ NGÀY THƯỜNG" bị cắt cụt thành "HỆ SỐ NGÀ". */
+.sf-shift-catalog .ant-table-thead > tr > th.sf-nowrap {
+  white-space: normal;
+}
+
+/* Đệm ngang 10px thay cho 16px: mười hai cột nhân hai biên là 384px chỉ để
+   trống — đúng bằng phần đẩy bảng sang phải khỏi khung nhìn. Năm cột giờ
+   ("07:30 - 09:00") cần chừng 117px mới giữ được một dòng, và 6px tiết kiệm ở
+   mỗi biên là thứ trả đủ cho cả năm cột đó. */
+.sf-shift-catalog .ant-table-tbody > tr > td,
+.sf-shift-catalog .ant-table-thead > tr > th {
+  padding-inline: 10px;
+}
+
+.sf-shift-catalog .ant-pagination {
+  font-size: 13px;
 }
 
 /* Bảng dày đặc trong drawer/modal không cần chiều cao dòng 74px. */
@@ -581,4 +864,2257 @@ body {
  */
 .ant-drawer .ant-drawer-footer {
   flex: 0 0 auto;
+}
+
+/* ===========================================================================
+ *  Thang chu thu gon cua rieng man hinh Tong quan
+ *
+ *  Trang nay nhoi bay khoi so lieu vao mot khung nhin — nhieu hon bat ky man
+ *  hinh nao khac. O thang chu chung (body 16px) moi khoi phai rong hon, va o be
+ *  rong that cua ung dung thi khong con du cho: nhan bi ngat dong giua chung,
+ *  con so bi day ra khoi the.
+ *
+ *  Ha xuong 13px o DAY chu khong sua `.sf-body-md` toan cuc: thang chu la tai
+ *  san chung cua moi man hinh va docs/16 muc 3.2 chot no. Pham vi cua ban ghi
+ *  de nay dung o `.sf-dash`.
+ * ======================================================================== */
+
+.sf-dash {
+  font-size: 13px;
+}
+
+.sf-dash .sf-body-md {
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.sf-dash .sf-body-sm {
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.sf-dash .sf-title-sm {
+  font-size: 14px;
+  line-height: 20px;
+}
+
+/* Tieu de khoi giu khoang cach ro voi noi dung — 16px la muc thap nhat con
+   doc duoc nhu mot TIEU DE chu khong phai mot dong chu dam. */
+.sf-dash .sf-title-md {
+  font-size: 16px;
+  line-height: 24px;
+}
+
+.sf-dash .sf-label-md {
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.5px;
+}
+
+/* Bang cua Ant Design khong dung lop chu cua he thong nen phai chi dinh rieng. */
+.sf-dash .ant-table {
+  font-size: 13px;
+}
+
+.sf-dash .ant-table-thead > tr > th {
+  font-size: 11px;
+  letter-spacing: 0.4px;
+}
+
+.sf-dash .ant-pagination {
+  font-size: 12px;
+}
+
+/*
+ * Phan trang trong mot the rong ~660px: mac dinh cua Ant Design don het moi thu
+ * ve ben phai, de lai mot khoang trong lon ben trai roi van tran khi co nhieu
+ * trang. Day so tong ve sat le trai va cho phep xuong dong.
+ */
+.sf-dash .ant-table-pagination.ant-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 16px;
+}
+
+.sf-dash .ant-table-pagination .ant-pagination-total-text {
+  margin-right: auto;
+}
+
+/*
+ * Thanh cuon cua bang mong lai. Mac dinh cua he dieu hanh day gan 16px va mau
+ * dam — trong mot the cao 320px no doc nhu mot duong ke den chia doi giao dien.
+ */
+.sf-dash .ant-table-body {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sf-neutral-300) transparent;
+}
+
+.sf-dash .ant-table-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.sf-dash .ant-table-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: var(--sf-neutral-300);
+}
+
+.sf-dash .ant-table-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Huy hieu 48px an gan mot phan tu be rong the khi co nam the tren mot hang.
+   40px van du to de phan biet the tu xa — cong dung duy nhat cua no. */
+.sf-dash .sf-stat-medallion {
+  width: 40px;
+  height: 40px;
+}
+
+.sf-nowrap {
+  white-space: nowrap;
+}
+
+/* ===========================================================================
+ *  Bo cuc man hinh Tong quan — anh thiet ke "Tong quan Ke toan"
+ *
+ *  Hai hang panel, moi hang mot ty le cot rieng. Dung `grid-template-columns`
+ *  co dinh thay vi `auto-fit`: cac khoi trong mot hang khong tuong duong nhau —
+ *  bieu do va bang can be ngang de doc duoc, con danh sach doc thi khong.
+ * ======================================================================== */
+
+.sf-dash-row {
+  display: grid;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.sf-dash-row--top {
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/*
+ * Hang duoi: ba khoi tren mot hang, ti le 2:1:1 dung nhu anh thiet ke.
+ *
+ * Ti le `fr` chu khong be rong co dinh — do la ca diem cua no: man hinh rong
+ * ra thi ca ba khoi rong theo, hep lai thi cung co lai, khong khoi nao bi day
+ * xuong mot hang rieng. O muc hep nhat con giu ba cot (be rong cua so 1200px,
+ * vung noi dung ~900px) thi cot 1fr con ~220px — vua du cho "Kiem tra & doi
+ * soat" va "01/09/2026 - 02/09/2026" nam tron mot dong o thang chu 13px.
+ */
+.sf-dash-row--bottom {
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+}
+
+/* ---------------------------------------------------------------------------
+ *  Ba khoi hang duoi cao bang nhau
+ *
+ *  Chieu cao bang nhau den tu `align-items: stretch` cua `.sf-dash-row` — the
+ *  gian bang the cao nhat, con NOI DUNG van xep tu tren xuong nhu binh thuong
+ *  va phan du de trong o day.
+ *
+ *  Da thu giai deu cac dong ra cho kin chieu cao va bo di: no bien khoang cach
+ *  giua hai dong lien tiep thanh mot con so thay doi theo do dai cua khoi ben
+ *  canh, nen hai dong cung mot danh sach trong nhu khong lien quan den nhau.
+ *  Mot mang trang o day the doc ra ngay la "het noi dung roi" — dung nhu no la.
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Duoi 1200px ba cot ep bieu do xuong duoi 300px — truc ngay chong len nhau va
+ * bang "can doi soat" mat cot Ngay. Xuong mot cot han thay vi hai: mot khoi
+ * rong nua man hinh van doc duoc, mot khoi rong 1/3 thi khong.
+ */
+@media (max-width: 1200px) {
+  .sf-dash-row--top,
+  .sf-dash-row--bottom {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sf-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+/*
+ * Than panel gian ra het chieu cao con lai. Khong co dong nay thi ba panel
+ * cung hang cao bang nhau (grid keo the) nhung NOI DUNG cua panel ngan hon lai
+ * dinh len tren, de lai mot mang trang duoi duong vien — trong nhu the block bi
+ * loi render.
+ */
+.sf-panel__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.sf-panel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--sf-outline-variant);
+}
+
+.sf-panel__head h2 {
+  margin: 0;
+}
+
+/* Dong "Cap nhat HH:mm" canh nut Lam moi tren thanh loc. */
+.sf-dash-updated {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Hang the chi so
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Nam the tren mot hang. `auto-fit` cua `.sf-stat-row` chia deu theo 220px nen
+ * o man hinh 1440 no rot xuong bon the mot hang + mot the mo coi o hang hai.
+ * Khoa cung nam cot, chi ha xuong khi thuc su khong con cho.
+ */
+.sf-stat-row--five {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+/*
+ * Ha nguong xuong 1200px thay vi 1400px. O 1400px nam the van vua — sau khi
+ * ha thang chu va thu nho huy hieu, moi the con ~190px, du cho mot nhan hai
+ * dong va mot con so. Cat som hon chi doi lay canh 3 + 2: hang duoi hai the
+ * bi keo rong gap ruoi hang tren, trong nhu bo cuc bi vo.
+ */
+@media (max-width: 1200px) {
+  .sf-stat-row--five {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .sf-stat-row--five {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .sf-stat-row--five {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/*
+ * Bay the tren mot hang — man "Chi tiet bang cong" cua tung CBNV.
+ *
+ * Cung ly do voi `--five` nhung gat hon: `auto-fit` theo 220px chi nhet duoc
+ * sau the o 1920, nen the thu bay rot xuong hang hai va nam mot minh, rong bang
+ * mot phan sau chieu ngang. Mot the mo coi nhu vay doc nhu loi dung trang chu
+ * khong phai nhu mot nhom bay chi so.
+ *
+ * Bay cot chi giu o man that rong; duoi 1600 cat thanh 4 + 3 chu khong 6 + 1,
+ * vi hai hang le nhau it thi con doc duoc theo nhom, con mot the le loi thi khong.
+ */
+.sf-stat-row--seven {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+@media (max-width: 1600px) {
+  .sf-stat-row--seven {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1100px) {
+  .sf-stat-row--seven {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  .sf-stat-row--seven {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .sf-stat-row--seven {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* The "Ky cong" — chu va huy hieu thay cho con so 30px. */
+.sf-stat-card--period .sf-stat-body {
+  gap: 6px;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Bieu do tien do
+ * ------------------------------------------------------------------------ */
+
+/* Chu thich bieu do — tu viet thay vi <Legend> cua Recharts, vi duong muc tieu
+   la net dut va Legend chi ve duoc o vuong dac. Nam trong dau panel nen khong
+   co margin rieng. */
+.sf-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font-size: 13px;
+  color: var(--sf-on-surface-variant);
+}
+
+.sf-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.sf-chart-legend i {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.sf-chart-legend__dashed {
+  background: repeating-linear-gradient(90deg, var(--sf-neutral-400) 0 5px, transparent 5px 9px);
+}
+
+/* ---------------------------------------------------------------------------
+ *  Hang doi "Can xu ly hom nay"
+ * ------------------------------------------------------------------------ */
+
+.sf-queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sf-queue li + li {
+  border-top: 1px solid var(--sf-outline-variant);
+}
+
+.sf-queue__row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 56px;
+  padding: 8px 20px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.sf-queue__row:hover {
+  background: var(--sf-state-hover);
+}
+
+/* Huy hieu tron sau icon — cung ngon ngu voi `.sf-stat-medallion`, nho hon vi
+   day la mot dong danh sach chu khong phai mot the. */
+.sf-queue__icon {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sf-period-deadline {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--sf-surface-bright);
+}
+
+/* ---------------------------------------------------------------------------
+ *  Lich trinh chot luong
+ * ------------------------------------------------------------------------ */
+
+.sf-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+/*
+ * Duong noi ve bang `::before` cua tung muc chu khong bang mot duong ke chung:
+ * duong chung phai biet chieu cao that cua muc dau va muc cuoi de khong tho ra
+ * hai dau, ma chieu cao do doi theo do dai chu.
+ */
+/* Khoang cach doc 14px thay vi 20px: bon moc chi la ngay thang, khong phai
+   noi dung phai doc ky — keo dai chung ra chi day khoi OT & phep xuong duoi
+   khung nhin. */
+.sf-timeline__item {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  padding: 0 0 14px 0;
+}
+
+.sf-timeline__item:last-child {
+  padding-bottom: 0;
+}
+
+.sf-timeline__item::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 14px;
+  bottom: 0;
+  width: 2px;
+  background: var(--sf-outline-variant);
+}
+
+.sf-timeline__item:last-child::before {
+  display: none;
+}
+
+.sf-timeline__dot {
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border-radius: 999px;
+  background: var(--sf-surface);
+  border: 2px solid var(--sf-neutral-300);
+}
+
+/*
+ * `nowrap` de "Kiem tra & doi soat" khong gay lam hai dong. Kem `overflow`
+ * an va dau ba cham: nowrap mot minh se cho chu TRAN ra ngoai the neu co ai
+ * them mot moc co ten dai hon, va chu tran de len khoi ben canh thi te hon han
+ * chu bi cat.
+ */
+.sf-timeline__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Ngay thang cua mot moc phai nam tron mot dong: "01/09/2026 – 02/09/2026" bi
+   ngat o dau gach ngang doc ra thanh hai moc rieng biet. */
+.sf-timeline__range {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Da qua: cham to dac mau xanh la — cung mau voi duong "da tong hop". */
+.sf-timeline__item--done .sf-timeline__dot {
+  background: var(--sf-success-600);
+  border-color: var(--sf-success-600);
+}
+
+/*
+ * Dang toi: vong sang quanh cham. Dung `box-shadow` chu khong `outline` de vong
+ * nay khong an vao vung bam va khong day cac muc khac lech di.
+ */
+.sf-timeline__item--current .sf-timeline__dot {
+  background: var(--sf-blue-700);
+  border-color: var(--sf-blue-700);
+  box-shadow: 0 0 0 4px var(--sf-blue-100);
+}
+
+.sf-timeline__item--current .sf-timeline__label {
+  color: var(--sf-blue-700);
+}
+
+.sf-timeline__item--upcoming .sf-timeline__label {
+  color: var(--sf-on-surface-variant);
+  font-weight: 500;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Thanh do "Tinh hinh OT & phep"
+ * ------------------------------------------------------------------------ */
+
+/*
+ * Tien to `sf-gauge`, KHONG phai `sf-meter`.
+ *
+ * `.sf-meter` da la mot component khac o cuoi tep nay: mot thanh ti le cao 6px
+ * co `overflow: hidden`. Dat trung ten thi moi dong o day bi kep vao mot vet
+ * 6px va toan bo nhan lan con so bien mat — dung mot lan roi.
+ */
+.sf-gauge-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+
+/*
+ * Nhan duoc phep xuong dong, con so thi KHONG.
+ *
+ * Truoc day ca hai deu co the co lai, nen trong mot cot hep "OT da tinh vao
+ * bang cong" va "265 gio" cung bop vao nhau cho toi khi ca hai deu khong doc
+ * duoc. Con so la thu nguoi ta den day de xem — no giu nguyen be rong, va nhan
+ * la thu nhuong cho.
+ */
+.sf-gauge__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.sf-gauge__head .sf-icon {
+  align-self: center;
+  flex: 0 0 auto;
+}
+
+.sf-gauge__value {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  margin-left: auto;
+}
+
+.sf-gauge__track {
+  height: 8px;
+  margin-top: 8px;
+  border-radius: 999px;
+  background: var(--sf-neutral-200);
+  overflow: hidden;
+}
+
+.sf-gauge__fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  transition: width var(--sf-motion-base);
+}
+
+.sf-gauge__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.sf-gauge__percent {
+  flex: 0 0 auto;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Hoat dong gan day
+ * ------------------------------------------------------------------------ */
+
+.sf-activity-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.sf-activity-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--sf-outline-variant);
+  border-radius: 10px;
+  background: var(--sf-surface-bright);
+}
+
+/*
+ * Ma hanh dong chua co nhan tieng Viet roi ve chinh no —
+ * "ATTENDANCE_SHEET_RECALCULATE" la mot "tu" 28 ky tu khong co cho ngat, va
+ * trinh duyet se cho no tran ra khoi the thay vi xuong dong. `anywhere` cho
+ * phep ngat giua tu, chi ap dung khi that su khong con cach nao khac.
+ */
+.sf-activity-card__title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sf-activity-card__icon {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  background: var(--sf-blue-50);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * Ly do thao tac cat o hai dong. Day la chu do nguoi dung tu go — mot ly do dai
+ * ba cau se keo mot the cao gap ba the con lai va pha vo hang.
+ */
+.sf-activity-card__meta {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ===========================================================================
+ *  Trang chi tiet (don tu, ho so nhan vien) — mockup `63:67` / `63:66`
+ * ======================================================================== */
+
+.sf-detail-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/*
+ * Duoi 1100px cot phai chi con ~330px: khoi "Xu ly don" van vua, nhung dong
+ * thoi gian duyet bi vo chu. Xuong mot cot va cho khoi hanh dong len TREN
+ * phan noi dung — nguoi duyet tren man hinh hep khong nen phai cuon het don
+ * moi thay nut.
+ */
+@media (max-width: 1100px) {
+  .sf-detail-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sf-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  color: var(--sf-primary);
+  text-decoration: none;
+}
+
+.sf-back-link:hover {
+  text-decoration: underline;
+}
+
+/* So thu tu cua muc — "1." dung truoc tieu de muc. */
+.sf-section-number {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 10px;
+  border-radius: 999px;
+  background: var(--sf-blue-50);
+  color: var(--sf-blue-700);
+  font-size: 13px;
+  font-weight: 700;
+  vertical-align: middle;
+}
+
+/* Trich dan ly do cua nhan vien — chu cua ho, khong phai chu cua he thong. */
+.sf-quote {
+  margin: 6px 0 0;
+  padding: 12px 16px;
+  border-left: 3px solid var(--sf-outline);
+  background: var(--sf-surface-bright);
+  border-radius: 0 8px 8px 0;
+  font-size: 15px;
+  line-height: 24px;
+  white-space: pre-wrap;
+}
+
+.sf-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--sf-blue-50);
+  color: var(--sf-on-surface);
+}
+
+.sf-reject-note {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--sf-error-50);
+  color: var(--sf-error-800);
+}
+
+/* ── Khoi doi chieu hai cot ────────────────────────────────────────────────
+ *
+ * `align-items: stretch` de hai the cao bang nhau du mot ben thieu dong: hai
+ * the lech cao lam mat trai nhin thanh mot bac thang va nguoi doc khong con
+ * so hang voi hang duoc nua.
+ */
+.sf-diff {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.sf-diff > .sf-icon {
+  align-self: center;
+}
+
+.sf-diff__side {
+  border-radius: 10px;
+  padding: 14px;
+  border: 1px solid transparent;
+}
+
+.sf-diff__side header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.sf-diff__side dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(88px, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.sf-diff__side--before {
+  background: var(--sf-error-50);
+  border-color: var(--sf-error-200);
+}
+
+.sf-diff__side--after {
+  background: var(--sf-success-50);
+  border-color: var(--sf-success-200);
+}
+
+/* Duoi 720px mui ten ngang khong con nghia — xep doc va xoay no. */
+@media (max-width: 720px) {
+  .sf-diff {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sf-diff > .sf-icon {
+    justify-self: center;
+    transform: rotate(90deg);
+  }
+}
+
+/* Danh sach file dinh kem */
+.sf-file-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.sf-file-grid a {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--sf-outline-variant);
+  border-radius: 10px;
+  text-decoration: none;
+  color: inherit;
+}
+
+.sf-file-grid a:hover {
+  border-color: var(--sf-primary);
+  background: var(--sf-state-hover);
+}
+
+/* Dai canh bao ngang — dung o dau danh sach, khac `Alert` cua Ant o cho no
+   chua duoc mot nut hanh dong ben phai ma khong vo bo cuc tren man hinh hep. */
+.sf-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+
+.sf-banner--warning {
+  background: var(--sf-warning-50);
+  border-color: var(--sf-warning-200);
+  color: var(--sf-on-warning-tint);
+}
+
+/* ===========================================================================
+ *  Man hinh chua dang nhap — mockup `58:59`
+ * ======================================================================== */
+
+/*
+ * Khung khoa DUNG mot man hinh, phan tran ra thi cuon o nua PHAI.
+ *
+ * `height` chu khong phai `min-height`: voi `min-height`, the bieu mau cao hon
+ * khung nhin se keo dai ca trang va thanh cuon nam o cua so — nua trai navy
+ * troi len theo, chu ky hieu bien mat khoi tam mat trong luc nguoi dung dang go
+ * o cuoi bieu mau. Khoa chieu cao roi cho `.sf-auth__main` tu cuon thi nua trai
+ * dung yen va chi vung can cuon moi cuon.
+ *
+ * `100dvh` de sau `100vh`: tren trinh duyet di dong, `100vh` tinh theo khung
+ * nhin luc THANH DIA CHI DA THU GON, nen khi thanh do con hien, day trang bi
+ * day xuong duoi man hinh — dung cai nut chinh bi khuat. Trinh duyet khong hieu
+ * `dvh` thi bo qua dong sau va giu `100vh`.
+ */
+.sf-auth {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  background: var(--sf-surface);
+}
+
+/*
+ * An mac dinh, chi hien tu `lg` (1024px). Ban truoc lam viec nay bang mot the
+ * `<style>` chen thang vao JSX voi bo chon `aside[aria-hidden="true"]` — no
+ * cham toi MOI the `aside` an tren toan ung dung, khong chi cai o day.
+ */
+.sf-auth__brand {
+  display: none;
+}
+
+@media (min-width: 1024px) {
+  .sf-auth__brand {
+    flex: 0 0 48%;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 48px;
+    padding: 64px;
+    background: var(--sf-navy);
+    color: #ffffff;
+  }
+}
+
+/* Nen xam nhat cua nua phai — de the trang cua bieu mau noi len tren no. */
+/*
+ * Vung cuon duy nhat cua man hinh.
+ *
+ * `display: flex` + `margin: auto` tren `.sf-auth__panel` chu KHONG phai
+ * `place-items: center`. Can giua bang `place-items`/`justify-content` cat mat
+ * phan tran o DAU vung cuon: trinh duyet dat noi dung vao giua roi moi cat, nen
+ * khi the cao hon khung, dinh the bi day len tren diem cuon 0 va khong con cach
+ * nao cuon toi. `margin: auto` can giua khi con cho trong va tu bo can giua khi
+ * het cho — day la loi da biet cua flexbox/grid, khong phai chuyen kho tinh.
+ */
+.sf-auth__main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: 24px;
+  overflow-y: auto;
+  background: var(--sf-surface-bright);
+}
+
+/*
+ * Chu ky hieu — 42px, khong phai 30px.
+ *
+ * Trong ban ve no la vat the lon nhat cua goc tren ben trai va doc duoc tu
+ * khoang cach ma nguoi ta nhin mot man dang nhap dang bat len. Ban truoc dat
+ * 30px, chi bang 2/3 — o do no doc nhu mot dong tieu de phu chu khong phai ten
+ * san pham.
+ */
+.sf-auth__wordmark {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-family: 'Plus Jakarta Sans', Inter, sans-serif;
+  font-weight: 700;
+  font-size: 42px;
+  line-height: 52px;
+  letter-spacing: -1px;
+}
+
+.sf-auth__mark {
+  display: inline-grid;
+  place-items: center;
+  width: 50px;
+  height: 50px;
+  border-radius: 10px;
+  background: var(--sf-blue-600);
+}
+
+.sf-auth__slogan {
+  font-family: 'Plus Jakarta Sans', Inter, sans-serif;
+  font-size: 42px;
+  line-height: 54px;
+  font-weight: 700;
+  letter-spacing: -0.9px;
+  margin: 40px 0 0;
+}
+
+.sf-auth__features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 28px;
+}
+
+.sf-auth__features li {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.sf-auth__features strong {
+  display: block;
+  font-size: 20px;
+  line-height: 28px;
+}
+
+.sf-auth__feature-icon {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 999px;
+  color: #ffffff;
+}
+
+/*
+ * Chu phu tren nen navy. `opacity` chu KHONG phai mot ma mau nhat hon: nen o
+ * day co dinh la navy, nen ket qua hoa tinh duoc chinh xac — #C9CDD4, dat
+ * 10.69:1. Bo kiem do MAU SAU KHI HOA chu khong do #FFFFFF; do mau goc se cho
+ * mot ty so cao gia va bo lot loi. Xem cap "Chu phu tren nen navy".
+ */
+.sf-auth__feature-note {
+  display: block;
+  font-size: 16px;
+  line-height: 24px;
+  opacity: 0.78;
+}
+
+/* ===========================================================================
+ *  Wizard thiet lap ban dau — mockup `69:254` / `67:76`
+ * ======================================================================== */
+
+.sf-stepper {
+  background: var(--sf-surface);
+  border: 1px solid var(--sf-outline-variant);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: var(--sf-shadow-xs);
+}
+
+.sf-stepper ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+/*
+ * Duong noi giua cac buoc ve bang `::after` cua chinh muc, khong bang mot the
+ * rieng: mot the ke ngang giua hai muc se lam thu tu doc cua trinh doc man hinh
+ * thanh "buoc 1, gach, buoc 2, gach" — nguoi dung nghe se dem nham so buoc.
+ */
+.sf-stepper__item {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+}
+
+.sf-stepper__item + .sf-stepper__item::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 26px;
+  width: 8px;
+  border-top: 2px dashed var(--sf-neutral-300);
+}
+
+.sf-stepper__cell {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  justify-content: center;
+  gap: 4px 10px;
+  padding: 8px;
+  border-radius: 10px;
+  text-decoration: none;
+  color: inherit;
+  text-align: center;
+}
+
+a.sf-stepper__cell:hover {
+  background: var(--sf-state-hover);
+}
+
+.sf-stepper__cell[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
+.sf-stepper__badge {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.sf-stepper__badge--done {
+  background: var(--sf-success-600);
+  color: #ffffff;
+}
+
+.sf-stepper__badge--current {
+  background: var(--sf-primary);
+  color: #ffffff;
+}
+
+.sf-stepper__badge--todo {
+  background: var(--sf-neutral-200);
+  color: var(--sf-on-surface-variant);
+}
+
+.sf-stepper__icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--sf-on-surface-muted);
+}
+
+.sf-stepper__label {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--sf-on-surface-variant);
+}
+
+.sf-stepper__label--done {
+  color: var(--sf-success-700);
+}
+
+.sf-stepper__label--current {
+  color: var(--sf-primary);
+  font-weight: 600;
+}
+
+/*
+ * Duoi 900px nam buoc canh nhau con moi buoc ~150px — nhan bi cat giua chung.
+ * Xep doc: van doc duoc thu tu va trang thai, chi mat cam giac "mot duong di".
+ */
+@media (max-width: 900px) {
+  .sf-stepper ol {
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .sf-stepper__item + .sf-stepper__item::before {
+    display: none;
+  }
+
+  .sf-stepper__cell {
+    grid-template-columns: auto auto 1fr;
+    grid-template-rows: auto;
+    justify-content: start;
+    text-align: left;
+  }
+
+  .sf-stepper__label {
+    grid-column: auto;
+  }
+}
+
+.sf-wizard-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--sf-outline-variant);
+}
+
+/* Danh sach co dau kiem — dung o cot phai cua wizard. */
+.sf-check-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sf-check-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 20px;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.sf-check-list li + li {
+  border-top: 1px solid var(--sf-outline-variant);
+}
+
+.sf-ordered-steps {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 10px;
+  font-size: 15px;
+  line-height: 24px;
+}
+
+.sf-summary-list {
+  margin: 0;
+  display: grid;
+  gap: 0;
+}
+
+.sf-summary-list > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0;
+}
+
+.sf-summary-list > div + div {
+  border-top: 1px solid var(--sf-outline-variant);
+}
+
+.sf-summary-list dt {
+  color: var(--sf-on-surface-variant);
+  font-size: 15px;
+}
+
+.sf-summary-list dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* Thanh ti le — thay bieu do tron khi phai so nhieu phan co phan rat nho. */
+.sf-meter {
+  margin-top: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--sf-neutral-200);
+  overflow: hidden;
+}
+
+.sf-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  /* `min-width` de mot ti le 0.3% van con mot vet nhin thay duoc thay vi bien
+     mat — "rat it" va "khong co" la hai thong tin khac nhau. */
+  min-width: 2px;
+  transition: width var(--sf-motion-base);
+}
+
+/* ===========================================================================
+ *  Giam sat he thong — mockup `86:15`
+ * ======================================================================== */
+
+.sf-service-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.sf-service-grid li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--sf-outline-variant);
+  border-radius: 10px;
+}
+
+/*
+ * Thanh phan loi doi CA vien lan nen, khong chi doi mau cham tron.
+ *
+ * WCAG 1.4.1: mau khong duoc la kenh thong tin duy nhat. Cham tron mau do va
+ * cham tron mau xanh la cung mot hinh voi nguoi mu mau — nhan trang thai ben
+ * phai va vien to o day la hai kenh bo sung.
+ */
+.sf-service-grid li.is-down {
+  border-color: var(--sf-error-300);
+  background: var(--sf-error-50);
+}
+
+.sf-service-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+}
+
+/* Bang thuan HTML — dung khi khong can phan trang, sap xep hay chon dong. */
+.sf-plain-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.sf-plain-table th,
+.sf-plain-table td {
+  padding: 10px 12px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.sf-plain-table thead th {
+  font-size: 12px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--sf-on-surface-variant);
+  border-bottom: 1px solid var(--sf-outline);
+}
+
+.sf-plain-table thead th:first-child,
+.sf-plain-table tbody th {
+  text-align: left;
+}
+
+.sf-plain-table tbody tr + tr th,
+.sf-plain-table tbody tr + tr td {
+  border-top: 1px solid var(--sf-outline-variant);
+}
+
+/* ===========================================================================
+ *  Wizard thiet lap ban dau — bo cuc hai cot va cac khoi cua ban ve
+ *
+ *  Ban ve xep man tong quan thanh hai cot: cot trai la viec phai lam, cot phai
+ *  tra loi "ai lam gi trong giai doan nay" va "con bao lau nua". Hai cau hoi do
+ *  khong phai trang tri — nguoi dung lan dau vao he thong hoi chung TRUOC khi
+ *  bam bat cu nut nao, va tra loi chung ngay canh danh sach buoc thi ho khong
+ *  phai roi trang de di tim.
+ * ======================================================================== */
+
+.sf-setup-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/*
+ * Duoi 1100px cot phai con ~320px: hai the vai tro van doc duoc nhung day nam
+ * cham tien do bi bop den muc nhan chong len nhau. Xuong mot cot, va cot phai
+ * roi xuong DUOI danh sach buoc — no la ngu canh, khong phai viec phai lam.
+ */
+@media (max-width: 1100px) {
+  .sf-setup-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sf-setup-step {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sf-setup-step__icon {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--sf-surface-container-low);
+  color: var(--sf-on-surface-variant);
+  flex-shrink: 0;
+}
+
+.sf-setup-step__icon--current {
+  background: var(--sf-primary-tint-strong);
+  color: var(--sf-primary);
+}
+
+.sf-setup-step__icon--done {
+  background: var(--sf-success-50);
+  color: var(--sf-success-700);
+}
+
+.sf-setup-step__text {
+  flex: 1;
+  min-width: 200px;
+}
+
+/* The vai tro o cot phai — mot the dam (vai tro dang thuc hien) va mot the nhat. */
+.sf-role-card {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+}
+
+.sf-role-card--active {
+  background: var(--sf-navy);
+  color: #ffffff;
+}
+
+.sf-role-card--active .sf-role-card__desc {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.sf-role-card--muted {
+  background: var(--sf-surface-container-low);
+  border-color: var(--sf-outline-variant);
+}
+
+.sf-role-card__head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sf-role-card__pill {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--sf-primary-surface);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.sf-role-card__desc {
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--sf-on-surface-variant);
+}
+
+/*
+ * Day cham tien do thu nho cua cot phai.
+ *
+ * No KHONG bam duoc, khac `.sf-stepper` o man trong buoc. Day la mot hinh dung
+ * ve quang duong ("nam buoc, ban dang o buoc mot"), dat canh cau "khoang 10
+ * phut"; bien no thanh lien ket thu hai di toi cung cho voi danh sach ben trai
+ * chi lam nguoi dung phai chon giua hai loi vao giong het nhau.
+ */
+.sf-setup-dots {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: flex;
+  gap: 4px;
+}
+
+.sf-setup-dots li {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.sf-setup-dots__num {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 999px;
+  background: var(--sf-neutral-200);
+  color: var(--sf-on-surface-variant);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.sf-setup-dots__num--done {
+  background: var(--sf-success-600);
+  color: #ffffff;
+}
+
+.sf-setup-dots__num--current {
+  background: var(--sf-primary-surface);
+  color: #ffffff;
+}
+
+.sf-setup-dots__label {
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--sf-on-surface-variant);
+}
+
+/* Dong lien ket co mui ten o cuoi the — "Xem huong dan tung buoc >". */
+.sf-link-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--sf-outline-variant);
+  color: var(--sf-primary);
+  font-size: 14px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.sf-link-row:hover {
+  background: var(--sf-state-hover);
+}
+
+.sf-banner--info {
+  background: var(--sf-primary-tint);
+  border-color: var(--sf-primary-tint-strong);
+}
+
+.sf-banner--success {
+  background: var(--sf-success-50);
+  border-color: var(--sf-success-100);
+}
+
+/* ===========================================================================
+ *  Form nhieu cot trong wizard
+ *
+ *  Buoc 1 cua ban ve co 9 o nhap. Xep mot cot thi nguoi dung phai cuon hai man
+ *  hinh de thay het mot bieu mau ma ban ve cho vua mot khung nhin; xep hai cot
+ *  giu duoc ca bieu mau truoc mat, va do la ca diem cua man "dien mot lan".
+ * ======================================================================== */
+
+.sf-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.sf-form-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.sf-form-grid__full {
+  grid-column: 1 / -1;
+}
+
+/*
+ * Duoi 760px hai cot con ~330px moi cot — vua du cho o nhap nhung khong du cho
+ * dong goi y ben duoi no, va dong goi y la thu giai thich vi sao ten mien phai
+ * duy nhat. Xuong mot cot thay vi de goi y bi vo chu.
+ */
+@media (max-width: 760px) {
+  .sf-form-grid,
+  .sf-form-grid--3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.sf-form-section + .sf-form-section {
+  margin-top: 20px;
+  padding-top: 20px;
+  border-top: 1px solid var(--sf-outline-variant);
+}
+
+.sf-form-section__title {
+  margin: 0 0 12px;
+}
+
+.sf-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 20px;
+}
+
+/* ===========================================================================
+ *  Wizard — hai khoang ngang trong mot buoc
+ *
+ *  Khac `.sf-detail-layout` (1.9fr / 1fr) o cho hai ben o day CAN NHAU: so do
+ *  to chuc va bieu mau tao phong ban deu la noi dung chinh, khong ben nao la
+ *  chu thich cua ben nao.
+ * ======================================================================== */
+
+.sf-wizard-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+/* Danh muc ben trai hep hon bieu mau ben phai — buoc ca lam viec. */
+.sf-wizard-split--narrow-left {
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+}
+
+@media (max-width: 1100px) {
+  .sf-wizard-split,
+  .sf-wizard-split--narrow-left {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ===========================================================================
+ *  So do to chuc
+ *
+ *  Cay ve bang CSS thuan tren mot cay `<ul>` long nhau, khong bang thu vien:
+ *  cau truc DOM van la mot danh sach long nhau dung nghia, nen trinh doc man
+ *  hinh doc ra quan he cha–con ma khong can mot dong ARIA nao. Duong noi la
+ *  `::before` / `::after` cua chinh muc — chung thuan tuy trang tri va khong
+ *  chen them node nao vao thu tu doc.
+ * ======================================================================== */
+
+.sf-orgchart {
+  overflow-x: auto;
+  padding: 8px 4px 4px;
+}
+
+.sf-orgtree,
+.sf-orgtree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sf-orgtree {
+  display: flex;
+  justify-content: center;
+  min-width: min-content;
+}
+
+.sf-orgtree ul {
+  display: flex;
+  justify-content: center;
+  position: relative;
+  padding-top: 20px;
+}
+
+.sf-orgtree li {
+  position: relative;
+  padding: 20px 8px 0;
+  text-align: center;
+}
+
+/* Nua duong ngang ben trai va ben phai cua moi muc. */
+.sf-orgtree li::before,
+.sf-orgtree li::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  width: 50%;
+  height: 20px;
+  border-top: 2px solid var(--sf-outline-variant);
+}
+
+.sf-orgtree li::before {
+  right: 50%;
+}
+
+.sf-orgtree li::after {
+  left: 50%;
+}
+
+/* Con mot minh thi khong can duong ngang, chi can duong doc cua `ul`. */
+.sf-orgtree li:only-child {
+  padding-top: 20px;
+}
+
+.sf-orgtree li:only-child::before,
+.sf-orgtree li:only-child::after {
+  display: none;
+}
+
+/* Muc dau va muc cuoi chi ve nua duong huong vao trong. */
+.sf-orgtree li:first-child::before,
+.sf-orgtree li:last-child::after {
+  border: 0;
+}
+
+.sf-orgtree li:last-child::before {
+  border-right: 2px solid var(--sf-outline-variant);
+  border-radius: 0 6px 0 0;
+}
+
+.sf-orgtree li:first-child::after {
+  border-radius: 6px 0 0 0;
+  border-left: 2px solid var(--sf-outline-variant);
+}
+
+/* Duong doc noi tu nut cha xuong hang con. */
+.sf-orgtree ul::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 20px;
+  border-left: 2px solid var(--sf-outline-variant);
+}
+
+.sf-orgnode {
+  display: inline-grid;
+  gap: 2px;
+  min-width: 150px;
+  max-width: 220px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--sf-outline-variant);
+  background: var(--sf-surface);
+  text-align: left;
+}
+
+.sf-orgnode--root {
+  background: var(--sf-navy);
+  border-color: var(--sf-navy);
+  color: #ffffff;
+}
+
+.sf-orgnode--root .sf-orgnode__meta {
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.sf-orgnode__name {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+.sf-orgnode__meta {
+  font-size: 12px;
+  line-height: 17px;
+  color: var(--sf-on-surface-variant);
+}
+
+/* ===========================================================================
+ *  Goi y co cau ban dau / danh muc ca lam viec
+ * ======================================================================== */
+
+.sf-suggest-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sf-suggest-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--sf-outline);
+  background: var(--sf-surface);
+  color: var(--sf-on-surface);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.sf-suggest-chip:hover:not(:disabled) {
+  border-color: var(--sf-primary);
+  background: var(--sf-primary-tint);
+  color: var(--sf-primary);
+}
+
+.sf-suggest-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* Danh sach ca da tao — gon hon bang, vi o day chi can doc ten va gio. */
+.sf-mini-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sf-mini-list li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+}
+
+.sf-mini-list li + li {
+  border-top: 1px solid var(--sf-outline-variant);
+}
+
+/* Hai o gio cua mot khung "tu ... den ...". */
+.sf-time-range {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.sf-time-range__dash {
+  color: var(--sf-on-surface-muted);
+}
+
+/* ===========================================================================
+ *  Man hinh chua dang nhap — bo sung theo ban ve dang nhap / kich hoat
+ * ======================================================================== */
+
+/*
+ * Nua trai gio co ba khoi: chu ky hieu, hinh minh hoa, roi khau hieu kem ba
+ * dong gioi thieu. `space-between` tu chia khoang giua chung, nen khong khoi
+ * nao phai gan margin co dinh — man hinh cao 1440px va man hinh cao 800px deu
+ * ra bo cuc dung.
+ */
+/*
+ * 480px, khong phai 380px.
+ *
+ * Ban ve de hinh minh hoa chiem gan ba phan tu be ngang nua trai — no la thu
+ * mang toan bo suc nang thi giac cua nua do. O 380px no thu lai thanh mot vien
+ * trang tri nho giua mot mang navy trong, va nua trai bong nhieu khoang trong
+ * hon la noi dung.
+ */
+.sf-auth__art {
+  width: 100%;
+  max-width: 480px;
+  height: auto;
+  align-self: center;
+}
+
+/* Duoi 900px chieu cao, hinh minh hoa la thu dau tien phai nhuong cho. */
+@media (max-height: 760px) {
+  .sf-auth__art {
+    display: none;
+  }
+}
+
+/*
+ * Man hinh rat thap: siet padding nua trai thay vi de no tu moc thanh cuon.
+ *
+ * Tu khi `.sf-auth` khoa chieu cao, nua trai cung thanh mot vung cuon rieng, va
+ * duoi ~640px thi noi dung no tran ra — man hinh hien HAI thanh cuon canh nhau,
+ * cai ben trai chi de doc mot khau hieu khong ai can cuon toi. Cat 64px padding
+ * xuong 32px du de ba dong gioi thieu nam gon lai trong khung.
+ */
+@media (min-width: 1024px) and (max-height: 640px) {
+  .sf-auth__brand {
+    padding: 32px 48px;
+    gap: 24px;
+  }
+}
+
+/*
+ * 560px, khong phai 460px.
+ *
+ * Ba dong dai nhat cua man nay — phu de, dai danh tinh
+ * "Nguyen Thi Mai | Ke toan/HR | Cong ty TNHH ABC", va dai xanh cuoi bieu mau —
+ * deu vua DUNG mot dong o be ngang nay va deu vo thanh hai dong o 460px. Ban ve
+ * de ca ba tren mot dong; hai dong lam dai danh tinh trong nhu hai muc rieng va
+ * day nut chinh xuong duoi mep man hinh laptop 13 inch.
+ */
+.sf-auth__panel {
+  width: 100%;
+  max-width: 570px;
+  /* Can giua ca hai chieu ma khong cat phan tran — xem `.sf-auth__main`. */
+  margin: auto;
+}
+
+/*
+ * The chua bieu mau.
+ *
+ * `--sf-surface` chu khong phai `#ffffff`: o che do toi nen the phai la navy
+ * dam, con mot ma mau cung se cho mot mang trang choi giua man hinh toi.
+ */
+.sf-auth__card {
+  background: var(--sf-surface);
+  border: 1px solid var(--sf-outline-variant);
+  border-radius: 20px;
+  /*
+   * Day the day hon dinh 4px: ban ve chua mot khoang tho ro rang duoi dong chu
+   * cuoi, va no la thu giu cho the khong ket thuc dot ngot ngay sau mot dong
+   * chu nho.
+   */
+  padding: 32px 28px 32px;
+  box-shadow: var(--sf-shadow-md);
+}
+
+@media (max-width: 480px) {
+  .sf-auth__card {
+    padding: 28px 20px 24px;
+    border-radius: 14px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ *  Thang chu rieng cua the dang nhap
+ *
+ *  Ung dung ben trong la mot cong cu lam viec day so lieu: no dung 13-14px de
+ *  mot man hinh chua duoc nhieu dong nhat co the. Man chua dang nhap thi nguoc
+ *  lai — chi co MOT bieu mau bay dong tren ca man hinh, va no la thu dau tien
+ *  nguoi dung nhin thay ve san pham. Ban ve vi vay dat co chu lon hon han phan
+ *  con lai cua ung dung, va cac ghi de duoi day khoanh dung pham vi do lai
+ *  trong `.sf-auth__card` thay vi keo ca he thong len theo.
+ * ------------------------------------------------------------------------ */
+
+.sf-auth__card .sf-field {
+  gap: 6px;
+}
+
+.sf-auth__card .sf-field__label {
+  font-size: 13px;
+  line-height: 19px;
+  font-weight: 500;
+}
+
+/*
+ * Vien o nhap nhat hon phan con lai cua ung dung.
+ *
+ * Ban ve ve MOI duong vien tren the — vien the, vien dai danh tinh, vien o nhap
+ * — cung mot do dam xam nhat. Mac dinh `.sf-input` dung `--sf-outline`
+ * (neutral-500), dam hon han, nen ba o nhap noi bat len nhu ba khoi dac giua
+ * mot the von rat nhe.
+ *
+ * ⚠ Danh doi: `--sf-outline-variant` (neutral-300) chi dat 1.9:1 tren nen
+ * trang, duoi nguong 3:1 cua WCAG 1.4.11 cho duong bao control. Doi lai o day
+ * la co chu, va no chi ap trong `.sf-auth__card`: nhan van hien thuong truc
+ * phia tren moi o, va man nay chi co ba o xep doc — khong ai phai do vien de
+ * biet o bat dau tu dau. Bang kiem tuong phan van do cap `n-500 tren white`
+ * cho `.sf-input` mac dinh cua toan ung dung, va cap do KHONG doi.
+ */
+.sf-auth__card .sf-input {
+  font-size: 13px;
+  border-color: var(--sf-outline-variant);
+}
+
+.sf-auth__card .sf-input:hover:not(:disabled):not(:read-only) {
+  border-color: var(--sf-outline);
+}
+
+/* Vong focus KHONG duoc nhat di theo: no la thu duy nhat noi cho nguoi dung
+   ban phim biet minh dang o o nao. */
+.sf-auth__card .sf-input:focus {
+  border-color: var(--sf-primary);
+}
+
+.sf-auth__card .sf-input[aria-invalid='true'] {
+  border-color: var(--sf-error-600);
+}
+
+/*
+ * Bố cục riêng của màn đăng nhập.
+ *
+ * Chỉ còn quyết định NHỊP DỌC và chỗ đặt icon dẫn đầu. Bản trước còn kéo ô nhập
+ * và nút cao lên (46-50px) với lý do "nhãn bị giấu nên ô phải gánh việc của
+ * nhãn"; lý do đó bị bỏ khi chủ sản phẩm chốt mọi control về 32px của hệ thống.
+ * Giữ lại một ngoại lệ chiều cao chỉ cho một màn là cách chắc chắn nhất để màn
+ * đó lệch dần khỏi phần còn lại của ứng dụng.
+ */
+.sf-auth-form--login {
+  display: grid;
+  gap: 18px;
+  margin-top: 8px;
+}
+
+/*
+ * Tieu de trong the.
+ *
+ * `.sf-display-lg` (32px) duoc dinh cho tieu de trang trong ung dung, noi no
+ * dung mot minh tren mot mang rong. O day no dung tren mot the rong 480px va
+ * hut het chu y khoi thanh ba buoc ngay phia tren — thu duy nhat cho nguoi dung
+ * biet ho con may buoc nua. 26px giu duoc thu tu do, va van gap doi nhan o nhap.
+ */
+/*
+ * Mau chu: `on-surface` chu KHONG phai blue-700 nhu `.sf-display-lg`.
+ *
+ * Trong the chi co MOT thu duoc phep mang mau xanh dam dac: nut "Cap nhat mat
+ * khau & tiep tuc". Tieu de cung mau xanh lam mat phai chon giua hai vet xanh
+ * cach nhau nua man hinh, va nut — thu duy nhat can bam — thua cuoc vi no nam
+ * duoi. Ban ve cung de tieu de mau navy dam.
+ */
+.sf-auth__title {
+  font-family: 'Plus Jakarta Sans', Inter, sans-serif;
+  font-weight: 700;
+  font-size: 30px;
+  line-height: 40px;
+  letter-spacing: -0.5px;
+  text-align: center;
+  color: var(--sf-on-surface);
+  margin: 0 0 8px;
+}
+
+.sf-auth__subtitle {
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+  color: var(--sf-on-surface-variant);
+  margin: 0 0 20px;
+}
+
+/* Dong chu tran duoi nut chinh — khong phai mot dai `sf-banner`. */
+.sf-auth-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--sf-on-surface-variant);
+}
+
+/* Hai lien ket phap ly duoi day moi man chua dang nhap — NGOAI the. */
+.sf-auth__legal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  margin: 20px 0 0;
+  font-size: 13px;
+  color: var(--sf-on-surface-variant);
+}
+
+/*
+ * Vach ngan giua hai lien ket la mot DUONG KE, khong phai ky tu `|`.
+ *
+ * Ky tu `|` cao bang chu thuong va tut xuong duoi duong co so, nen no trong
+ * nhu mot chu cai lac vao giua hai lien ket. Mot duong ke cao 16px canh giua
+ * thi doc ra dung la vach ngan.
+ */
+.sf-auth__legal-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--sf-outline-variant);
+  font-size: 0;
+}
+
+.sf-auth__legal a {
+  color: var(--sf-on-surface-variant);
+  text-decoration: none;
+}
+
+.sf-auth__legal a:hover {
+  color: var(--sf-primary);
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Thanh ba buoc cua luong kich hoat tai khoan
+ * ------------------------------------------------------------------------ */
+
+.sf-auth-steps {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 6px 0;
+  margin: 0 0 24px;
+  padding: 0;
+}
+
+/* Bước chưa tới: chữ xám trơn, khong huy hieu, khong nen. */
+.sf-auth-steps__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 19px;
+  color: var(--sf-on-surface-muted);
+  white-space: nowrap;
+}
+
+/* Mui ten noi hai buoc — khoang tho hai ben la cua chinh no, khong phai `gap`
+   cua hang, de hai dau hang khong thua ra mot khoang trong. */
+.sf-auth-steps__arrow {
+  display: inline-grid;
+  place-items: center;
+  margin: 0 16px;
+  color: var(--sf-outline);
+}
+
+.sf-auth-steps__badge {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 700;
+  flex: none;
+}
+
+/*
+ * Buoc dang lam: huy hieu tron dac + chu xanh. KHONG co vien thuoc lam nen —
+ * ban ve de no tren nen the trang nhu hai buoc con lai, chi khac mau chu va cai
+ * huy hieu.
+ *
+ * `--sf-primary-surface` (blue-700) chu khong phai `--sf-primary`: o che do
+ * toi, `--sf-primary` la blue-300 — chu trang tren blue-300 chi dat 2.2:1.
+ */
+.sf-auth-steps__item--current {
+  color: var(--sf-primary);
+  font-weight: 600;
+}
+
+.sf-auth-steps__item--current .sf-auth-steps__badge {
+  background: var(--sf-primary-surface);
+  color: var(--sf-on-primary-surface);
+}
+
+.sf-auth-steps__item--done {
+  color: var(--sf-success-700);
+}
+
+.sf-auth-steps__item--done .sf-auth-steps__badge {
+  background: var(--sf-success-600);
+  color: #ffffff;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Cac khoi rieng cua man dang nhap / kich hoat
+ * ------------------------------------------------------------------------ */
+
+/* Hang "Ghi nho dang nhap" — "Quen mat khau?" */
+.sf-auth-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* Dai danh tinh: avatar + ten + vai tro + cong ty. */
+.sf-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 9px 14px;
+  border-radius: 12px;
+  background: var(--sf-surface-bright);
+  border: 1px solid var(--sf-outline-variant);
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--sf-on-surface-variant);
+}
+
+/* Dia tron xanh nhat — vat the dac duy nhat cua dai, neo ca dong chu vao trai. */
+.sf-identity__avatar {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  border-radius: 999px;
+  background: var(--sf-primary-tint-strong);
+  color: var(--sf-primary);
+}
+
+.sf-identity__name {
+  font-weight: 600;
+  color: var(--sf-on-surface);
+}
+
+/* Dau cham va manh chu sau no di lien mot khoi, de khi dai xuong dong thi dau
+   cham khong bi bo lai mot minh o cuoi dong tren. */
+.sf-identity__part {
+  display: inline-flex;
+  gap: 6px;
+}
+
+.sf-identity__sep {
+  color: var(--sf-outline);
+}
+
+/*
+ * Danh sach dieu kien cua mat khau — doi mau NGAY trong luc go.
+ *
+ * Moi dong deu hien tu dau, ke ca dong chua dat. Chi hien dong con thieu thi
+ * moi lan go la danh sach nhay so dong, va nguoi dung mat cai moc de biet minh
+ * con bao xa nua moi xong.
+ */
+.sf-rule-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.sf-rule-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 20px;
+  color: var(--sf-on-surface-muted);
+}
+
+/*
+ * Dong da dat: chu DAM len chu khong chuyen sang xanh la.
+ *
+ * Ban truoc to ca dong mau xanh la. Bon dong xanh la lien nhau doc ra nhu mot
+ * khoi trang thai — dung thu ma mau xanh la danh cho o phan con lai cua ung
+ * dung — trong khi day chi la mot danh sach viec da xong. Ban ve giu chu mau
+ * toi va de dau tich mang toan bo tin hieu.
+ */
+.sf-rule-list li[data-met='true'] {
+  color: var(--sf-on-surface);
+}
+
+/* Sau o nhap OTP roi nhau. */
+.sf-otp {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+}
+
+.sf-otp input {
+  width: 48px;
+  height: 56px;
+  padding: 0;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 420px) {
+  .sf-otp input {
+    width: 40px;
+    height: 48px;
+    font-size: 18px;
+  }
+}
+
+/* So dien thoai da che — dong to nhat cua man xac thuc. */
+.sf-auth-phone {
+  text-align: center;
+  font-size: 22px;
+  line-height: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--sf-primary);
+  margin: 0;
+}
+
+/* Vong tron dau tich cua man hoan tat. */
+.sf-auth-success {
+  display: grid;
+  place-items: center;
+  width: 84px;
+  height: 84px;
+  margin: 0 auto 20px;
+  border-radius: 999px;
+  background: var(--sf-success-600);
+  color: #ffffff;
+  box-shadow: 0 0 0 10px var(--sf-success-50);
+}
+
+/*
+ * Nut trong nhu mot lien ket.
+ *
+ * Dung `<button>` chu khong phai `<a>` khi hanh dong xay ra NGAY TRONG trang:
+ * mot the `<a>` khong co `href` khong nhan duoc tieu diem ban phim, con
+ * `href="#"` thi lam ban ghi lich su duyet day nhung muc rac.
+ */
+.sf-link-button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--sf-primary);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sf-link-button:hover {
+  text-decoration: underline;
+}
+
+.sf-link-button:disabled {
+  color: var(--sf-on-surface-muted);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+/*
+ * Khau hieu va ba dong gioi thieu nam chung mot khoi o nua trai, nen khoang
+ * cach giua chung phai dat o day — `gap` cua `.sf-auth__brand` chi chia khoang
+ * giua ba khoi lon, khong voi vao ben trong mot khoi.
+ */
+.sf-auth__slogan {
+  margin: 0 0 32px;
+}
+
+/*
+ * Dau hieu thuong hieu gio la mot SVG hai canh la, khong con la icon dat trong
+ * o vuong mau xanh. Ghi de o day de bo hai thuoc tinh cua ban truoc.
+ */
+.sf-auth__mark {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  background: none;
+  border-radius: 0;
+}
+
+/*
+ * Quang sang mo phia sau hinh minh hoa.
+ *
+ * Ban ve khong de hinh minh hoa nam trong tren mot mang navy phang — co mot
+ * vung sang xanh rat nhat sau no. Ve bang `radial-gradient` cua chinh khoi nen
+ * thay vi them mot the: mot the phu chi de trang tri se nam trong luong doc cua
+ * trinh doc man hinh du no khong noi gi.
+ */
+.sf-auth__brand {
+  position: relative;
+  /*
+   * Ngang thi cat (giu hoa tiet nen trong khung), doc thi cho cuon.
+   *
+   * Tu khi `.sf-auth` khoa chieu cao, `overflow: hidden` ca hai chieu se CAT
+   * MAT ba dong gioi thieu tren man hinh thap — chung bien mat lang le, khong
+   * co thanh cuon nao bao rang con noi dung phia duoi.
+   */
+  overflow: hidden auto;
+  background-image: radial-gradient(
+    60% 46% at 62% 40%,
+    rgba(59, 130, 246, 0.22) 0%,
+    rgba(59, 130, 246, 0) 100%
+  );
+}
+
+/*
+ * Hoa tiet nen cua nua trai.
+ *
+ * Ban ve co mot lop mach dien rat mo chay sau moi thu. Ve no BEN TRONG hinh
+ * minh hoa khong duoc: bon vat the da chiem gan het khung nhin, moi vet them
+ * vao deu cat ngang mot trong so chung va trong nhu loi hien thi. Dat o day thi
+ * no phu ca nua trai, chay sau ca chu, va van du mo de khong tranh cho voi
+ * bat cu thu gi — 2.5%% do sang tren nen navy.
+ */
+/*
+ * Vet mach dien chay NGANG va DOC, khong phai cheo 45 do.
+ *
+ * Ban ve la mot ban mach: duong dan doi huong o goc vuong, khong bao gio chay
+ * cheo. Hai lop cheo cua ban truoc cho ra mot luoi tram — dung ky thuat, sai
+ * an du. Mau blue-400 thay vi trang: tren nen navy, mot vet trang mo van doc ra
+ * la xam, con vet xanh nhat thi thuoc ve cung ho mau voi hinh minh hoa.
+ */
+.sf-auth__brand {
+  background-image:
+    radial-gradient(60% 46% at 62% 40%, rgba(59, 130, 246, 0.22) 0%, rgba(59, 130, 246, 0) 100%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(96, 165, 250, 0.07) 0 1px,
+      rgba(96, 165, 250, 0) 1px 72px
+    ),
+    repeating-linear-gradient(0deg, rgba(96, 165, 250, 0.07) 0 1px, rgba(96, 165, 250, 0) 1px 72px);
 }

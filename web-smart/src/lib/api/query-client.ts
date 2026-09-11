@@ -52,6 +52,7 @@ export const qk = {
   attendanceSheets: (params: unknown) => ['attendance', 'sheets', params] as const,
   attendanceSheet: (id: string) => ['attendance', 'sheet', id] as const,
   attendanceSheetBoard: (params: unknown) => ['attendance', 'sheet-board', params] as const,
+  attendanceSheetSummary: (params: unknown) => ['attendance', 'sheet-summary', params] as const,
 
   // Theo dõi công việc nằm dưới `attendance` vì nó đọc CÙNG nguồn dữ liệu: duyệt
   // một đơn hay hiệu chỉnh công phải làm cả lưới theo dõi tươi lại bằng đúng

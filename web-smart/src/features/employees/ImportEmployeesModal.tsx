@@ -1,8 +1,6 @@
 import { useState } from 'react';
 import { Alert, Button, Modal, Steps, Switch, Table, Upload } from 'antd';
 import type { UploadFile } from 'antd';
-import { Icon } from '@/components/Icon';
-import { StatusBadge } from '@/components/StatusBadge';
 import { toUserMessage } from '@/lib/errors/api-error';
 import { downloadCsv } from '@/lib/utils/download';
 import {
@@ -12,6 +10,7 @@ import {
   type ImportValidationResult,
 } from './employees.api';
 import { useToast } from '@/components/ui';
+import { Badge as StatusBadge, Icon } from '@/components/ui';
 
 /**
  * Import nhân viên hàng loạt — docs/04 mục 8.2 (`FR-WEB-HR-10`).
@@ -154,7 +153,7 @@ export function ImportEmployeesModal({ open, onClose }: { open: boolean; onClose
             }}
           >
             <p style={{ marginBottom: 8 }}>
-              <Icon name="upload_file" size={32} color="var(--sf-teal-700)" />
+              <Icon name="upload_file" size={32} color="var(--sf-blue-700)" />
             </p>
             <p className="sf-title-md" style={{ marginBottom: 4 }}>
               Kéo thả file vào đây hoặc bấm để chọn

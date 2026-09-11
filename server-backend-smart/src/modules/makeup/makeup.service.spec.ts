@@ -54,9 +54,24 @@ describe('MakeupService', () => {
     findEngineDebts: jest.Mock;
     findOutstandingDebts: jest.Mock;
   };
-  let policy: { getNumber: jest.Mock; getBoolean: jest.Mock; get: jest.Mock; getTimezone: jest.Mock };
+  let policy: {
+    getNumber: jest.Mock;
+    getBoolean: jest.Mock;
+    get: jest.Mock;
+    getTimezone: jest.Mock;
+  };
 
-  /** Khoản nợ 200 phút phát sinh 05/08, hạn 04/09 — ví dụ ở docs/04 mục 5.1. */
+  /**
+   * Khoản nợ 200 phút phát sinh 05/08, hạn 04/09 — ví dụ ở docs/04 mục 5.1.
+   *
+   * `dueDate` phải TƯƠNG ĐỐI so với ngày chạy test, không phải hằng số.
+   * `MakeupService.record()` so `dueDate` với hôm nay và ném `MKUP_OVERDUE`;
+   * một hạn cố định trong quá khứ làm cả nhóm test này đỏ vĩnh viễn kể từ ngày
+   * đó — đúng loại lỗi khiến người ta bỏ qua suite thay vì đọc nó.
+   * Ngày phát sinh nợ giữ nguyên vì không có phép so sánh nào phụ thuộc vào nó.
+   */
+  const DUE_IN_30_DAYS = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
   const openDebt = {
     id: 'mk_1',
     companyId: COMPANY,
@@ -66,7 +81,7 @@ describe('MakeupService', () => {
     makeupWorkDate: null,
     makeupMinutes: 0,
     remainingMinutes: 200,
-    dueDate: parseWorkDate('2026-09-04'),
+    dueDate: DUE_IN_30_DAYS,
     requestId: null,
     status: 'OPEN',
     createdAt: new Date(),
@@ -78,7 +93,9 @@ describe('MakeupService', () => {
       search: jest.fn().mockResolvedValue({ items: [], total: 0 }),
       findById: jest.fn().mockResolvedValue(openDebt),
       create: jest.fn().mockImplementation((_companyId, data) => ({ id: 'mk_new', ...data })),
-      update: jest.fn().mockImplementation((_companyId, id, data) => ({ ...openDebt, id, ...data })),
+      update: jest
+        .fn()
+        .mockImplementation((_companyId, id, data) => ({ ...openDebt, id, ...data })),
       delete: jest.fn().mockResolvedValue(1),
       markExpired: jest.fn().mockResolvedValue(0),
       totals: jest.fn().mockResolvedValue({
@@ -150,9 +167,7 @@ describe('MakeupService', () => {
 
   it('làm tròn XUỐNG có lợi cho công ty: 200 phút, bước 30 → 180 phút', async () => {
     policy.getNumber.mockImplementation((_companyId: string, key: string) =>
-      Promise.resolve(
-        key === 'payroll.roundingMinutes' ? 30 : Number(POLICY_DEFAULTS[key] ?? 0),
-      ),
+      Promise.resolve(key === 'payroll.roundingMinutes' ? 30 : Number(POLICY_DEFAULTS[key] ?? 0)),
     );
     policy.get.mockImplementation((_companyId: string, key: string) =>
       Promise.resolve(key === 'payroll.roundingMode' ? 'DOWN' : POLICY_DEFAULTS[key]),
@@ -172,9 +187,7 @@ describe('MakeupService', () => {
 
   it('làm tròn LÊN có lợi cho nhân viên: 200 phút, bước 30 → 210 phút', async () => {
     policy.getNumber.mockImplementation((_companyId: string, key: string) =>
-      Promise.resolve(
-        key === 'payroll.roundingMinutes' ? 30 : Number(POLICY_DEFAULTS[key] ?? 0),
-      ),
+      Promise.resolve(key === 'payroll.roundingMinutes' ? 30 : Number(POLICY_DEFAULTS[key] ?? 0)),
     );
     policy.get.mockImplementation((_companyId: string, key: string) =>
       Promise.resolve(key === 'payroll.roundingMode' ? 'UP' : POLICY_DEFAULTS[key]),
@@ -216,7 +229,11 @@ describe('MakeupService', () => {
     await service.record(ctx, 'mk_1', { makeupWorkDate: '2026-08-12', minutes: 120 });
 
     // Dòng cũ thu về đúng phần đã bù...
-    const [, , updateData] = records.update.mock.calls[0] as [string, string, Record<string, unknown>];
+    const [, , updateData] = records.update.mock.calls[0] as [
+      string,
+      string,
+      Record<string, unknown>,
+    ];
     expect(updateData.debtMinutes).toBe(120);
     expect(updateData.makeupMinutes).toBe(120);
     expect(updateData.status).toBe('COMPLETED');
@@ -238,7 +255,11 @@ describe('MakeupService', () => {
   it('mỗi lần bù nằm ở ĐÚNG ngày làm bù của nó — engine tính công cộng theo ngày này', async () => {
     await service.record(ctx, 'mk_1', { makeupWorkDate: '2026-08-12', minutes: 120 });
 
-    const [, , updateData] = records.update.mock.calls[0] as [string, string, Record<string, unknown>];
+    const [, , updateData] = records.update.mock.calls[0] as [
+      string,
+      string,
+      Record<string, unknown>,
+    ];
     expect(updateData.makeupWorkDate).toEqual(parseWorkDate('2026-08-12'));
 
     // Dòng tách ra CHƯA có ngày bù — nó là phần nợ còn lại, chưa bù lần nào.
@@ -282,7 +303,10 @@ describe('MakeupService', () => {
     records.findById.mockResolvedValue({ ...openDebt, status: 'EXPIRED' });
     records.countCompletedSiblings.mockResolvedValue(1);
 
-    await service.extend(ctx, 'mk_1', { dueDate: '2026-10-01', reason: 'Nhân viên nghỉ ốm dài ngày' });
+    await service.extend(ctx, 'mk_1', {
+      dueDate: '2026-10-01',
+      reason: 'Nhân viên nghỉ ốm dài ngày',
+    });
 
     expect(records.update).toHaveBeenCalledWith(
       COMPANY,
@@ -307,7 +331,9 @@ describe('MakeupService', () => {
   it('không huỷ được khoản đã ghi nhận giờ bù — giờ đó đã vào bảng công', async () => {
     records.findById.mockResolvedValue({ ...openDebt, makeupMinutes: 120 });
 
-    await expect(service.cancel(ctx, 'mk_1', 'Ghi nhầm khoản nợ này')).rejects.toThrow(AppException);
+    await expect(service.cancel(ctx, 'mk_1', 'Ghi nhầm khoản nợ này')).rejects.toThrow(
+      AppException,
+    );
     expect(records.delete).not.toHaveBeenCalled();
   });
 

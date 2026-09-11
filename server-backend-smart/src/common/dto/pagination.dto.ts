@@ -3,7 +3,7 @@ import { Transform, Type } from 'class-transformer';
 import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 /**
- * docs/08-hop-dong-api.md mục 1.5 — phân trang, lọc, sắp xếp.
+ * docs/15-hop-dong-api.md mục 1.5 — phân trang, lọc, sắp xếp.
  *
  * Kế thừa DTO này cho mọi endpoint trả danh sách, đừng tự khai lại `page`/
  * `pageSize`: chỉ cần một chỗ quên chặn trần là client gọi `pageSize=1000000`

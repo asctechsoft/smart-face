@@ -70,7 +70,9 @@ describe('time.util', () => {
     });
 
     it('trả về rỗng khi to < from', () => {
-      expect(eachWorkDate(parseWorkDate('2026-08-05'), parseWorkDate('2026-08-01'))).toHaveLength(0);
+      expect(eachWorkDate(parseWorkDate('2026-08-05'), parseWorkDate('2026-08-01'))).toHaveLength(
+        0,
+      );
     });
   });
 

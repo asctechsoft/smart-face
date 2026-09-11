@@ -6,6 +6,7 @@ import { RateLimit } from 'src/common/guards/rate-limit.guard';
 import type { RequestContext } from 'src/common/types/request-context';
 import { AuthService } from './auth.service';
 import { DeviceService } from './device.service';
+import { StepUpService } from './step-up.service';
 import {
   ChangePasswordDto,
   CreateSessionDto,
@@ -13,6 +14,8 @@ import {
   EnableTwoFactorDto,
   LogoutDto,
   ReauthVerifyDto,
+  StepUpChallengeDto,
+  StepUpVerifyDto,
   RefreshTokenDto,
   ResendTwoFactorDto,
   SetupTwoFactorDto,
@@ -20,7 +23,7 @@ import {
 } from './dto/auth.dto';
 
 /**
- * docs/08-hop-dong-api.md mục 2 — API Xác thực.
+ * docs/15-hop-dong-api.md mục 2 — API Xác thực.
  *
  * Ba decorator nới lỏng chốt an ninh, mỗi cái mở đúng một cửa. Hiểu sai là mở
  * nhầm cửa, nên ghi rõ ở đây:
@@ -42,6 +45,7 @@ export class AuthController {
   constructor(
     private readonly auth: AuthService,
     private readonly devices: DeviceService,
+    private readonly stepUp: StepUpService,
   ) {}
 
   // ---------------------------------------------------------------------------
@@ -298,5 +302,44 @@ export class AuthController {
   )
   verifyReauth(@CurrentUser() ctx: RequestContext, @Body() dto: ReauthVerifyDto) {
     return this.auth.verifyReauth(ctx.userId, dto.firebaseIdToken, dto.twoFactorCode);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Step-up cho thao tác nhạy cảm (BR-18 · docs/16 phụ lục C.2)
+  // ---------------------------------------------------------------------------
+
+  @Post('step-up')
+  @HttpCode(HttpStatus.CREATED)
+  @SkipTenant()
+  @RateLimit({ bucket: 'step-up', limit: 10, windowSeconds: 900, by: 'account' })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Mở thử thách xác thực lại cho MỘT hành động',
+    description:
+      'Khác `reauth/verify` ở chỗ thử thách gắn với đúng một `action`. Token cấp cho `period.reopen` không dùng được cho `owner.assign` — endpoint sẽ trả `STEPUP_ACTION_MISMATCH`.',
+  })
+  createStepUp(@CurrentUser() ctx: RequestContext, @Body() dto: StepUpChallengeDto) {
+    return this.stepUp.challenge(ctx.userId, ctx.companyId, dto.action);
+  }
+
+  @Post('step-up/verify')
+  @HttpCode(HttpStatus.OK)
+  @SkipTenant()
+  @RateLimit({ bucket: 'step-up-verify', limit: 10, windowSeconds: 900, by: 'account' })
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Xác thực thử thách và nhận token step-up',
+    description:
+      'Gửi token nhận được qua header `X-Step-Up-Token` khi gọi endpoint nhạy cảm. Dùng MỘT LẦN, TTL 5 phút tính từ lúc xác thực xong.',
+  })
+  @ApiErrors(
+    'STEPUP_REQUIRED',
+    'STEPUP_EXPIRED',
+    'AUTH_FIREBASE_TOKEN_INVALID',
+    'AUTH_2FA_REQUIRED',
+    'SYS_RATE_LIMITED',
+  )
+  verifyStepUp(@CurrentUser() ctx: RequestContext, @Body() dto: StepUpVerifyDto) {
+    return this.stepUp.verify(ctx.userId, dto.challengeId, dto.firebaseIdToken, dto.twoFactorCode);
   }
 }

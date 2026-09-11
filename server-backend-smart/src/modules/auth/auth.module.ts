@@ -7,6 +7,8 @@ import { AuthService } from './auth.service';
 import { DeviceService } from './device.service';
 import { OtpService } from './otp.service';
 import { PasswordService } from './password.service';
+import { STEP_UP_CONSUMER } from 'src/common/guards/step-up.guard';
+import { StepUpService } from './step-up.service';
 import { TokenService } from './token.service';
 
 const logger = new Logger('JwtModule');
@@ -49,6 +51,10 @@ const logger = new Logger('JwtModule');
   providers: [
     AuthRepository,
     AuthService,
+    StepUpService,
+    // `StepUpGuard` (toàn cục) nhận qua token này để không phải import lớp
+    // `StepUpService` — xem chú thích ở `step-up.guard.ts`.
+    { provide: STEP_UP_CONSUMER, useExisting: StepUpService },
     PasswordService,
     TokenService,
     DeviceService,
@@ -58,6 +64,8 @@ const logger = new Logger('JwtModule');
   exports: [
     AuthRepository,
     AuthService,
+    StepUpService,
+    STEP_UP_CONSUMER,
     PasswordService,
     TokenService,
     DeviceService,

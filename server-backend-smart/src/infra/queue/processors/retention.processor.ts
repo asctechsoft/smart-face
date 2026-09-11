@@ -46,7 +46,7 @@ const BATCH_SIZE = 500;
  *
  * Job này xoá **chính xác theo chính sách từng công ty**. Lớp thứ hai là
  * lifecycle rule đặt thẳng trên bucket với trần cứng dài hơn — để job hỏng vài
- * tháng mà không ai biết thì vẫn có thứ dọn. Xem `docs/r2-lifecycle.md`.
+ * tháng mà không ai biết thì vẫn có thứ dọn. Xem `docs/storage-lifecycle.md`.
  */
 @Processor(QUEUES.RETENTION)
 export class RetentionProcessor extends WorkerHost {

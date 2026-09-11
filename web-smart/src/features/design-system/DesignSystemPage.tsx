@@ -338,7 +338,7 @@ export function DesignSystemPage() {
         <Section
           id="avatar"
           title="11.8 · Avatar"
-          note="Chữ viết tắt #FFFFFF trên teal-700 = 8.97:1."
+          note="Chữ viết tắt #FFFFFF trên blue-700 = 8.97:1."
         >
           <Row label="Kích thước">
             <Avatar name="Nguyễn Văn Đức" size={32} />
@@ -713,12 +713,12 @@ function DemoNotice({ loading, onToggle }: { loading: boolean; onToggle: () => v
         flexWrap: 'wrap',
         padding: '12px 16px',
         borderRadius: 12,
-        background: 'var(--sf-teal-50)',
-        border: '1px solid var(--sf-teal-200)',
+        background: 'var(--sf-blue-50)',
+        border: '1px solid var(--sf-blue-200)',
       }}
     >
-      <Icon name="info" size={20} color="var(--sf-teal-800)" />
-      <span className="sf-body-sm" style={{ flex: 1, minWidth: 220, color: 'var(--sf-teal-800)' }}>
+      <Icon name="info" size={20} color="var(--sf-blue-800)" />
+      <span className="sf-body-sm" style={{ flex: 1, minWidth: 220, color: 'var(--sf-blue-800)' }}>
         {loading
           ? 'Các khối bên dưới đang ở trạng thái ĐANG TẢI mô phỏng. Trang không bị treo — hiệu ứng nhấp nháy lặp vô hạn là đúng thiết kế.'
           : 'Đang hiện trạng thái ĐÃ TẢI XONG. Bật lại để so sánh với lúc chờ dữ liệu.'}

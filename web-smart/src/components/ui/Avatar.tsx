@@ -3,7 +3,7 @@ import { initials } from '@/lib/utils/format';
 /**
  * Avatar — docs/16 mục 11.8.
  *
- * Chữ viết tắt màu `#FFFFFF` trên nền `teal-700` = **8.97:1**. Bản Figma cũ
+ * Chữ viết tắt màu `#FFFFFF` trên nền `blue-700` = **8.97:1**. Bản Figma cũ
  * dùng `#82C6AD` — 4.54:1, sát ngưỡng tới mức chỉ cần trình duyệt áp một lớp
  * làm mượt phông khác là trượt. Đổi màu chữ giữ nguyên được nền thương hiệu mà
  * biên an toàn rộng gấp đôi.

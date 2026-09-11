@@ -1,0 +1,1333 @@
+# 05 — Nghiệp vụ Web Kế toán
+
+> **Nguồn chuẩn:** Tài liệu nghiệp vụ SmartFace **v2.1**, Chương V.
+> Nền tảng: **ReactJS (TypeScript) + Vite + Ant Design** — dùng chung monorepo/components
+> với [Web Giám đốc](./06-nghiep-vu-web-giam-doc.md) nhưng **route và permission tách rõ** (`ADR-03`).
+> Actor: `ACT-ACC` (Kế toán).
+>
+> ⚠ **Trạng thái thi công: TÁCH DỞ.** Hiện tại `web-smart` gộp chung Kế toán và
+> Giám đốc, phân quyền theo role. Tài liệu này mô tả **phần thuộc về Kế toán**;
+> phần cấu hình đã chuyển sang [06](./06-nghiep-vu-web-giam-doc.md).
+
+> ⚠ **LUỒNG XÁC THỰC.** Chương 2.2 của v2.1 mô tả đăng nhập bằng SĐT + OTP và mã
+> mời. Hệ thống đã thi công dùng **Firebase Authentication** — client đăng nhập
+> bằng **email + mật khẩu** rồi đổi ID token lấy phiên Backend qua
+> `POST /auth/session` (kèm tên miền công ty). Tài khoản do Kế toán cấp sẵn, đăng
+> nhập lần đầu bắt buộc đổi mật khẩu; xác thực 2 lớp là tuỳ chọn, dùng **OTP qua
+> SMS**. Mã mời và TOTP đã bỏ hẳn.
+>
+> Mô tả đúng: [01 mục 11](./01-tong-quan-he-thong.md#11-cấp-tài-khoản-và-gia-nhập-công-ty) ·
+> [15 mục 2](./15-hop-dong-api.md#2-api-xác-thực-auth) ·
+> [19](./19-luong-onboarding-va-dang-ky-khuon-mat.md)
+
+---
+
+Web Kế toán tập trung vào **dữ liệu nhân sự phục vụ chấm công, đối soát công và
+xuất báo cáo**. Kế toán là người **"xử lý số liệu"**, không mặc định là người
+thiết lập chính sách hoặc quyền cao nhất trong công ty.
+
+> ### Ranh giới cốt lõi
+>
+> Kế toán **không mặc định** có: `policy.update`, `shift_template.update`,
+> `role.assign`, `owner.assign`, `tenant.billing`. Nếu doanh nghiệp cần, Giám
+> đốc/Owner cấp thêm **đúng permission cần thiết** — không cấp gộp cả nhóm.
+
+### Cấu trúc menu
+
+| Menu | Mục con |
+|---|---|
+| **Dashboard** | Tổng quan hôm nay, thiếu công, đơn/bổ sung cần theo dõi, tiến độ kỳ công |
+| **Nhân sự** | Danh sách nhân viên, hồ sơ, thêm/import, phòng ban/chức vụ tham chiếu, trạng thái tài khoản |
+| **Chấm công** | Dữ liệu ngày, lượt chấm, bất thường, điều chỉnh đã được duyệt |
+| **Tính công** | Bảng công tháng, công chuẩn, OT, phép, trễ/sớm, công bù, kết quả tính |
+| **Kỳ công** | Mở kỳ, chạy tính, đối soát, gửi duyệt chốt, khoá/mở lại theo phê duyệt |
+| **Báo cáo** | Bảng công, chuyên cần, OT, phép, vi phạm, export Excel/PDF/API |
+| **Yêu cầu điều chỉnh** | Yêu cầu mở lại kỳ, sửa dữ liệu nhạy cảm, override theo phê duyệt Giám đốc |
+| **Nhật ký** | Lịch sử import, export, sửa dữ liệu, chốt kỳ theo quyền được cấp |
+
+---
+
+## Mục lục
+
+1. [Ma trận phân quyền](#1-ma-trận-phân-quyền)
+2. [Dashboard tổng quan](#2-dashboard-tổng-quan-fr-web-dash)
+3. [Quản lý chấm công](#3-quản-lý-chấm-công-fr-web-att)
+4. [Quản lý & duyệt đơn từ](#4-quản-lý--duyệt-đơn-từ-fr-web-req)
+5. [Công làm bù & quy tắc tính công](#5-công-làm-bù--quy-tắc-tính-công-fr-web-mkup)
+6. [Cấu hình chính sách công ty — đã chuyển sang 06](#6-cấu-hình-chính-sách-công-ty--đã-chuyển)
+7. [Tính công & xuất báo cáo](#7-tính-công--tính-lương--xuất-báo-cáo-fr-web-pay)
+8. [Quản lý nhân sự](#8-quản-lý-nhân-sự-fr-web-hr)
+9. [Báo cáo & thống kê](#9-báo-cáo--thống-kê-fr-web-rep)
+10. [Thông báo](#10-thông-báo-fr-acc-not)
+11. [Mã mời & thiết bị — đã chuyển sang 06](#11-mã-mời--thiết-bị--đã-chuyển)
+12. [Kiến trúc Web](#12-kiến-trúc-web-react)
+13. [Kỳ công & chốt dữ liệu](#13-kỳ-công--chốt-dữ-liệu-fr-web-period)
+14. [Yêu cầu cần Giám đốc duyệt](#14-yêu-cầu-cần-giám-đốc-duyệt-fr-web-esc)
+15. [Audit & phân quyền Kế toán](#15-audit--phân-quyền-kế-toán-fr-web-aud)
+
+---
+
+## 1. Ma trận phân quyền
+
+Ma trận theo **5 nhóm vai trò của v2.1** (§8.1), mở rộng chi tiết theo module để
+thi công `RolesGuard` + `ScopeGuard`.
+
+| Module / Hành động | Nhân viên | Quản lý | Kế toán | Giám đốc / Owner | Platform Admin |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **Phạm vi dữ liệu mặc định** | `SELF` | `TEAM`/`DEPARTMENT` | `COMPANY` (số liệu) | `COMPANY` | `PLATFORM` |
+| Chấm công cá nhân | ✓ | ✓ | ✓ | ✓ | ✗ |
+| Tạo đơn cá nhân | ✓ | ✓ → cấp trên | ✓ → cấp trên | Theo workflow | ✗ |
+| Duyệt đơn nhân viên | ✗ | ✓ theo scope | Xác nhận số liệu nếu workflow | ✓ cấp cao | ✗ |
+| Xem chấm công | Cá nhân | Theo scope | ✓ | ✓ | Chỉ support có kiểm soát |
+| Xem ảnh/GPS lượt chấm | Cá nhân | Theo scope | ✓ | ✓ | ✗ mặc định |
+| Sửa/bổ sung công thủ công | ✗ | ✗ | ✓ (kỳ chưa khoá) | ✓ override | ✗ |
+| Lập bảng chấm công | ✗ | Theo scope | ✓ | ✓ | ✗ |
+| Chạy tính công | ✗ | ✗ | ✓ | ✓ | ✗ |
+| **Gửi duyệt chốt kỳ** | ✗ | ✗ | ✓ | ✗ | ✗ |
+| **Duyệt chốt / mở lại kỳ** | ✗ | ✗ | ✗ | ✓ | ✗ |
+| Xuất Excel bảng công | ✗ | Theo scope | ✓ | ✓ | ✗ |
+| Tạo/sửa hồ sơ nhân viên | ✗ | ✗ | ✓ | ✓ | ✗ |
+| Import nhân viên hàng loạt | ✗ | ✗ | ✓ | ✓ | ✗ |
+| Xếp ca / phân ca | ✗ | Chỉ nếu được uỷ quyền | Không mặc định | ✓ | ✗ |
+| **Định nghĩa mẫu ca** | ✗ | ✗ | ✗ | ✓ | ✗ |
+| **Cấu hình chính sách công ty** | ✗ | ✗ | ✗ | ✓ | ✗ |
+| **Cấu hình luồng duyệt** | ✗ | ✗ | ✗ | ✓ | ✗ |
+| **Phân quyền tenant** | ✗ | ✗ | ✗ | ✓ | ✗ (trừ hỗ trợ đặc biệt) |
+| **Cấp/thu hồi Owner** | ✗ | ✗ | ✗ | ✓ Owner | ✗ |
+| Gửi thông báo công ty | ✗ | Theo scope | ✓ | ✓ | ✗ |
+| Xem dashboard cảnh báo gian lận | ✗ | Theo scope (chỉ xem) | ✓ | ✓ | ✗ |
+| Quyết định huỷ/giữ công nghi vấn | ✗ | ✗ | ✓ | ✓ | ✗ |
+| Reset sinh trắc học | ✗ | ✗ | ✓ | ✓ | Qua Support Action có ticket |
+| Xem audit log công ty | ✗ | ✗ | ✓ | ✓ | ✓ |
+| Quản lý tenant/gói/AI Server | ✗ | ✗ | ✗ | ✗ | ✓ |
+
+**Ba thay đổi so với ma trận v1.0:**
+
+1. **Vai trò "Admin công ty" đổi tên thành "Giám đốc/Owner"** và nhận thêm quyền duyệt chốt/mở lại kỳ công — trước đây Kế toán tự chốt.
+2. **Kế toán mất quyền cấu hình chính sách và quy tắc tính công/OT.** Hai quyền này chuyển sang Giám đốc (`FR-GDW-POL`).
+3. **Quản lý chuyển lên App mobile** và chỉ *xem* cảnh báo gian lận, không quyết định huỷ/giữ công.
+
+> **Lưu ý thi công:** `Quản lý` bị giới hạn **hai chiều** — vừa theo vai trò, vừa
+> theo scope được phân công. Cần `ScopeGuard` riêng lấy danh sách đơn vị mà user
+> quản lý và chèn vào mọi query (`BR-13`).
+>
+> Ma trận đầy đủ ở cấp hệ thống:
+> [08 mục 1](./08-luong-xuyen-phan-he-va-ma-tran-quyen.md#1-ma-trận-quyền-tổng-quan).
+
+---
+
+## 2. Dashboard tổng quan (`FR-WEB-DASH`)
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-DASH-01` | Số nhân viên đang làm việc / đã chấm công hôm nay | Must |
+| `FR-WEB-DASH-02` | Số nhân viên đi muộn hôm nay | Must |
+| `FR-WEB-DASH-03` | Số đơn đang chờ duyệt (có link đi thẳng tới danh sách) | Must |
+| `FR-WEB-DASH-04` | Tổng giờ OT phát sinh trong tháng | Should |
+| `FR-WEB-DASH-05` | Cảnh báo bất thường: chấm công ngoài vùng, chấm công lúc bất thường | Must |
+| `FR-WEB-DASH-06` | Biểu đồ chuyên cần toàn công ty theo phòng ban | Should |
+
+### 2.1. Bố cục
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  Dashboard · Công ty AMOBI · 03/08/2026            [Đổi phòng ban▾]│
+├──────────────┬──────────────┬──────────────┬─────────────────────┤
+│ Đang làm việc│ Đã chấm công │  Đi muộn     │  Đơn chờ duyệt      │
+│    142/168   │   156/168    │     8        │      12  →          │
+├──────────────┴──────────────┴──────────────┴─────────────────────┤
+│  ⚠ CẢNH BÁO BẤT THƯỜNG (5)                                →      │
+│  • 2 lượt chấm công ngoài vùng cho phép                          │
+│  • 1 lượt nghi ngờ vị trí giả (mock GPS)                         │
+│  • 1 lượt liveness score thấp bất thường                         │
+│  • 1 tài khoản chấm công trên 2 thiết bị trong 5 phút            │
+├──────────────────────────────────────────────────────────────────┤
+│  Chuyên cần theo phòng ban (tháng 8)      │  OT tháng 8          │
+│  [Biểu đồ cột: Đúng giờ / Đi muộn / Nghỉ] │  [Biểu đồ đường]     │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### 2.2. Yêu cầu hiệu năng
+
+- Dashboard là màn hình được mở nhiều nhất → **bắt buộc cache** kết quả tổng hợp trong Redis (TTL 1–5 phút), không query trực tiếp bảng chấm công mỗi lần tải.
+- Số liệu realtime (đã chấm công hôm nay) cập nhật qua WebSocket hoặc polling nhẹ, không reload cả trang.
+
+---
+
+## 3. Quản lý chấm công (`FR-WEB-ATT`)
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-ATT-01` | Danh sách chấm công theo phòng ban, theo ngày/tuần/tháng | Must |
+| `FR-WEB-ATT-02` | Tìm kiếm theo nhân viên (tên, mã nhân viên, SĐT) | Must |
+| `FR-WEB-ATT-03` | Xem chi tiết từng lượt: ảnh, vị trí trên bản đồ, phương thức xác thực, confidence score | Must |
+| `FR-WEB-ATT-04` | Chỉnh sửa/bổ sung công thủ công, **bắt buộc nhập lý do**, ghi log người chỉnh sửa | Must |
+| `FR-WEB-ATT-05` | Xuất danh sách chấm công ra Excel/PDF theo bộ lọc tuỳ chọn | Must |
+| `FR-WEB-ATT-06` | Hiển thị cờ nghi vấn gian lận trên từng dòng | Must |
+| `FR-WEB-ATT-07` | Chặn sửa dữ liệu thuộc kỳ lương đã chốt (`BR-07`) | Must |
+| `FR-WEB-ATT-08` | Lập **bảng chấm công** theo tháng × phòng ban; thành viên lấy từ bảng phân ca tương ứng | Must |
+| `FR-WEB-ATT-09` | Lưới người × ngày: ca được xếp, giờ chấm vào/ra, đơn từ trong tháng, tổng công của kỳ | Must |
+| `FR-WEB-ATT-10` | Nút **Cập nhật bảng công**: tính lại công cả kỳ cho thành viên trong bảng | Must |
+| `FR-WEB-ATT-11` | Dashboard tình hình chấm công trên đầu lưới, kiêm chú thích màu | Should |
+| `FR-WEB-ATT-12` | **Theo dõi công việc trong ngày**: lưới người × giờ, trạng thái làm việc thời gian thực | Must |
+| `FR-WEB-ATT-13` | Phân biệt được người đang làm, đang ra ngoài, chưa đến, nghỉ theo đơn, quên chấm ra | Must |
+| `FR-WEB-ATT-14` | Nhắc chấm công tới danh sách CBNV chọn trên lưới theo dõi | Should |
+| `FR-WEB-ATT-15` | Duyệt/từ chối nhanh đơn xin ra ngoài ngay trên lưới theo dõi | Should |
+
+### 3.1. Bảng chấm công — đơn vị làm việc của màn hình này
+
+Chấm công KHÔNG còn là một danh sách phẳng theo ngày. Nó tổ chức theo **bảng
+chấm công**, song sinh với bảng phân ca (mục 8) và cố ý như vậy: người dùng nghĩ
+theo đơn vị "bảng chấm công tháng 8 phòng Kho", và hai màn hình đọc được bằng
+cùng một phản xạ.
+
+Lý do đổi: danh sách phẳng trả lời được "ngày 12/08 ai đi muộn" nhưng không trả
+lời được câu hỏi thật sự của kế toán cuối tháng — "phòng Kho tháng 8 công thế
+nào, còn ai thiếu gì không". Muốn biết phải đọc 30 trang rồi tự cộng trong đầu.
+
+**Nguồn dữ liệu khi lập bảng** (theo thứ tự ưu tiên):
+
+1. **Bảng phân ca của cùng tháng** chạm tới các phòng ban đã chọn — nguồn đúng
+   nhất, vì ai đã được xếp lịch ca thì chắc chắn phát sinh công trong tháng.
+2. **CBNV đang làm việc của các phòng ban** — chỉ dùng khi tháng đó chưa lập bảng
+   phân ca nào. Không có lịch ca riêng thì công vẫn tính theo ca mặc định công ty,
+   nên bỏ trắng những người này là bỏ sót công thật.
+
+Bảng KHÔNG sở hữu số liệu nào. Công vẫn ở `AttendanceDaily`, lịch ca vẫn ở
+`ShiftAssignment`, đơn từ vẫn ở `LeaveRequest` — bảng chỉ khai báo phạm vi (kỳ
+nào, phòng ban nào, ai) rồi đọc ba nguồn đó. Vì vậy **xoá bảng chấm công không
+mất số liệu gì**, khác hẳn xoá bảng phân ca.
+
+| Mã | Quy tắc |
+|---|---|
+| `BR-SHEET-01` | Mỗi người mỗi tháng chỉ thuộc **một** bảng chấm công (ràng buộc ở tầng database). |
+| `BR-SHEET-02` | Thành viên được **chốt** lúc lập bảng; người chuyển phòng giữa tháng vẫn ở nguyên bảng đã lập. |
+| `BR-SHEET-03` | Lưới chỉ hiển thị trong đúng kỳ của bảng; ngày ngoài kỳ bị từ chối (`ATT_SHEET_OUT_OF_PERIOD`). |
+| `BR-SHEET-04` | Bảng `CLOSED` khoá việc thêm/bớt thành viên. Số liệu công vẫn tính lại được tới khi kỳ lương chốt. |
+| `BR-SHEET-05` | Mở lại bảng bị từ chối nếu kỳ lương phủ lên tháng đó đã chốt (`BR-07`). |
+
+### 3.2. Màn hình lưới người × ngày
+
+Mỗi ô có **hai tầng** thông tin, cố ý xếp chồng chứ không gộp: tầng trên là ca
+ĐƯỢC XẾP (kế hoạch, từ bảng phân ca), tầng dưới là giờ chấm vào–ra THỰC TẾ. Nền
+ô nói mức độ khớp giữa hai tầng. Gộp lại thành một con số thì mất đúng thứ đang
+cần tìm: người có ca mà không chấm công, và người chấm công mà không có ca.
+
+```
+Bộ lọc: [Từ ngày] [Đến ngày] [Phòng ban ▾] [Tìm nhân viên...]
+
+┌──────────────┬───────┬───────┬───────┬───────┬───────┬──────────────┐
+│ Nhân viên    │ T2 03 │ T3 04 │ T4 05 │ T5 06 │ T6 07 │ Tổng kỳ      │
+├──────────────┼───────┼───────┼───────┼───────┼───────┼──────────────┤
+│ ☐ Nguyễn V.Đ │  HC   │  HC   │  HC   │  HC   │  HC   │ 21.5 công    │
+│   Kho        │ 08:02 │ 08:47 │ 07:58 │   ·   │ 08:05 │ 168h · muộn  │
+│              │ 17:35 │ 17:30 │ 17:32 │   ·   │ 17:32 │ 45p · OT 4h  │
+│              │ ĐỦ    │ THIẾU │ ĐỦ    │ ĐƠN   │ ĐỦ    │              │
+├──────────────┼───────┼───────┼───────┼───────┼───────┼──────────────┤
+│ ☐ Trần T.M   │  CĐ   │  CĐ   │   —   │  CĐ   │  CĐ   │ 19.0 công    │
+│   Kho        │ 22:01 │ 22:05 │   ·   │ 21:58 │ 22:03 │ 152h         │
+│              │ 06:03 │ 06:00 │   ·   │ 06:02 │ 06:01 │              │
+└──────────────┴───────┴───────┴───────┴───────┴───────┴──────────────┘
+
+Nền ô: Đủ công · Thiếu công · Không chấm công · Nghỉ không tính công · Ngày lễ · Cuối tuần
+```
+
+#### Dashboard tình hình — đặt TRÊN lưới
+
+Hàng ô thống kê đứng ngay trên lưới, mỗi loại một ô: số ngày và tỉ lệ. Nó **đồng
+thời là chú thích màu** — nền mỗi ô thống kê chính là nền của ô tương ứng trên
+lưới, nên không cần một bảng chú thích thứ hai.
+
+```
+┌──────────────┬──────────────┬──────────────┬──────────────┐
+│ ⛔ Không chấm│ 🕐 Thiếu công│ ✓ Đủ công    │ 📅 Nghỉ không│
+│    công      │              │              │    tính công │
+│  12 ngày·4%  │  8 ngày·3%   │ 240 ngày·82% │  5 ngày·2%   │
+└──────────────┴──────────────┴──────────────┴──────────────┘
+```
+
+Ba lý do cho hình dạng này:
+
+- **Trên chứ không dưới.** Lưới cuộn ngang và dài; chú thích nằm dưới thì phải
+  cuộn qua hết bảng mới đọc được thứ cần biết để đọc chính bảng đó.
+- **Ô thống kê, không phải biểu đồ.** Sáu con số rời rạc không có trục chung nào
+  để so; một biểu đồ cột ở đây chỉ thêm mực chứ không thêm nghĩa.
+- **Thứ tự theo mức cần xử lý**, không theo bảng chữ cái: *Không chấm công* đứng
+  đầu vì đó là thứ phải sửa trước khi chốt.
+
+Màu không đứng một mình (docs/20 mục 14.2 điều 1): mỗi ô có ô màu + biểu tượng +
+nhãn chữ + con số. Con số mặc **màu chữ thường**, không mặc màu trạng thái — màu
+là việc của ô vuông bên cạnh.
+
+⚠ Mực trên các ô này ghim vào nấc ramp cố định (`--sf-neutral-900/600`), KHÔNG
+dùng `--sf-on-surface`. Nền tone là màu sáng cố định mà khối `prefers-color-scheme:
+dark` không định nghĩa lại, trong khi `--sf-on-surface` thì có — dùng token ngữ
+nghĩa ở đây là chữ trắng trên nền sáng ngay khi bật chế độ tối.
+
+Con số đếm trên **trang đang hiển thị** (mặc định 25 CBNV), không phải cả bảng —
+phạm vi được ghi rõ ngay cạnh tiêu đề để không ai đọc nhầm thành toàn bảng.
+
+**Nền ô trả lời đúng MỘT câu hỏi: ngày này đủ công chưa?** Đó là câu người rà
+công quét cả bảng để tìm, và một kênh màu chỉ chuyển tải được một câu hỏi.
+
+Hệ quả quan trọng: **nghỉ phép có lương nguyên ngày tô "Đủ công"**, không tô màu
+riêng cho đơn — vì nó đúng là đủ công. Thông tin "ngày này nghỉ theo đơn" không
+mất đi: ô vẫn đóng dấu **ĐƠN**, `aria-label` vẫn đọc số đơn liên quan, và chi tiết
+ô liệt kê từng đơn. Dùng màu để nói *nguồn gốc* của công thì mất chỗ để nói *đủ
+hay thiếu* — mà thiếu công mới là thứ phải sửa trước khi chốt.
+
+Vì vậy nền "Nghỉ không tính công" chỉ còn dành cho nghỉ **không** hưởng lương:
+0 công nhưng có lý do chính đáng, khác hẳn vắng mặt không phép.
+
+Mốc "đủ" là **ngày công của ca** (`workDayCredit`), không phải hằng số 1: ca nửa
+ngày thì 0.5 công đã là đủ.
+
+| Nền | Nghĩa |
+|---|---|
+| Đủ công | `standardDays ≥ workDayCredit` — do đi làm, do đơn có lương, hoặc cả hai |
+| Thiếu công | Có công nhưng chưa đạt một ngày công của ca |
+| Không chấm công | Có ca, không lượt chấm nào, không đơn — ô cần rà trước khi chốt |
+| Nghỉ không tính công | Có đơn nhưng 0 công (nghỉ không lương) |
+| Ngày lễ | Giữ riêng vì hệ số OT của ngày đó khác hẳn |
+| Cuối tuần | Không có ca và không ai đi làm |
+
+Nền ô **không phải kênh thông tin duy nhất** (docs/20 mục 14.2 điều 1): mỗi ô có
+`aria-label` đọc ra tên người, ngày, ca, giờ chấm, phân loại và số đơn liên quan.
+
+Bấm vào một ô mở chi tiết: thông tin ca (giờ ca, số giờ công), giờ chấm vào–ra,
+**số công hưởng lương** (`standardDays` do máy tính công trả về) đặt cạnh **số
+công đi làm thực tế** (quy đổi từ giờ làm trên số giờ công của ca), giờ tăng ca
+kèm hệ số, và toàn bộ đơn từ chạm vào ngày đó. Hai con số công cố ý đứng cạnh
+nhau: một người nghỉ phép cả tháng vẫn có 22 công hưởng lương và 0 công đi làm —
+gộp thành một ô thì không ai phát hiện được điều đó khi liếc bảng.
+
+Đơn từ hiển thị cả `PENDING`, phân biệt rõ với "đã tính vào công"
+(`appliedRequestIds`): đơn chờ duyệt CHƯA vào công, và duyệt sau khi chốt bảng là
+phải tính lại cả kỳ.
+
+**Ô cuối tuần không có ca thì không nhắc tới đơn.** Một đơn nghỉ từ thứ Hai tới
+Chủ nhật phủ lên cả thứ Bảy và Chủ nhật, nhưng hai ngày đó vốn đã không đi làm —
+tô chúng thành "nghỉ theo đơn" là nói rằng người ta tiêu phép vào ngày nghỉ tuần,
+và làm cả dải ô cuối tuần trong tháng đổi màu vì một cái đơn duy nhất. Ô đó hiện
+nền "Cuối tuần" và bỏ dấu ĐƠN; đơn vẫn còn nguyên trong chi tiết ô khi bấm vào.
+
+Hai ngoại lệ giữ nguyên thông tin: **ngày lễ** rơi vào cuối tuần (hệ số OT 300%
+phải nhìn thấy được), và cuối tuần mà người đó **thật sự có chấm công** — khi ấy
+ô hiển thị theo giờ làm thực tế như ngày thường.
+
+#### Nút "Cập nhật bảng công" (`FR-WEB-ATT-10`)
+
+`AttendanceDaily` là bảng **đã tính** (ADR-08). Nó chỉ đổi khi có gì đó kích hoạt
+tính lại: một lượt chấm công mới, một hiệu chỉnh (`BR-ADJ-04`), hoặc job chạy
+đêm. **Ba việc KHÔNG tự kích hoạt nó**, mà cả ba đều hay xảy ra ngay trước lúc
+chốt công:
+
+- Đơn từ duyệt ngược cho ngày đã qua (`BR-REQ-03`).
+- Sửa cấu hình ca, hệ số ngày, hoặc `isPaidLeave` của một loại đơn.
+- Xếp lại ca trong bảng phân ca của tháng.
+
+Không có nút này thì người rà công nhìn thấy số cũ mà **không có cách nào biết
+nó cũ** — đó là kiểu sai nguy hiểm nhất của một bảng công.
+
+Chạy nền và trả `202` + `jobId`: một bảng 50 người × 31 ngày là 1550 lượt tính,
+giữ kết nối HTTP suốt thời gian đó sẽ chạm timeout của proxy trước khi xong. Giao
+diện hiện thanh tiến độ và **tự làm mới lưới khi job xong** — làm mới ngay lúc
+bấm chỉ tải lại đúng những con số cũ rồi đứng im, và người dùng kết luận nút
+không hoạt động.
+
+Job **idempotent** (`NFR-REL-06`) nên bấm nhiều lần vô hại. Ngày thuộc kỳ lương
+đã chốt bị **bỏ qua, không ghi đè** (`BR-07`). Bảng đã chốt vẫn cập nhật được số
+liệu — chốt bảng khoá việc sửa *thành viên*, không khoá số liệu.
+
+Quyền: `attendance.sheet` (gồm Quản lý), không phải `attendance.adjust` — tính
+lại không sửa gì thủ công, nó chạy lại đúng luật đã cấu hình trên dữ liệu đã có.
+
+**Phạm vi tính lại KHÔNG lọc theo trạng thái nhân viên.** Chốt này đã trả giá một
+lần: lượt tính lại từng loại `PENDING_ACTIVATION` với lý do "hồ sơ chưa kích hoạt
+thì chưa có công". Lý do đó sai — đó là hồ sơ HR đã tạo nhưng người ta chưa đăng
+nhập App lần nào; họ vẫn đi làm, vẫn có ca, vẫn gửi đơn nghỉ. Với công ty vừa
+triển khai thì **toàn bộ** nhân sự nằm ở trạng thái này, nên lượt tính lại quét
+qua danh sách rỗng, không ghi dòng nào, mà vẫn báo hoàn tất 100%.
+
+`TERMINATED` cũng phải có mặt: người nghỉ việc giữa tháng vẫn có công của những
+ngày đã đi làm, và đó chính là kỳ cần chốt lương lần cuối cho họ. Lọc duy nhất
+còn lại là hồ sơ đã xoá.
+
+### 3.3. Màn hình chi tiết một lượt chấm công
+
+Mở từ nút "Xem từng lượt chấm công" trong chi tiết ô của lưới.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Chi tiết chấm công · Phạm Thị An (anpt.amobi)                   │
+├────────────────────────────┬────────────────────────────────────┤
+│  [Ảnh chụp lúc chấm công]  │  Thời gian (giờ server): 08:05:12  │
+│                            │  Giờ thiết bị gửi lên:   08:05:09  │
+│  [Ảnh hồ sơ gốc]           │  Lệch: 3 giây  ✓                   │
+│                            │                                     │
+│  Điểm tương đồng: 0.71 ✓   │  Phương thức: Khuôn mặt            │
+│  Liveness score:  0.88 ✓   │  Thiết bị: iPhone 14 · ID a3f9...  │
+│                            │  IP: 113.161.x.x                    │
+├────────────────────────────┤  Nguồn vị trí: GPS · Mock: KHÔNG   │
+│  [Bản đồ hiển thị vị trí]  │  Độ chính xác: 8m                  │
+│  Cách văn phòng: 340m      │                                     │
+│  🚩 NGOÀI VÙNG (bán kính   │                                     │
+│     cho phép 100m)         │                                     │
+├────────────────────────────┴────────────────────────────────────┤
+│  🚩 CỜ NGHI VẤN: ATT_OUT_OF_GEOFENCE                             │
+│  Quyết định:  [ Giữ nguyên công ]  [ Huỷ công này ]              │
+│  Lý do (bắt buộc): [________________________________]            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 3.4. Quy tắc hiệu chỉnh công thủ công
+
+| Mã | Quy tắc |
+|---|---|
+| `BR-ADJ-01` | **Không sửa đè bản ghi thô** (`BR-06`). Hiệu chỉnh tạo bản ghi `AttendanceAdjustment` riêng, trỏ về bản ghi gốc. |
+| `BR-ADJ-02` | Bắt buộc nhập lý do hiệu chỉnh, tối thiểu 10 ký tự. |
+| `BR-ADJ-03` | Ghi audit log: ai sửa, sửa gì (giá trị cũ → giá trị mới), thời điểm, lý do (`BR-08`). |
+| `BR-ADJ-04` | Sau khi hiệu chỉnh, tự động kích hoạt tính lại `AttendanceDaily` của ngày đó. |
+| `BR-ADJ-05` | Không cho hiệu chỉnh dữ liệu thuộc kỳ lương đã chốt. Muốn sửa phải mở lại kỳ (thao tác riêng, có log). |
+| `BR-ADJ-06` | Nhân viên xem được lịch sử hiệu chỉnh liên quan tới mình (minh bạch, giảm khiếu nại). |
+
+### 3.5. Màn hình Theo dõi công việc (`FR-WEB-ATT-12`…`FR-WEB-ATT-15`)
+
+Màn hình riêng, có mục riêng trên sidenav (`/work-status`), **không** phải một tab
+của bảng chấm công. Lý do nằm ở chỗ nó phục vụ một người dùng khác, vào một thời
+điểm khác, để trả lời một câu hỏi khác:
+
+| | Bảng chấm công (mục 3.1–3.2) | Theo dõi công việc |
+|---|---|---|
+| Câu hỏi | "tháng này ai thiếu công" | "**bây giờ** ai đang ở đâu" |
+| Ai dùng | Kế toán, cuối tháng | Quản lý trực tiếp, trong ngày |
+| Trục ngang | NGÀY, cả tháng | GIỜ, trong đúng một ngày |
+| Nguồn | `attendance_daily` (đã tính) | `attendance_log` (thô) + `attendance_daily` |
+| Tập dòng | thành viên đã chốt của một bảng | mọi CBNV đang làm việc trong phạm vi quyền |
+
+Không nhồi được vào cùng một lưới: một ngày trong bảng chấm công là một ô rộng
+62px, và trong 62px đó không có chỗ nào để vẽ khoảng ra ngoài lúc 13:00–14:10 —
+mà chính khoảng đó là thứ người mở màn hình này đang tìm.
+
+#### Vì sao phải đọc bản ghi thô
+
+`attendance_daily` chỉ giữ **giờ vào đầu tiên** và **giờ ra cuối cùng**. Với hai
+con số đó, người đang ngồi làm và người vừa quẹt `BREAK_OUT` đi ra ngoài trông
+giống hệt nhau — cả hai đều là "vào 08:02, chưa ra". Vì vậy màn này đọc thẳng
+`attendance_log`, và bù lại bằng phạm vi đúng **một ngày**, tối đa 2000 CBNV mỗi
+lượt (vượt trần thì màn hình phải nói ra, không cắt im lặng).
+
+#### Bốn tầng của một dòng
+
+Mỗi dòng là một thanh trên trục giờ, xếp chồng bốn tầng — gộp lại thành một
+thanh sẽ mất đúng thứ cần tìm là khoảng **lệch** giữa kế hoạch và thực tế:
+
+1. **Ca được xếp** (nền nhạt) — đáng lẽ phải có mặt lúc nào. Khoảng nghỉ giữa ca
+   khoét sáng ra, để không ai đọc nhầm giờ nghỉ trưa thành vắng mặt.
+2. **Đơn từ** (nền xanh mòng két) — hôm nay được phép vắng lúc nào. Đơn **chờ
+   duyệt** vẽ gạch chéo chứ không tô đặc: nó chưa cho phép ai vắng mặt.
+3. **Thực tế đã làm** (thanh đậm) — cắt rời ở mỗi đoạn ra ngoài.
+4. **Mốc quẹt thẻ** (vạch dọc) — từng lượt một, kèm giờ, chi nhánh, phương thức.
+
+Cộng một vạch đỏ dọc đánh dấu "bây giờ", chỉ vẽ khi đang xem hôm nay.
+
+#### Mười một trạng thái
+
+Xếp theo mức độ **cần xử lý**, không theo bảng chữ cái:
+
+| Trạng thái | Khi nào |
+|---|---|
+| Chưa đến (quá giờ) | có ca, chưa quẹt lần nào, đã quá giờ vào ca + dung sai |
+| Vắng | ngày đã qua, có ca, không quẹt, không đơn nào che |
+| Quên chấm ra | đã quẹt vào, quá giờ tan ca > 90 phút mà chưa quẹt ra |
+| Đang ra ngoài | `BREAK_OUT` chưa có `BREAK_IN`, **hoặc** đang trong khoảng đơn `GO_OUT` đã duyệt |
+| Đang làm | đã quẹt vào, chưa quẹt ra, chưa quá giờ tan ca |
+| Đã về | đã quẹt ra |
+| Chưa đến | có ca, chưa tới giờ vào ca — chưa có gì bất thường |
+| Công tác | đơn `BUSINESS_TRIP` cả ngày đã duyệt — là ngày ĐI LÀM, chỉ là làm ở chỗ khác |
+| Nghỉ theo đơn | đơn nghỉ cả ngày đã duyệt |
+| Ngày lễ | — |
+| Không có ca | không được xếp ca và không có ca mặc định áp cho ngày |
+
+Ba quy tắc dễ hiểu nhầm:
+
+1. **Lượt quẹt thắng đơn từ.** Người có đơn nghỉ cả ngày mà vẫn tới quẹt thẻ hiện
+   "Đang làm", không phải "Nghỉ theo đơn" — giấu đi là giấu mất đúng cái bất
+   thường màn hình này sinh ra để tìm. Đơn vẫn hiện trên dòng thời gian.
+2. **Đơn chờ duyệt không che gì cả.** Chưa duyệt thì người đó vẫn phải có mặt.
+3. **Không được xếp ca thì áp ca mặc định** (`BR-ATT-04`). Bỏ bước này thì công ty
+   không dùng phân ca sẽ thấy cả màn hình ghi "Không có ca".
+
+#### Ba điều màn hình phải nói thật
+
+- **Dải thống kê đầu trang đếm trên TOÀN phạm vi bộ lọc**, không phải trang đang
+  xem, và nói rõ điều đó. Nó cũng **không** đổi theo bộ lọc trạng thái: bấm ô
+  "Chưa đến" để lọc mà chính ô đó tụt về số dòng đang hiện thì người dùng mất
+  luôn mốc so sánh vừa dùng để bấm.
+- **Chỉ tự làm mới khi đang xem hôm nay** (mỗi 60 giây). Ngày đã qua không đổi
+  nữa, làm mới chỉ khiến bảng nháy dưới tay người đang đọc.
+- **Nhắc chấm công gửi tới đúng danh sách đã chọn**, và hộp thoại liệt kê tên chứ
+  không chỉ đếm số: đây là thao tác chạm tới người thật và không có nút thu hồi.
+  Người ngoài phạm vi phòng ban bị bỏ qua và **đếm riêng** trong kết quả.
+
+### 3.6. Tiêu chí chấp nhận
+
+- [ ] Quản lý phòng ban A không xem được chấm công của phòng ban B.
+- [ ] Sửa giờ vào từ 08:47 thành 08:00 tạo bản ghi điều chỉnh, bản ghi gốc vẫn còn nguyên và xem được.
+- [ ] Xuất Excel 5000 dòng không làm treo trình duyệt — xử lý qua queue, trả link tải.
+- [ ] Ảnh chấm công truy cập qua presigned URL hết hạn sau 5 phút, không phải link công khai vĩnh viễn.
+- [ ] Lập bảng chấm công tháng 8 phòng Kho kéo đúng tập CBNV mà bảng phân ca tháng 8 của phòng đó đang phủ.
+- [ ] Tháng chưa có bảng phân ca thì bảng chấm công vẫn lập được, và ghi rõ nguồn là "Từ phòng ban".
+- [ ] Một người đã nằm trong bảng chấm công khác của cùng tháng bị từ chối kèm tên cụ thể, không phải lỗi ràng buộc thô của database.
+- [ ] Đơn nghỉ phép đã duyệt phủ lên ô làm ô đó KHÔNG bị tô như vắng mặt.
+- [ ] Nghỉ phép **có lương** nguyên ngày tô nền **Đủ công** và vẫn hiện dấu ĐƠN trên ô.
+- [ ] Nghỉ **không lương** nguyên ngày tô nền "Nghỉ không tính công", không phải "Đủ công".
+- [ ] Ca có `workDayCredit = 0.5`: làm đủ ca đó tô **Đủ công**, không phải "Thiếu công".
+- [ ] Con số trên dashboard khớp chính xác số ô cùng màu đếm được trên lưới.
+- [ ] Đổi bộ lọc khoảng ngày hoặc sang trang khác → dashboard cập nhật theo, và ghi đúng phạm vi đang đếm.
+- [ ] Đơn nghỉ từ thứ Hai tới Chủ nhật KHÔNG làm ô thứ Bảy/Chủ nhật (không ca) đổi màu hay hiện dấu ĐƠN.
+- [ ] Ngày lễ rơi vào thứ Bảy vẫn hiện nền ngày lễ, không bị nuốt thành ô cuối tuần.
+- [ ] Xoá bảng chấm công không làm mất bản ghi công nào — lập lại bảng thấy lại đúng số liệu cũ.
+- [ ] Duyệt một đơn nghỉ cho ngày đã qua, bấm **Cập nhật bảng công** → ô ngày đó đổi màu và số công đổi theo.
+- [ ] Bấm Cập nhật hai lần liên tiếp cho cùng dữ liệu ra kết quả giống hệt (idempotent).
+- [ ] Cập nhật bảng của tháng đã chốt lương → số liệu giữ nguyên, job vẫn báo `COMPLETED`.
+- [ ] Công ty mà **toàn bộ** nhân sự còn ở `PENDING_ACTIVATION` vẫn tính ra công — không phải bảng trắng.
+
+Riêng màn Theo dõi công việc (mục 3.5):
+
+- [ ] Người quẹt `BREAK_OUT` lúc 13:00 chưa quẹt về hiện "Đang ra ngoài", kèm mốc bắt đầu; quẹt `BREAK_IN` xong quay lại "Đang làm".
+- [ ] Người có đơn `GO_OUT` đã duyệt 14:00–16:00 mà công ty không bắt quẹt cổng vẫn hiện "Đang ra ngoài" trong khoảng đó, và thôi khi hết giờ đơn.
+- [ ] Người đã quẹt ra về lúc 16:30 hiện "Đã về", **không** bị đơn ra ngoài tới 18:00 kéo về "Đang ra ngoài".
+- [ ] Người có đơn nghỉ cả ngày mà vẫn tới quẹt thẻ hiện "Đang làm", không phải "Nghỉ theo đơn".
+- [ ] Đơn **chờ duyệt** không làm ai thoát khỏi cảnh báo "Chưa đến (quá giờ)".
+- [ ] Ca đêm 22:00 → 06:00: lúc 02:00 hôm sau vẫn hiện "Đang làm", và trục giờ hiển thị 26:00 chứ không quay về 02:00.
+- [ ] Xem lại ngày hôm qua: người có ca mà không quẹt hiện "Vắng", không phải "Chưa đến"; trang **không** tự làm mới.
+- [ ] Dải thống kê giữ nguyên số khi bấm một ô để lọc — chỉ danh sách bên dưới thu hẹp.
+- [ ] Dải thống kê đếm trên cả phạm vi lọc, không chỉ trang đang xem, và ghi rõ điều đó.
+- [ ] `MANAGER` gửi nhắc nhở cho một người ngoài phòng ban mình: người đó bị bỏ qua, những người còn lại vẫn nhận, và số bị bỏ qua được báo lại.
+- [ ] Xuất Excel với phạm vi phòng ban giao ra rỗng cho file 0 dòng, **không** phải toàn công ty.
+- [ ] Công ty không dùng phân ca vẫn thấy ca mặc định trên mọi dòng, không phải cả màn hình "Không có ca".
+
+---
+
+## 4. Quản lý & duyệt đơn từ (`FR-WEB-REQ`)
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-REQ-01` | Danh sách đơn theo trạng thái, loại đơn, phòng ban, nhân viên | Must |
+| `FR-WEB-REQ-02` | Duyệt/từ chối đơn lẻ | Must |
+| `FR-WEB-REQ-03` | Duyệt/từ chối hàng loạt | Should |
+| `FR-WEB-REQ-04` | Bắt buộc nhập lý do khi từ chối | Must |
+| `FR-WEB-REQ-05` | Phân cấp duyệt theo vai trò/phòng ban, cấu hình theo từng loại đơn | Must |
+| `FR-WEB-REQ-06` | Lịch sử duyệt đơn (audit trail): ai duyệt, khi nào, thay đổi gì | Must |
+| `FR-WEB-REQ-07` | Xem file đính kèm minh chứng | Must |
+| `FR-WEB-REQ-08` | Thông báo realtime khi có đơn mới cần duyệt | Should |
+| `FR-WEB-REQ-09` | Tạo đơn **thay mặt** nhân viên (nộp đơn giấy, nghỉ ốm đột xuất, chưa cài ứng dụng) | Must |
+
+#### Về `FR-WEB-REQ-09` — tạo đơn thay mặt
+
+Bình thường **tạo đơn là việc của App nhân viên** (`FR-APP-REQ-01`), vì đơn là lời khai của chính người xin nghỉ. Web Quản lý chỉ duyệt.
+
+Nhưng có ba tình huống đơn không bao giờ vào được hệ thống: nhân viên nghỉ ốm đột xuất, nộp đơn giấy theo quy trình cũ, hoặc chưa cài ứng dụng. Trước đây HR chữa bằng **Hiệu chỉnh công** — và đó là chỗ sai: hiệu chỉnh công sửa **bảng công**, nó **không trừ ngày phép**. Cuối năm số dư phép lệch khỏi thực tế mà không truy ra được từ đâu.
+
+Ba ràng buộc bắt buộc:
+
+1. **Đơn vẫn đi qua luồng duyệt**, vào trạng thái `PENDING` như mọi đơn khác. Người nhập hộ **không** duyệt hộ — đó là hai vai trò phải tách: người khai và người chuẩn y.
+2. **Bắt buộc `onBehalfReason`** (≥ 10 ký tự) — trả lời "vì sao đơn này không do nhân viên tự gửi", khác hẳn `reason` là lý do nghỉ. Ghi vào audit `REQUEST_CREATE_ON_BEHALF`.
+3. **Hiện rõ trên màn chi tiết** để người duyệt biết đơn này do ai nhập. Duyệt một đơn tưởng do nhân viên tự khai, trong khi thật ra là HR nhập theo giấy tờ, là hai quyết định khác nhau.
+
+**Chọn người duyệt.** Màn lập đơn hiện sẵn luồng duyệt sẽ áp dụng, và cho chọn **ai** đứng ở từng bước:
+
+- Số bước phụ thuộc **độ dài đơn** (mục 4.1) — nghỉ 1 ngày chỉ cần trưởng phòng, từ 3 ngày mới thêm bước HR. Người nhập hộ không đoán được, nên phải nhìn thấy trước khi bấm tạo.
+- **Chỉ đổi được AI, không đổi được CÓ NHỮNG BƯỚC NÀO.** Cho phép thêm/bớt bước là vô hiệu hoá `FR-WEB-REQ-05`: công ty cấu hình "nghỉ trên 3 ngày phải qua HR" rồi người nhập đơn tự bỏ bước đó đi.
+- Mặc định là **để ngỏ** — ai giữ vai trò tương ứng cũng duyệt được. Chỉ định đích danh một người thì người đó nghỉ phép là mọi đơn treo lại chờ họ về. Chỉ nên đóng đinh khi cần đúng một người xử lý.
+
+> Việc này không chỉ để tiện. Phòng ban **chưa gán trưởng phòng** thì bước `DIRECT_MANAGER` không suy ra được ai, và trước đây người nhập đơn không có cách nào biết điều đó cho tới khi đơn nằm im trong hàng chờ.
+
+> **Cố ý KHÔNG chặn người tạo hộ tự duyệt ở bước sau.** Công ty nhỏ thường chỉ có đúng một người vừa làm HR vừa là cấp duyệt — chặn cứng sẽ khoá chết mọi đơn họ nhập. Kiểm soát ở đây là **minh bạch** (audit + cảnh báo trên màn duyệt), không phải cấm đoán. `BR-APV-03` vẫn giữ nguyên: không ai duyệt được đơn mà **chính mình là người xin nghỉ**.
+>
+> `MANAGER` bị giới hạn hai chiều như mọi nơi khác: chỉ tạo được đơn cho nhân viên **thuộc phòng ban mình quản lý** (`BR-09`).
+
+### 4.1. Cấu hình luồng duyệt
+
+```
+Loại đơn: Xin nghỉ phép
+  ├─ Cấp 1: Quản lý trực tiếp     [bắt buộc]
+  └─ Cấp 2: HR                    [bắt buộc nếu > 3 ngày]   ← điều kiện cấu hình được
+
+Loại đơn: Xin ra ngoài
+  └─ Cấp 1: Quản lý trực tiếp     [bắt buộc]
+
+Loại đơn: Bổ sung công
+  ├─ Cấp 1: Quản lý trực tiếp     [bắt buộc]
+  └─ Cấp 2: Kế toán               [bắt buộc]                ← vì ảnh hưởng bảng lương
+```
+
+**Mô hình dữ liệu:** `RequestType` → `ApprovalFlow` → nhiều `ApprovalFlowStep` (thứ tự, vai trò duyệt, điều kiện kích hoạt). Khi đơn được gửi, hệ thống sinh các `ApprovalStep` tương ứng ở trạng thái `PENDING`.
+
+### 4.2. Quy tắc duyệt đơn
+
+| Mã | Quy tắc |
+|---|---|
+| `BR-APV-01` | Đơn chỉ chuyển sang `ĐÃ DUYỆT` khi **tất cả các cấp bắt buộc** đã duyệt. |
+| `BR-APV-02` | Bất kỳ cấp nào từ chối → đơn chuyển `TỪ CHỐI` ngay, các cấp sau không cần xử lý. |
+| `BR-APV-03` | Người duyệt **không được duyệt đơn của chính mình**. |
+| `BR-APV-04` | Nếu người duyệt cấp 1 vắng mặt (nghỉ phép đã duyệt), đơn tự chuyển tới người duyệt thay thế đã cấu hình. |
+| `BR-APV-05` | Duyệt hàng loạt vẫn phải kiểm tra từng đơn về ràng buộc nghiệp vụ (số phép còn lại, trùng lịch); đơn nào không hợp lệ thì báo lỗi riêng, không fail cả lô. |
+| `BR-APV-06` | Sau khi duyệt, hệ thống **tự động kích hoạt tính lại công** cho khoảng thời gian của đơn. |
+| `BR-APV-07` | Mọi thao tác duyệt/từ chối ghi audit trail đầy đủ (`BR-08`). |
+
+### 4.3. Tiêu chí chấp nhận
+
+- [ ] Duyệt 50 đơn cùng lúc: đơn hợp lệ được duyệt, đơn vi phạm ràng buộc bị bỏ qua kèm lý do rõ ràng.
+- [ ] Quản lý không duyệt được đơn của chính mình.
+- [ ] Duyệt đơn nghỉ cho ngày trong quá khứ làm bảng công ngày đó được tính lại trong vòng 1 phút.
+- [ ] Nhân viên nhận push notification sau khi đơn được duyệt/từ chối.
+
+---
+
+## 5. Công làm bù & quy tắc tính công (`FR-WEB-MKUP`)
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-MKUP-01` | Quy đổi giờ làm bù thành đơn vị "công chuẩn" (VD đủ 8 giờ = 1 công), cấu hình được | Must |
+| `FR-WEB-MKUP-02` | Xử lý trường hợp làm bù dở dang (chưa đủ 1 công) | Must |
+| `FR-WEB-MKUP-03` | Gộp nhiều lần làm bù thành 1 công hoàn chỉnh | Must |
+| `FR-WEB-MKUP-04` | Cấu hình quy tắc tính công: giờ hành chính, phút trễ cho phép, hệ số ngày lễ/cuối tuần | Must |
+
+### 5.1. Mô hình quy đổi làm bù
+
+```
+Nhân viên có nợ công: -3h20p (do đi muộn + về sớm nhiều lần trong tháng)
+
+Làm bù lần 1 (05/08): 2h00  →  còn nợ 1h20
+Làm bù lần 2 (12/08): 1h30  →  DƯ 0h10
+
+Cấu hình công ty:
+  - Đơn vị quy đổi: 8 giờ = 1 công chuẩn
+  - Làm tròn: theo bước 15 phút / 30 phút / không làm tròn
+  - Giờ dư: cộng dồn sang tháng sau / bỏ / quy đổi thành tiền
+  - Hạn làm bù: trong vòng N ngày kể từ ngày phát sinh nợ (VD 30 ngày)
+```
+
+**Yêu cầu thi công:** cấu hình làm tròn và cộng dồn phải nằm trong `CompanyPolicy`, không hard-code (`BR-12`). Đây là chỗ dễ gây sai lệch lương nhất — cần unit test phủ kỹ các trường hợp biên.
+
+### 5.2. Nợ công vào sổ bằng đường nào
+
+Sổ công làm bù có **hai nguồn**, và cột `source` trên `MakeupWorkRecord` phân biệt chúng:
+
+| `source` | Ai sinh ra | Khi nào |
+|---|---|---|
+| `ENGINE` | Engine tính công | Ngày công thiếu giờ so với ca |
+| `MANUAL` | HR nhập tay | Thoả thuận riêng, hoặc chuyển dữ liệu từ hệ thống cũ |
+
+**Engine là nguồn chính.** Nợ công phát sinh từ đi muộn / về sớm tích luỹ, tức là từ chính phép tính công — không phải từ việc ai đó nhớ ra và gõ vào.
+
+Ngày **không** sinh nợ: ngày lễ, cuối tuần, và ngày `rawWorkedMinutes = 0` (vắng mặt hoặc thiếu bản ghi chấm công). Ranh giới cuối là quan trọng nhất: **vắng mặt là nghỉ không lương, không phải nợ công**. Thiếu điều kiện đó thì mỗi ngày nghỉ việc riêng đẻ ra một khoản nợ 8 tiếng.
+
+Thiếu dưới `makeup.minDebtMinutes` (mặc định 15 phút) thì bỏ qua — vài phút lệch do làm tròn không đáng thành một khoản nợ có hạn xử lý và có thông báo đẩy về điện thoại nhân viên.
+
+> ⚠ **Engine chỉ được sửa/xoá dòng `source = ENGINE`.** `calculateAndPersist` là hàm idempotent bị gọi lại rất nhiều lần cho cùng một ngày, và mỗi lần nó **đối chiếu** để tổng nợ `ENGINE` của ngày đó khớp số giờ thực thiếu — chứ không ghi thêm. Không có ranh giới `source` thì một lần tính lại sẽ xoá mất khoản nợ HR nhập tay theo thoả thuận riêng, chỉ vì bảng chấm công ngày đó nhìn không thiếu giờ.
+>
+> Và **không bao giờ đụng vào dòng đã có giờ bù** — đó là công nhân viên đã làm thật.
+
+### 5.3. Đơn xin làm bù
+
+Đơn có `deductFrom = MAKEUP_CREDIT` được duyệt → giờ trên đơn được ghi vào sổ, **trả khoản nợ cũ nhất trước** (khoản cũ cũng là khoản sắp hết hạn nhất; trả khoản mới trước sẽ để khoản cũ rơi vào quá hạn dù nhân viên đã làm bù đủ giờ).
+
+Một đơn trải được qua nhiều khoản nợ, và mỗi lần trả dở dang vẫn tách dòng theo đúng mục 5.1.
+
+**Đơn khai nhiều giờ hơn số nợ thật thì bị từ chối ngay lúc duyệt**, kèm con số nợ thực tế. Phần dôi ra không phải công làm bù mà là **tăng ca** — hệ số lương hoàn toàn khác (150% / 200% / 300%). Nuốt phần dôi là trả thiếu lương, cộng vào là trả sai hệ số; cả hai đều sai theo hướng không ai phát hiện ra.
+
+> Loại đơn này tính theo **giờ** (`unit: HOUR`). Màn lập đơn phải cho nhập ngày + giờ bắt đầu + giờ kết thúc, **không phải khoảng ngày**: `computeQuantity` lấy hiệu hai mốc chia cho một giờ, nên một khoảng ngày cho ra "làm bù 72 giờ" và con số đó đi thẳng vào sổ.
+
+---
+
+## 6. Cấu hình chính sách công ty — ĐÃ CHUYỂN
+
+> **Theo chuẩn v2.1, cấu hình ca làm việc và chính sách công thuộc Web Giám đốc,
+> không phải Kế toán.** Kế toán không mặc định được sửa ca/chính sách/phân quyền;
+> cần thì Giám đốc/Owner cấp thêm đúng permission (`policy.update`,
+> `shift_template.update`).
+>
+> Toàn bộ nội dung mục này — danh mục ca, khung giờ chấm công, nghỉ trưa, hệ số
+> công theo loại ngày, quy tắc phép năm và các bẫy khi thi công — đã chuyển
+> nguyên văn sang **[06 mục 6](./06-nghiep-vu-web-giam-doc.md#6-thiết-lập-ca-làm-việc--chính-sách-công-fr-gdw-pol)**.
+
+**Kế toán *đọc* chính sách để hiểu kết quả tính công, nhưng không *sửa*:**
+
+| Kế toán cần biết | Vì sao | Xem tại |
+|---|---|---|
+| Định nghĩa ca đang áp dụng | Để giải thích số giờ công trên bảng công | [06 mục 6.1](./06-nghiep-vu-web-giam-doc.md) |
+| Grace period đi muộn/về sớm | Để đối soát khiếu nại của nhân viên | [06 mục 5](./06-nghiep-vu-web-giam-doc.md) |
+| Hệ số OT và ngày lễ | Để kiểm tra kết quả engine tính công | [06 mục 6.3](./06-nghiep-vu-web-giam-doc.md) |
+| Quy tắc phép năm | Để đối soát quỹ phép | [06 mục 6.4](./06-nghiep-vu-web-giam-doc.md) |
+| Ngày hiệu lực của chính sách | Vì kỳ đã chốt phải dùng policy version cũ (`BR-12`) | [06 mục 5](./06-nghiep-vu-web-giam-doc.md) |
+
+> Nếu Kế toán phát hiện chính sách sai, tạo **yêu cầu thay đổi** gửi Giám đốc
+> (mục 14), không tự sửa.
+
+## 7. Tính công – Tính lương & xuất báo cáo (`FR-WEB-PAY`)
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-PAY-01` | Bảng công chi tiết theo nhân viên/phòng ban/tháng: công chuẩn, công OT, số lần đi muộn, số lần vi phạm | Must |
+| `FR-WEB-PAY-02` | Tự động tính phạt theo chính sách (trừ theo số phút đi muộn/về sớm luỹ kế), **cấu hình được** | Must |
+| `FR-WEB-PAY-03` | Tự động tính OT theo hệ số (ngày thường/cuối tuần/lễ) | Must |
+| `FR-WEB-PAY-04` | Xuất Excel theo mẫu tuỳ biến của công ty | Must |
+| `FR-WEB-PAY-05` | Xuất Excel theo mẫu chuẩn nhập vào phần mềm kế toán/lương (MISA, Fast) | Should |
+| `FR-WEB-PAY-06` | Lưu lịch sử các kỳ tính lương đã chốt | Must |
+| `FR-WEB-PAY-07` | Khoá dữ liệu chấm công của kỳ đã chốt (`BR-07`) | Must |
+| `FR-WEB-PAY-08` | Mở lại kỳ đã chốt (thao tác đặc quyền, có ghi log và lý do) | Must |
+
+### 7.1. Vòng đời kỳ lương
+
+```
+   ┌─────┐  bắt đầu kỳ   ┌─────────┐  kế toán rà soát  ┌──────────┐
+   │ MỞ  │──────────────►│ ĐANG    │──────────────────►│  ĐÃ CHỐT │
+   │     │               │ RÀ SOÁT │                    │ (KHOÁ)   │
+   └─────┘               └─────────┘                    └────┬─────┘
+      ▲                                                       │
+      │            mở lại (đặc quyền + lý do + audit log)     │
+      └───────────────────────────────────────────────────────┘
+
+Trạng thái MỞ / ĐANG RÀ SOÁT:  cho phép chấm công, sửa công, duyệt đơn ảnh hưởng kỳ
+Trạng thái ĐÃ CHỐT:            KHOÁ hoàn toàn — không chấm, không sửa, không duyệt đơn vào kỳ
+```
+
+### 7.2. Luồng chốt kỳ
+
+```
+1. Kế toán chọn kỳ (VD tháng 08/2026)
+2. Hệ thống chạy tính lại TOÀN BỘ bảng công của kỳ (job nền)
+3. Hiển thị BÁO CÁO TIỀN CHỐT:
+     - Số nhân viên có bản ghi thiếu (chấm vào không chấm ra)
+     - Số đơn còn đang chờ duyệt ảnh hưởng tới kỳ
+     - Số lượt chấm công còn gắn cờ nghi vấn chưa xử lý
+     - Danh sách nhân viên có số công bất thường (quá cao/quá thấp)
+4. Kế toán xử lý hết các vấn đề trên (hoặc chấp nhận bỏ qua có ghi lý do)
+5. Bấm CHỐT KỲ → khoá dữ liệu, snapshot bảng công vào bảng lịch sử
+6. Xuất Excel bàn giao cho bộ phận lương
+```
+
+> **Bắt buộc:** bước 3 không được bỏ qua. Chốt kỳ khi còn đơn chờ duyệt là nguyên nhân khiếu nại lương phổ biến nhất.
+
+### 7.3. Công thức tính (khung cấu hình)
+
+```
+CÔNG HƯỞNG LƯƠNG (standardDays)
+  workedMinutes = Σ (thời lượng các cặp vào/ra hợp lệ trong ca)
+                  - thời gian nghỉ trưa (nếu ca có)
+                  + phút làm bù đã ghi nhận
+
+  ngàyCông  = shift.workDayCredit            ← ca hôm đó đáng mấy công
+  hệSốNgày  = ngày lễ    → shift.holidayFactor (hoặc hệ số khai riêng cho lễ đó)
+              cuối tuần  → shift.weeklyRestFactor
+              ngày thường→ shift.normalDayFactor
+
+  côngĐiLàm   = min(1, workedMinutes / giờCa) × ngàyCông × hệSốĐiLàm
+                hệSốĐiLàm = ngày lễ ? (hệSốNgày − 1) : hệSốNgày
+  côngNghỉLễ  = ngày lễ ? ngàyCông : 0                        ← hệ số 1
+  côngTheoĐơn = đơn có isPaidLeave ? (nửa ngày ? 0.5 : 1) × ngàyCông : 0
+                chỉ tính khi ngày đó CÓ nghĩa vụ làm việc
+
+  standardDays = min( max(côngNghỉLễ, côngTheoĐơn) + côngĐiLàm,
+                      ngàyCông × hệSốNgày )
+```
+
+**Bốn chốt của công thức trên, và lý do từng cái tồn tại:**
+
+| Chốt | Vì sao |
+|---|---|
+| Hệ số ngày CHỈ nhân vào phần đi làm | Điều 98 BLLĐ: nghỉ lễ hưởng **nguyên** lương; 300% chỉ dành cho người THẬT SỰ đi làm ngày lễ. Nhân hệ số vào ngày cả công ty nghỉ là trả gấp ba cho một ngày không ai làm gì. |
+| Ngày lễ đi làm lấy `hệSốNgày − 1` | Phần công nền đã tính hệ số 1 ở `côngNghỉLễ`. Không trừ đi 1 thì làm đủ ngày lễ ra 1 + 3 = 4 công. |
+| `max` chứ không cộng ở phần không đi làm | Nghỉ phép rơi đúng ngày lễ vẫn là MỘT ngày. Cộng hai khoản cho ra 2 công cho một ngày không ai làm gì. |
+| Trần `ngàyCông × hệSốNgày` | BR-REQ-03 cho duyệt đơn ngược quá khứ. Đơn duyệt muộn cho ngày người đó đã đi làm đủ sẽ cộng thành 2 công. Phần làm thêm ngoài ca không mất đi — nó được trả qua `otMinutes × hệSốOT`. |
+
+**"Đơn được hưởng lương" đọc từ `RequestType.isPaidLeave`, KHÔNG suy từ `deductFrom`.**
+Hai trường trả lời hai câu hỏi khác nhau: `deductFrom` nói trừ vào **quỹ** nào,
+`isPaidLeave` nói ngày đó có vào **bảng công** không. Suy từ `deductFrom` sai cả
+hai chiều — `NONE` đang gộp "Công tác" (đủ công) với "Xin ra ngoài" (không phải
+một ngày công). Bật/tắt trong *Loại đơn và luồng duyệt*.
+
+**`côngTheoĐơn` chỉ tính khi ngày đó có nghĩa vụ làm việc** (có xếp ca, hoặc là
+ngày thường không phải lễ). Đơn nghỉ thứ Hai → Chủ nhật phủ lên cả hai ngày cuối
+tuần; không có chốt này thì mỗi đơn nghỉ một tuần lại đẻ thêm 2 công cho hai
+ngày vốn không phải đi làm.
+
+Mọi mảnh trên được ghi vào `AttendanceDaily.breakdown.dayCredit` để giải trình
+"con số này ra từ đâu" khi có khiếu nại — màn chi tiết ô của bảng chấm công đọc
+thẳng từ đó, không tính lại.
+
+```
+ĐI MUỘN
+  lateMinutes = max(0, checkInAt - shiftStart - phútTrễChoPhép)
+  → tính vi phạm nếu lateMinutes > 0
+
+VỀ SỚM
+  earlyMinutes = max(0, shiftEnd - checkOutAt - phútVềSớmChoPhép)
+
+OT
+  otMinutes = thời gian làm ngoài ca CÓ ĐƠN OT ĐÃ DUYỆT
+  otPay     = otMinutes × hệSố(loạiNgày)
+              hệSố: ngày thường 1.5 · cuối tuần 2.0 · ngày lễ 3.0  ← cấu hình được
+
+PHẠT
+  penalty = f(số lần đi muộn luỹ kế trong tháng, tổng phút muộn)
+            ← công thức do công ty cấu hình, KHÔNG hard-code (BR-12)
+```
+
+### 7.4. Xuất Excel
+
+- **Xử lý ở Backend**, không ở client (PA 7.3 ghi rõ) — đảm bảo dữ liệu chính xác với bảng công/lương phức tạp.
+- File lớn → đẩy vào queue `export`, kết quả lưu S3, trả link tải có thời hạn.
+- Hỗ trợ **template tuỳ biến**: công ty upload file mẫu Excel với các placeholder, hệ thống điền dữ liệu vào.
+- Mẫu chuẩn xuất sang MISA/Fast: định nghĩa mapping cột trong cấu hình, không viết cứng.
+
+### 7.5. Tiêu chí chấp nhận
+
+- [ ] Tính lại bảng công 500 nhân viên × 31 ngày hoàn thành dưới 5 phút.
+- [ ] Chạy job tính công 2 lần liên tiếp cho cùng dữ liệu ra kết quả giống hệt (idempotent).
+- [ ] Ca đêm 22:00–06:00 được tính vào đúng ngày bắt đầu ca, không tách thành 2 ngày công.
+- [ ] Sau khi chốt kỳ, thử chấm công vào ngày thuộc kỳ đó → bị chặn với `ATT_PERIOD_LOCKED`.
+- [ ] Mở lại kỳ đã chốt yêu cầu nhập lý do và ghi audit log.
+- [ ] Đi làm đủ ca ngày thường ra **đúng 1 công**, dù ở lại thêm 2 tiếng (phần dôi ra vào OT).
+- [ ] Đơn nghỉ phép nguyên ngày đã duyệt ra **đủ công** của ca hôm đó.
+- [ ] Đơn công tác (`deductFrom = NONE`, `isPaidLeave = true`) ra **đủ công**, không phải 0 công.
+- [ ] Đơn xin ra ngoài (`deductFrom = NONE`, `isPaidLeave = false`) **không** tự sinh công.
+- [ ] Ngày lễ không đi làm ra **1 công**; đi làm đủ ca ngày lễ ra **3 công**.
+- [ ] Làm nửa ca ngày lễ vẫn ra **nhiều hơn** mức nghỉ nguyên ngày.
+- [ ] Đơn duyệt ngược cho ngày đã đi làm đủ vẫn bị chặn ở **1 công**, không thành 2.
+- [ ] Đơn nghỉ dài ngày phủ lên Chủ nhật **không có ca** thì ngày đó ra 0 công.
+
+---
+
+## 8. Quản lý nhân sự (`FR-WEB-HR`)
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-HR-01` | Hồ sơ nhân viên: thông tin cá nhân, hợp đồng lao động, phòng ban, chức vụ | Must |
+| `FR-WEB-HR-02` | Lịch sử thay đổi: thăng chức, chuyển phòng ban, thay đổi lương cơ bản | Should |
+| `FR-WEB-HR-03` | Quản lý ca làm việc & lịch phân ca theo tuần/tháng | Must |
+| `FR-WEB-HR-04` | Phân ca hàng loạt hoặc theo từng nhân viên | Must |
+| `FR-WEB-HR-05` | Tạo nhân viên trực tiếp từ Web (Luồng B) | Must |
+| `FR-WEB-HR-06` | Sinh employee code tự động, cho phép sửa trước khi lưu | Must |
+| `FR-WEB-HR-07` | Gửi SMS mời tự động tới SĐT đã nhập | Must |
+| `FR-WEB-HR-08` | Trạng thái hồ sơ: Chờ kích hoạt / Đã kích hoạt | Must |
+| `FR-WEB-HR-09` | Sửa / gửi lại lời mời / xoá hồ sơ trước khi nhân viên kích hoạt | Must |
+| `FR-WEB-HR-10` | Import hàng loạt bằng file Excel mẫu, báo lỗi theo từng dòng | Must |
+| `FR-WEB-HR-11` | Vòng đời nhân viên: thêm mới, tạm ngưng, chấm dứt hợp đồng | Must |
+| `FR-WEB-HR-12` | Chấm dứt hợp đồng → thu hồi quyền truy cập, xoá/khoá dữ liệu sinh trắc học theo chính sách | Must |
+| `FR-WEB-HR-13` | Bảng phân ca theo tháng: lập, xoá; thêm/bớt CBNV trong bảng. **Không sửa tham số bảng đã lập** — xem 8.4 | Must |
+
+### 8.1. Luồng tạo nhân viên trực tiếp (Luồng B)
+
+```mermaid
+sequenceDiagram
+    participant HR as Kế toán/HR
+    participant W as Web Quản lý
+    participant B as Backend
+    participant S as SMS Gateway
+    participant E as Nhân viên
+
+    HR->>W: Nhập họ tên, SĐT, phòng ban, chức vụ, ngày vào, loại HĐ
+    W->>B: POST /employees {…}
+    B->>B: Sinh employee code theo quy tắc
+    B-->>W: Preview code: "ducnv.amobi"
+    HR->>W: (tuỳ chọn) Sửa lại code
+    HR->>W: Bấm Lưu
+    W->>B: POST /employees/confirm
+    B->>B: Tạo Employee (status = PENDING_ACTIVATION)
+    B->>B: Gắn SĐT với công ty
+    B->>S: Gửi SMS mời kèm hướng dẫn (qua queue)
+    B-->>W: 201 Created
+    E->>E: Mở App, đăng nhập SĐT + OTP
+    Note over E,B: Hệ thống nhận diện tài khoản đã tạo sẵn<br/>→ BỎ QUA màn nhập mã mời
+    E->>B: Hoàn tất Thiết lập bảo mật
+    B->>B: status = ACTIVE
+```
+
+### 8.2. Phân hệ phân ca (`FR-WEB-HR-13`…`FR-WEB-HR-18`)
+
+Mở rộng `FR-WEB-HR-03`/`FR-WEB-HR-04`. Tách bạch hai khái niệm: **danh mục ca** (mục 6.1) định nghĩa "ca là gì" dùng chung toàn công ty; **phân hệ phân ca** ở đây định nghĩa "nhân viên nào làm ca nào, ngày nào" theo từng phòng ban/tháng.
+
+#### 8.2.1. Thiết lập phân ca
+
+| Trường | Mô tả | Bắt buộc |
+|---|---|---|
+| Tên phòng ban | Phòng ban áp dụng bảng phân ca này | Có |
+| Ca làm việc áp dụng | Chọn 1 hoặc nhiều ca từ danh mục (6.1) được phép dùng trong phòng ban này | Có |
+| Tháng áp dụng | Tháng/năm bảng phân ca có hiệu lực | Có |
+| Tên bảng phân ca | Tên gợi nhớ để phân biệt nhiều bảng cùng phòng ban/tháng | Có |
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  THIẾT LẬP PHÂN CA                                [+ Tạo bảng]   │
+├─────────────────────────────────────────────────────────────────┤
+│  Tên phòng ban *       [ Kinh doanh ▾ ]                           │
+│  Ca làm việc áp dụng * [ ☑ Ca hành chính  ☑ Ca sáng  ☐ Ca đêm ]   │
+│  Tháng áp dụng *       [ Tháng 08 / 2026 ▾ ]                      │
+│  Tên bảng phân ca *    [ Phân ca Kinh doanh T8/2026________ ]     │
+│                                                                    │
+│                                     [ Huỷ ]    [ Tạo bảng phân ca ]│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Danh sách bảng phân ca:**
+
+```
+┌────┬────────────────────────────┬────────────┬─────────┬───────────┬──────────────┐
+│ #  │ Tên bảng phân ca           │ Phòng ban  │ Tháng   │ Trạng thái│              │
+├────┼────────────────────────────┼────────────┼─────────┼───────────┼──────────────┤
+│ 1  │ Phân ca Kinh doanh T8/2026 │ Kinh doanh │ 08/2026 │ Thành công│[Xem chi tiết]│
+│ 2  │ Phân ca Kỹ thuật T8/2026   │ Kỹ thuật   │ 08/2026 │ Thành công│[Xem chi tiết]│
+└────┴────────────────────────────┴────────────┴─────────┴───────────┴──────────────┘
+```
+
+#### 8.2.2. Xem chi tiết bảng phân ca
+
+Bấm **Xem chi tiết** hiển thị danh sách toàn bộ nhân viên của phòng ban đó, cùng ca áp dụng cho từng ngày trong tháng — dạng bảng ma trận **nhân viên × ngày**:
+
+```
+┌────────────────────┬────┬────┬────┬────┬────┬────┬────┬───┬──────┐
+│ Nhân viên           │ 01 │ 02 │ 03 │ 04 │ 05 │ 06 │ 07 │...│  31  │
+├────────────────────┼────┼────┼────┼────┼────┼────┼────┼───┼──────┤
+│ Nguyễn Văn Đức      │ HC │ HC │ HC │ HC │ HC │ NP │ NP │...│  HC  │
+│ Trần Thị Mai        │ S  │ S  │ S  │ C  │ C  │ NP │ NP │...│  S   │
+│ Lê Văn Hùng         │ HC │NGHỈ│ HC │ HC │ HC │ NP │ NP │...│  HC  │
+└────────────────────┴────┴────┴────┴────┴────┴────┴────┴───┴──────┘
+   HC/S/C = ký hiệu ca (mục 6.1) · NP = nghỉ phép/cuối tuần · NGHỈ = nghỉ không lương/lễ
+
+           [ Thiết lập ca áp dụng ]  [ + Thêm nhân viên vào phân ca ]  [ − Xoá nhân viên khỏi ca làm ]
+```
+
+**Thiết lập ca áp dụng** (áp hàng loạt cho toàn bộ hoặc một phần nhân viên trong bảng):
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  THIẾT LẬP CA ÁP DỤNG                                             │
+├─────────────────────────────────────────────────────────────────┤
+│  ☑ Chọn tất cả nhân viên trong bảng     (12/12 đã chọn)           │
+│    ☑ Nguyễn Văn Đức   ☑ Trần Thị Mai   ☑ Lê Văn Hùng   ...        │
+│                                                                    │
+│  Ca áp dụng *          [ Ca hành chính ▾ ]                        │
+│  Áp dụng cho ngày      [ Cả tháng / Chọn ngày cụ thể ▾ ]          │
+│                                                                    │
+│                                     [ Huỷ ]          [ Áp dụng ]  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+- **Thêm nhân viên vào phân ca**: chọn nhân viên đang thuộc phòng ban nhưng chưa có trong bảng → thêm vào bảng, mặc định chưa gán ca cho tới khi dùng "Thiết lập ca áp dụng".
+- **Xoá nhân viên khỏi ca làm**: gỡ nhân viên khỏi bảng phân ca của tháng đó. **Không xoá** dữ liệu chấm công/bảng công đã phát sinh trước thời điểm xoá — chỉ ngừng áp lịch phân ca kể từ đó trở đi (xem bẫy ở 6.5).
+
+#### 8.2.3. Danh sách yêu cầu
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-HR-13` | Tạo bảng phân ca theo phòng ban: chọn phòng ban, chọn 1 hoặc nhiều ca áp dụng, tháng áp dụng, đặt tên bảng | Must |
+| `FR-WEB-HR-14` | Danh sách bảng phân ca đã tạo kèm trạng thái, nút xem chi tiết | Must |
+| `FR-WEB-HR-15` | Xem chi tiết bảng phân ca: ma trận nhân viên × ngày trong tháng, hiển thị ký hiệu ca từng ngày | Must |
+| `FR-WEB-HR-16` | Thiết lập ca áp dụng hàng loạt: chọn tất cả hoặc một phần nhân viên trong bảng + chọn ca áp dụng chung | Must |
+| `FR-WEB-HR-17` | Thêm nhân viên vào bảng phân ca đang có (không cần tạo lại bảng mới) | Must |
+| `FR-WEB-HR-18` | Xoá nhân viên khỏi bảng phân ca — không xoá dữ liệu chấm công đã phát sinh trước đó | Must |
+
+### 8.3. Import hàng loạt bằng Excel
+
+**File mẫu:**
+
+| Họ và tên* | Số điện thoại* | Phòng ban* | Chức vụ | Ngày vào làm | Loại hợp đồng |
+|---|---|---|---|---|---|
+| Nguyễn Văn Đức | 0901234567 | Kỹ thuật | Nhân viên | 01/08/2026 | Chính thức |
+
+**Yêu cầu xử lý:**
+
+```
+1. Upload file → validate cấu trúc cột
+2. Duyệt từng dòng, kiểm tra:
+     - Thiếu trường bắt buộc
+     - SĐT sai định dạng
+     - SĐT trùng trong file
+     - SĐT đã tồn tại trong công ty
+     - Phòng ban không tồn tại
+3. Hiển thị BẢNG KẾT QUẢ TIỀN IMPORT:
+     ┌─────┬──────────────┬─────────────┬──────────────┬──────────────┐
+     │ Dòng│ Họ tên       │ SĐT         │ Mã sinh ra   │ Trạng thái   │
+     ├─────┼──────────────┼─────────────┼──────────────┼──────────────┤
+     │  2  │ Nguyễn Văn Đ.│ 0901234567  │ ducnv.amobi  │ ✓ Hợp lệ     │
+     │  3  │ Trần Thị M.  │ 090123456   │ —            │ ✗ SĐT sai    │
+     │  4  │ Lê Văn H.    │ 0907654321  │ hulv.amobi   │ ✓ Hợp lệ     │
+     └─────┴──────────────┴─────────────┴──────────────┴──────────────┘
+4. Kế toán chọn: Import các dòng hợp lệ / Sửa file rồi upload lại
+5. Import → gửi SMS mời hàng loạt qua queue
+6. Xuất file kết quả (dòng nào thành công, dòng nào lỗi vì sao)
+```
+
+> **Nguyên tắc:** import **không bao giờ fail toàn bộ file** vì một dòng lỗi. Báo lỗi theo dòng, cho import phần hợp lệ.
+
+### 8.4. Vòng đời nhân viên
+
+| Trạng thái | Chấm công | Đăng nhập | Dữ liệu sinh trắc học | Chuyển sang được |
+|---|:---:|:---:|---|---|
+| `PENDING_ACTIVATION` | ✗ | ✓ (lần đầu) | Chưa có | `ACTIVE`, xoá hồ sơ |
+| `ACTIVE` | ✓ | ✓ | Đang hoạt động | `SUSPENDED`, `TERMINATED` |
+| `SUSPENDED` (tạm ngưng) | ✗ | ✗ | Giữ nguyên, vô hiệu hoá | `ACTIVE`, `TERMINATED` |
+| `TERMINATED` (chấm dứt HĐ) | ✗ | ✗ | Xoá theo chính sách | — (không quay lại) |
+
+**Khi chấm dứt hợp đồng:**
+
+```
+1. Thu hồi toàn bộ token, vô hiệu hoá refresh token
+2. Vô hiệu hoá device binding
+3. Theo chính sách công ty (cấu hình được):
+     a. Xoá ngay embedding + ảnh sinh trắc học, HOẶC
+     b. Khoá lại, xoá sau N ngày (giữ để đối chiếu tranh chấp lao động)
+4. GIỮ bản ghi chấm công và bảng công đã chốt (nghĩa vụ lưu trữ chứng từ)
+5. Ghi audit log
+```
+
+### 8.4. Bảng phân ca (`FR-WEB-HR-13`)
+
+Việc xếp lịch được tổ chức theo **bảng phân ca** — đơn vị công việc thật của người xếp lịch ("bảng phân ca tháng 8 phòng Kho"), thay vì thao tác trực tiếp trên từng ô lịch rời rạc.
+
+```
+Danh sách bảng phân ca          →   Chi tiết một bảng
+  lọc: tháng, phòng ban              lưới: người × ngày trong tháng
+  lập / xoá bảng                     lọc: khoảng ngày (trong tháng), phòng ban (trong phạm vi bảng)
+                                     phân ca hàng loạt · thêm CBNV · bỏ CBNV
+```
+
+**Tham số lúc lập bảng** — ba trường đầu là **phạm vi**, chốt một lần và ràng buộc mọi thao tác bên trong:
+
+| Trường | Ghi chú |
+|---|---|
+| Phòng ban áp dụng | Nhiều phòng. **Toàn bộ CBNV đang làm việc** của các phòng này được đưa vào bảng, chưa xếp ca gì |
+| Ca làm việc | Nhiều ca. Combo **lọc theo phòng ban đã chọn** (dựa trên "Phòng ban áp dụng" của danh mục ca, mục 6.5) |
+| Kỳ lập bảng | Một tháng. Không sửa được sau khi lập |
+| Tên bảng | Mặc định `Bảng phân ca Tháng MM/YYYY`, sửa được |
+
+> **Danh sách thành viên được CHỐT lúc lập, không suy ra động từ phòng ban.** Suy ra động thì một lần chuyển phòng của nhân viên sẽ âm thầm viết lại một bảng đã xếp xong — người đang có lịch cả tháng bỗng biến mất khỏi bảng. Đổi lại, cần chức năng **Thêm CBNV** cho người mới vào hoặc được điều động.
+
+> ⚠ **Một người, một tháng, một bảng.** `shift_assignment` chỉ cho phép **một ca mỗi người mỗi ngày**; hai bảng cùng tháng sẽ tranh nhau ghi vào cùng ô, bảng lưu sau đè bảng lưu trước, và màn chi tiết của bảng kia hiển thị ca mà nó không hề xếp. Ràng buộc đặt ở **tầng database**, không chỉ ở service — hai request lập bảng chạy song song đều thấy "chưa ai giữ" rồi cùng ghi.
+
+**Một ngày xếp được NHIỀU ca**, điều kiện duy nhất là **khung giờ các ca không giao nhau**. Ca sáng 08:00–12:00 và ca chiều 13:00–17:00 nằm chung một ngày là hợp lệ; chạm đầu–cuối (12:00 và 12:00) cũng hợp lệ. Ca **linh hoạt** không khai giờ nên bị coi là chiếm trọn ngày — không biết nó chạy từ mấy giờ thì không thể khẳng định nó không đè lên ca khác.
+
+Phép kiểm tra soi cả **ngày trước và ngày sau**, không chỉ đúng ngày đang xếp: ca đêm 22:00–06:00 của hôm trước còn chạy tới 6 giờ sáng hôm nay, nên ca sáng 05:00 hôm nay là trùng giờ dù hai lượt nằm ở hai `workDate` khác nhau.
+
+> ⚠ **Giới hạn đã biết: máy tính công vẫn chỉ đọc MỘT ca — ca sớm nhất trong ngày.** Các ca sau chưa được cộng vào giờ công. Lịch vẫn lưu đúng để tra cứu và để xếp người. Màn chi tiết hiện cảnh báo đếm số ngày đang có nhiều hơn một ca, để không ai tưởng đã tính đủ. Cộng dồn nhiều ca vào tính công là thay đổi khác hẳn về phạm vi (chia lượt quẹt theo ca, đi muộn/về sớm từng ca, OT từng ca) — chưa làm.
+
+**Phân ca hàng loạt là THÊM ca, không thay ca cũ.** Ngày nào đã có ca trùng giờ thì ô đó bị bỏ qua và **báo lại cụ thể ngày nào vướng ca nào** — không huỷ cả lượt xếp, vì một ngày vướng không phải lý do để bỏ cả tháng. Muốn thay ca thì **Xoá phân ca** trước rồi xếp lại.
+
+**Không sửa được tham số của bảng đã lập.** Giao diện chỉ có *lập* và *xoá*. Phạm vi (phòng ban, ca, kỳ) chốt lúc lập đã kéo theo danh sách thành viên và toàn bộ lịch đã xếp; sửa nó về sau chỉ đổi bộ lọc chứ không đổi hai thứ kia, và hai thứ lệch nhau thì đọc như một lỗi. Muốn đổi phạm vi: xoá bảng rồi lập lại. Thêm/bớt người thì dùng **Thêm CBNV** / **Bỏ khỏi bảng** trong màn chi tiết — đó là thao tác trên dữ liệu thật, không phải trên bộ lọc.
+
+**Phân ca hàng loạt** trong bảng đi theo thứ tự người dùng quyết định: **phòng ban → ca → những ngày nào (khoảng ngày, rồi lọc thứ trong tuần) → áp dụng cho ai**. "Chỉ áp dụng cho các thứ" là phần thu hẹp của khoảng ngày nên đứng liền sau nó, trước khi chuyển sang chọn người. Trường cuối là hai lựa chọn loại trừ:
+
+- **Toàn bộ CBNV** — mọi người thuộc phòng ban đã chọn, *kể cả người ở trang sau của lưới*.
+- **Từng CBNV** — chọn thủ công; chỉ khi chọn mục này mới hiện combo chọn nhiều người.
+
+> Phân biệt này quan trọng hơn vẻ ngoài của nó. Nút "chọn tất cả" kiểu cũ chỉ chọn được những người **đang hiển thị**, nên người dùng tưởng đã xếp cho cả phòng 40 người mà thực ra chỉ 25 người đầu — và 15 người còn lại không có lịch cho tới lúc chốt lương.
+
+> **Lưới của một bảng chỉ hiện lịch do CHÍNH bảng đó xếp.** Bảng vừa lập ra là lưới **trắng**, kể cả khi tháng đó đã có sẵn lịch ca — dựng trước khi có phân hệ này, hoặc do hệ thống khác ghi thẳng. Hiện lẫn vào thì một bảng chưa ai xếp gì mở ra đã kín ca, và người dùng đọc thành "hệ thống tự ý phân ca".
+>
+> Mọi thao tác xếp ca trong màn chi tiết — kể cả sửa một ô đơn lẻ — đều gắn `scheduleId` của bảng, nếu không thì ô vừa xếp sẽ biến mất khỏi lưới ngay sau đó.
+>
+> ⚠ Đánh đổi có ý thức: lịch cũ **vẫn tồn tại và vẫn tính vào bảng công**, chỉ là không hiện ở lưới này. Xếp ca vào một ngày đã có lịch cũ sẽ **thay** ca thật của ngày đó (`upsert` theo cặp nhân viên–ngày, không sinh dòng thứ hai). Muốn nhìn toàn bộ lịch thật của một khoảng ngày thì xem lưới ngoài phạm vi bảng.
+
+**Xoá bảng** xoá luôn toàn bộ lịch ca của bảng đó, trong một transaction. Chặn theo **BR-07** khi tháng của bảng đã thuộc kỳ lương đã chốt. **Bỏ CBNV khỏi bảng** cũng xoá lịch ca của họ trong bảng — nếu không, bảng công cuối tháng vẫn tính theo ca cũ dù họ không còn nằm trong bảng nào.
+
+**Combo phòng ban hiển thị cây cha con** ở mọi màn (`DepartmentTreeSelect`). Danh sách phẳng đọc được khi công ty có sáu phòng ban; tới ba cấp thì "Tổ 1" và "Tổ 2" nằm cạnh nhau mà không cho biết chúng thuộc khối nào.
+
+> **Chọn một phòng ban luôn bao hàm cấp dưới của nó.** Combo nhiều phòng ban chọn theo cụm: tích một khối là tích luôn mọi phòng bên dưới, và khối chỉ hiện là đã tích khi mọi phòng con đều được tích. Mọi chỗ *dùng* phạm vi đó — lấy thành viên lúc lập bảng, lọc lưới chi tiết, đếm "Toàn bộ CBNV", lọc danh sách nhân viên — đều tính xuống hết cây.
+>
+> Không có luật này thì việc chọn cấp **cao nhất** lại cho phạm vi **hẹp nhất**: nhân viên gắn ở lá của cây, nút cha thường không có ai đứng trực tiếp (công ty mẫu: khối gốc 0 người, cả 4 người ở ba phòng con). Lập bảng cho cả công ty sẽ ra bảng rỗng, và không có lỗi nào được ném ra để giải thích.
+>
+> Riêng **bộ lọc tìm bảng** ở màn danh sách đi cả hai chiều: lọc theo một tổ phải thấy bảng lập cho khối chứa tổ đó, vì bảng ấy có người của tổ trong đó. Tìm khác với áp dụng — chiều lên chỉ dùng để *tìm*, không bao giờ dùng để *kéo người vào bảng*.
+>
+> Ở màn chi tiết, bộ lọc phòng ban chỉ cho chọn **các phòng ban đã chốt lúc lập bảng và cấp dưới của chúng**; tổ tiên vẫn hiện để cây giữ đúng hình nhưng bị khoá.
+
+### 8.5. Tiêu chí chấp nhận
+
+- [ ] Import file 200 dòng có 5 dòng lỗi → 195 dòng được tạo, 5 dòng báo lỗi rõ ràng theo dòng.
+- [ ] Employee code sinh ra không trùng trong cùng công ty, kể cả khi import 2 người trùng tên trong cùng file.
+- [ ] Nhân viên `TERMINATED` không đăng nhập được, token cũ bị từ chối ngay.
+- [ ] Xoá hồ sơ `PENDING_ACTIVATION` được, xoá hồ sơ `ACTIVE` bị chặn (chỉ được tạm ngưng/chấm dứt).
+- [x] Tạo bảng phân ca cho phòng ban có 0 nhân viên → chặn tạo hoặc cảnh báo rõ ràng, không tạo bảng rỗng vô nghĩa. *(Web đếm trước và khoá nút Lưu; Backend chặn bằng `POL_SCHEDULE_NO_MEMBERS`.)*
+- [ ] "Thiết lập ca áp dụng" cho ca có khung giờ giao với ca đã gán trước đó trong cùng ngày → cảnh báo hoặc chặn chồng ca (6.5).
+- [ ] Xoá nhân viên khỏi bảng phân ca ngày 20 → bảng công các ngày 01–19 của nhân viên đó không đổi.
+- [ ] Thêm nhân viên mới vào bảng phân ca đã tồn tại → không tạo bảng phân ca trùng cho cùng phòng ban/tháng.
+
+---
+
+## 9. Báo cáo & thống kê (`FR-WEB-REP`)
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-WEB-REP-01` | Biểu đồ chuyên cần toàn công ty / theo phòng ban theo thời gian | Must |
+| `FR-WEB-REP-02` | Danh sách nhân viên vi phạm nhiều lần (đi muộn, về sớm, thiếu công) | Must |
+| `FR-WEB-REP-03` | Báo cáo sử dụng phép năm | Must |
+| `FR-WEB-REP-04` | Cảnh báo phòng ban có nhân sự nghỉ nhiều cùng lúc | Should |
+| `FR-WEB-REP-05` | Báo cáo tổng hợp OT theo phòng ban/toàn công ty | Must |
+| `FR-WEB-REP-06` | So sánh chi phí OT giữa các kỳ | Should |
+
+### 9.1. Lưu ý thi công
+
+- Báo cáo tổng hợp **không query trực tiếp bảng `AttendanceLog`** (bảng lớn nhất hệ thống). Query trên `AttendanceDaily` đã tính sẵn, hoặc materialized view làm mới hằng đêm.
+- Với báo cáo nhiều kỳ / nhiều phòng ban, cân nhắc bảng tổng hợp riêng (`AttendanceMonthlySummary`) cập nhật bởi job.
+- Biểu đồ dùng **Recharts** hoặc **ApexCharts** (PA 7.3).
+
+---
+
+## 10. Thông báo (`FR-ACC-NOT`)
+
+| Mã | Yêu cầu | Ưu tiên |
+|---|---|---|
+| `FR-ACC-NOT-01` | Soạn & gửi thông báo tới toàn công ty hoặc theo phòng ban | Must |
+| `FR-ACC-NOT-02` | Lên lịch gửi thông báo | Could |
+| `FR-ACC-NOT-03` | Theo dõi tỷ lệ đọc thông báo | Could |
+| `FR-ACC-NOT-04` | Nhắc nhân viên xử lý thiếu công trước ngày chốt kỳ | Must |
+
+> **Phân quyền nội bộ đã chuyển sang Web Giám đốc.** Các yêu cầu về gán vai trò,
+> scope dữ liệu và audit thay đổi quyền nay thuộc
+> **[06 mục 10](./06-nghiep-vu-web-giam-doc.md#10-phân-quyền-theo-module--phạm-vi-fr-gdw-role)**.
+> Kế toán **không** có `role.assign` theo mặc định.
+
+## 11. Mã mời & thiết bị — ĐÃ CHUYỂN
+
+> **Mã mời đã bỏ hẳn khỏi hệ thống.** Nhân viên được Kế toán cấp tài khoản trực
+> tiếp (email + mật khẩu tạm) — xem
+> [01 mục 11](./01-tong-quan-he-thong.md#11-cấp-tài-khoản-và-gia-nhập-công-ty).
+> Các yêu cầu `FR-WEB-INV-01`…`03` không còn hiệu lực.
+>
+> **Quản lý văn phòng, geofence và thiết bị liên kết** thuộc Web Giám đốc — xem
+> **[06 mục 8](./06-nghiep-vu-web-giam-doc.md#8-văn-phòng-geofence--thiết-bị-fr-gdw-geo)**.
+>
+> Kế toán chỉ **xem** danh sách thiết bị của nhân viên khi xử lý sự cố đăng nhập,
+> và **đề nghị** thu hồi liên kết qua luồng ở mục 14.
+
+## 12. Kiến trúc Web (React)
+
+### 12.1. Cấu trúc thư mục
+
+```
+web/
+├── src/
+│   ├── main.tsx
+│   ├── App.tsx
+│   ├── config/              # env, constants, feature flags
+│   ├── lib/
+│   │   ├── api/             # axios/fetch client, interceptor token + refresh
+│   │   ├── auth/            # authStore, token, refresh flow
+│   │   ├── rbac/            # permission map, <Can/> component, hook usePermission
+│   │   ├── errors/          # ánh xạ error code → thông điệp (dùng chung với BE)
+│   │   └── utils/           # date (date-fns-tz), format, download
+│   ├── routes/
+│   │   ├── index.tsx        # route registry, phân nhánh theo role
+│   │   ├── guards/          # RequireAuth, RequireRole, RequireScope
+│   │   └── layouts/         # ManagerLayout, AdminLayout
+│   ├── features/
+│   │   ├── dashboard/
+│   │   ├── attendance/
+│   │   ├── requests/
+│   │   ├── policy/
+│   │   ├── payroll/
+│   │   ├── employees/
+│   │   ├── reports/
+│   │   ├── notifications/
+│   │   ├── invites/
+│   │   ├── fraud/           # dashboard cảnh báo gian lận
+│   │   └── admin/           # module Web Admin (chỉ SYSTEM_ADMIN thấy)
+│   ├── components/          # component dùng chung (DataTable, DateRangePicker, ...)
+│   └── hooks/
+└── vite.config.ts
+```
+
+Mỗi feature theo cấu trúc:
+
+```
+features/attendance/
+├── api/            # hàm gọi API + query key (TanStack Query)
+├── components/     # component riêng của feature
+├── hooks/          # useAttendanceList, useAdjustAttendance...
+├── pages/          # AttendanceListPage, AttendanceDetailPage
+├── types/
+└── index.ts
+```
+
+### 12.2. Phân quyền ở tầng UI
+
+```tsx
+// Route guard — chặn ở tầng routing
+<Route element={<RequireRole roles={['HR_PAYROLL', 'COMPANY_ADMIN']} />}>
+  <Route path="/payroll" element={<PayrollPage />} />
+</Route>
+
+// Component guard — ẩn/hiện nút theo quyền
+<Can do="attendance.adjust">
+  <Button onClick={openAdjustModal}>Hiệu chỉnh công</Button>
+</Can>
+```
+
+> **Bắt buộc:** phân quyền ở UI chỉ là trải nghiệm người dùng, **không phải bảo mật**. Backend phải kiểm tra lại mọi quyền ở tầng API. Ẩn nút không đồng nghĩa với chặn được request.
+
+### 12.3. Thư viện chính (theo PA 7.3)
+
+| Mục đích | Thư viện |
+|---|---|
+| Build tool | Vite 5 |
+| UI component | Ant Design 5 (hoặc MUI) |
+| Data fetching & cache | TanStack Query (React Query) |
+| State phức tạp toàn cục | Redux Toolkit (chỉ khi cần) |
+| Biểu đồ | Recharts hoặc ApexCharts |
+| Bảng dữ liệu lớn | TanStack Table + virtualization |
+| Form & validation | React Hook Form + Zod |
+| Ngày giờ | date-fns + date-fns-tz (**bắt buộc có timezone**) |
+| Bản đồ | Google Maps JavaScript API |
+| Realtime | socket.io-client |
+
+### 12.4. Yêu cầu UI
+
+- **Responsive**: Web Quản lý chủ yếu dùng trên desktop nhưng phải dùng được trên tablet (quản lý duyệt đơn khi đi lại).
+- **Bảng dữ liệu lớn**: dùng phân trang server-side + virtualization, không tải hết dữ liệu về client.
+- **Skeleton loading** cho mọi màn hình có gọi API, không để màn hình trắng.
+- **Trạng thái rỗng (empty state)** có hướng dẫn hành động, không chỉ hiện "Không có dữ liệu".
+- **Xác nhận hai bước** cho thao tác nguy hiểm: chốt kỳ lương, xoá nhân viên, thu hồi thiết bị, huỷ công.
+
+---
+
+**Tiếp theo:** [06 — Nghiệp vụ Web Giám đốc](./06-nghiep-vu-web-giam-doc.md)
+
+---
+
+## 13. Kỳ công & chốt dữ liệu (`FR-WEB-PERIOD`)
+
+> **Mới theo v2.1 §5.6.** Bản v1.0 chỉ có "chốt/mở lại kỳ lương" đơn giản do Kế
+> toán tự thực hiện. v2.1 đưa thêm **bước Giám đốc duyệt** và hai trạng thái mới.
+
+### 13.1. State machine kỳ công
+
+```
+        ┌────────────────────────────────────────────────────────┐
+        │                                                        │
+        ▼                                                        │
+   ┌─────────┐   chạy engine   ┌───────────────┐                 │
+   │  OPEN   │────────────────►│  CALCULATING  │                 │
+   │         │◄────────────────│               │                 │
+   └────┬────┘   xong / lỗi    └───────────────┘                 │
+        │                                                        │
+        │ Kế toán gửi đề nghị chốt                               │
+        ▼                                                        │
+   ┌──────────────────┐   Giám đốc từ chối                       │
+   │ PENDING_APPROVAL │──────────────────────────────────────────┘
+   └────────┬─────────┘
+            │ Giám đốc duyệt  (period.approve_lock)
+            ▼
+       ┌─────────┐   Giám đốc duyệt mở lại   ┌────────────┐
+       │ LOCKED  │──────────────────────────►│  REOPENED  │
+       │         │   (period.approve_reopen) │            │
+       └─────────┘◄──────────────────────────└────────────┘
+                     chốt lại với version mới
+```
+
+| Trạng thái | Ý nghĩa | Ai thao tác |
+|---|---|---|
+| `OPEN` | Attendance/đơn tiếp tục cập nhật; Kế toán đối soát | Kế toán |
+| `CALCULATING` | Hệ thống đang chạy/re-run engine | Hệ thống / Kế toán |
+| `PENDING_APPROVAL` | Kế toán đã gửi số liệu để Giám đốc duyệt | Kế toán → Giám đốc |
+| `LOCKED` | **Không sửa dữ liệu công trực tiếp**; dùng cho báo cáo/bảng lương | Giám đốc/Owner phê duyệt |
+| `REOPENED` | Kỳ được mở tạm theo yêu cầu có lý do | Giám đốc/Owner duyệt; Kế toán xử lý |
+
+### 13.2. Điều kiện trước khi gửi chốt
+
+Hệ thống kiểm tra và chặn nếu chưa thoả:
+
+| Mã | Điều kiện |
+|---|---|
+| `FR-WEB-PERIOD-01` | Không còn ngày **thiếu công nghiêm trọng** chưa xử lý |
+| `FR-WEB-PERIOD-02` | Đơn liên quan đã xử lý, hoặc được đánh dấu **chấp nhận ngoại lệ** có lý do |
+| `FR-WEB-PERIOD-03` | Mọi nhân viên trong kỳ có **ca hợp lệ** |
+| `FR-WEB-PERIOD-04` | Exception list đã được duyệt hết hoặc ghi rõ lý do bỏ qua |
+
+### 13.3. Sau khi `LOCKED`
+
+| Mã | Quy tắc |
+|---|---|
+| `FR-WEB-PERIOD-05` | **Mọi export phải tham chiếu cùng version kỳ công** để số liệu không đổi giữa hai lần xuất (`BR-07`) |
+| `FR-WEB-PERIOD-06` | Mở lại kỳ bắt buộc có: lý do, người đề nghị, người duyệt, thời gian mở lại, **phạm vi dữ liệu bị ảnh hưởng** |
+| `FR-WEB-PERIOD-07` | Sau khi sửa → re-calculate → **chốt lại với version mới**. Version cũ vẫn giữ để đối chiếu báo cáo đã phát hành |
+| `FR-WEB-PERIOD-08` | App Nhân viên hiển thị nhãn **"Đã chốt"**; yêu cầu điều chỉnh mới đi theo luồng hậu kiểm |
+
+### 13.4. Recalculate & version
+
+| Mã | Quy tắc |
+|---|---|
+| `FR-WEB-PERIOD-09` | Tính tự động theo sự kiện (event-driven) sau khi có attendance/đơn được duyệt, **đồng thời** có nút *Recalculate* cho Kế toán |
+| `FR-WEB-PERIOD-10` | Recalculate **không được làm mất dấu bản kết quả trước** — lưu version/kỳ chạy phục vụ audit |
+| `FR-WEB-PERIOD-11` | Chính sách đổi giữa tháng → engine áp dụng **phiên bản chính sách theo ngày hiệu lực** (`BR-12`) |
+| `FR-WEB-PERIOD-12` | Lỗi dữ liệu đưa vào danh sách **Exception** để Kế toán xử lý trước khi chốt |
+
+> **Tính công phải tái lập được.** Cùng dữ liệu + cùng policy version phải cho ra
+> cùng kết quả. Đây là tiêu chí nghiệm thu bắt buộc — xem
+> [12 mục UAT](./12-lo-trinh-va-nghiem-thu.md).
+
+---
+
+## 14. Yêu cầu cần Giám đốc duyệt (`FR-WEB-ESC`)
+
+Kế toán **không tự quyết** những thay đổi ảnh hưởng số liệu đã chốt hoặc vượt
+rule tự động. Các trường hợp sau tạo yêu cầu gửi lên
+[Trung tâm phê duyệt của Giám đốc](./06-nghiep-vu-web-giam-doc.md#3-trung-tâm-phê-duyệt-cấp-giám-đốc-fr-gdw-appr)
+(và hiện trên [App Giám đốc](./04-nghiep-vu-app-giam-doc.md#5-trung-tâm-phê-duyệt-fr-dir-appr)):
+
+| Yêu cầu từ Kế toán | Lý do cần duyệt cấp cao |
+|---|---|
+| **Mở lại kỳ công đã khoá** | Ảnh hưởng số liệu đã chốt và có thể ảnh hưởng lương |
+| **Override dữ liệu công nhạy cảm** | Thay đổi công khi không có đơn/bằng chứng thông thường |
+| **Điều chỉnh phép đặc biệt** | Cộng/trừ phép ngoài rule tự động |
+| **Huỷ một lượt chấm đã được công nhận** | Có rủi ro tranh chấp; cần kiểm soát chéo |
+| **Thay đổi dữ liệu sau thời hạn chốt** | Cần lưu lý do và quyết định phê duyệt |
+| **Đề nghị sửa chính sách/ca** | Kế toán phát hiện sai nhưng không có `policy.update` |
+
+**Mỗi yêu cầu phải kèm:** before/after, lý do, chứng từ đính kèm (nếu có), danh
+sách nhân viên/ngày bị tác động, và audit của các thay đổi trước đó trên cùng
+đối tượng.
+
+---
+
+## 15. Audit & phân quyền Kế toán (`FR-WEB-AUD`)
+
+### 15.1. Permission đề xuất cho vai trò Kế toán
+
+**Có mặc định:**
+
+```
+employee.view · employee.create · employee.update
+attendance.view · attendance.adjust · attendance.review_suspicious
+timesheet.calculate · timesheet.adjust
+period.submit_lock
+report.view · report.export
+notification.send
+audit.view
+```
+
+**KHÔNG có mặc định:**
+
+```
+policy.update · shift_template.update · shift.assign
+request.configure_flow
+role.assign · owner.assign
+period.approve_lock · period.approve_reopen
+tenant.billing
+```
+
+### 15.2. Quy tắc audit
+
+| Mã | Quy tắc |
+|---|---|
+| `FR-WEB-AUD-01` | Mọi chỉnh sửa công và phép ghi **before/after, reason, attachment, actor, timestamp** (`BR-08`) |
+| `FR-WEB-AUD-02` | Kế toán **chỉ xem dữ liệu tenant hiện tại**; không query được tenant khác dù đoán đúng ID (`BR-09`) |
+| `FR-WEB-AUD-03` | Export ghi lịch sử: người xuất, thời gian, bộ lọc, kỳ công/version, template sử dụng |
+| `FR-WEB-AUD-04` | Import ghi lịch sử: file gốc, số dòng thành công/lỗi, người thực hiện |
+| `FR-WEB-AUD-05` | Kế toán **không xoá được audit log** |
+
+---
+
+**Tiếp theo:** [06 — Nghiệp vụ Web Giám đốc](./06-nghiep-vu-web-giam-doc.md)

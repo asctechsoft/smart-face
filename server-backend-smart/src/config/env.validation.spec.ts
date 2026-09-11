@@ -16,9 +16,6 @@ describe('validateEnv — chốt chặn cấu hình production', () => {
       REDIS_HOST: 'redis',
       AI_SERVER_URL: 'http://ai-server:8000',
       AI_SERVER_INTERNAL_KEY: 'x'.repeat(40),
-      S3_BUCKET: 'smartface',
-      S3_ACCESS_KEY: 'key',
-      S3_SECRET_KEY: 'secret',
       JWT_ALGORITHM: 'RS256',
       JWT_PRIVATE_KEY: '-----BEGIN PRIVATE KEY-----',
       JWT_PUBLIC_KEY: '-----BEGIN PUBLIC KEY-----',
@@ -182,13 +179,18 @@ describe('validateEnv — chốt chặn cấu hình production', () => {
     ).toThrow(/EMULATOR/);
   });
 
+  it('CHẶN Storage Emulator ở production', () => {
+    // Emulator giữ file trong thư mục tạm và mất sạch khi tắt — ảnh chấm công,
+    // ảnh hồ sơ khuôn mặt và file export sẽ không thực sự được lưu ở đâu cả.
+    expect(() =>
+      validateEnv(productionEnv({ FIREBASE_STORAGE_EMULATOR_HOST: 'localhost:9199' })),
+    ).toThrow(/EMULATOR/);
+  });
+
   it.each([
     'REDIS_HOST',
     'AI_SERVER_URL',
     'AI_SERVER_INTERNAL_KEY',
-    'S3_BUCKET',
-    'S3_ACCESS_KEY',
-    'S3_SECRET_KEY',
     'FIREBASE_PROJECT_ID',
     'FIREBASE_CLIENT_EMAIL',
     'FIREBASE_PRIVATE_KEY',

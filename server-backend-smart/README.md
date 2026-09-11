@@ -9,11 +9,11 @@ phải được ghi nhận bằng một ADR mới.
 |---|---|---|
 | Framework | NestJS 10 + TypeScript | `ADR-02` |
 | ORM | Prisma 5 | `ADR-04` |
-| Database | PostgreSQL 16 | `docs/02` mục 4 |
-| Cache / OTP / nonce | Redis 7 | `docs/02` mục 4 |
-| Hàng đợi | BullMQ | `docs/02` mục 10 |
-| Lưu trữ ảnh | S3 / MinIO | `NFR-SEC-01`, `NFR-SEC-12` |
-| Realtime | Socket.IO | `docs/08` mục 9 |
+| Database | PostgreSQL 16 | `docs/11` mục 4 |
+| Cache / OTP / nonce | Redis 7 | `docs/11` mục 4 |
+| Hàng đợi | BullMQ | `docs/11` mục 10 |
+| Lưu trữ ảnh / file | Cloud Storage for Firebase | `NFR-SEC-01`, `NFR-SEC-12` |
+| Realtime | Socket.IO | `docs/15` mục 9 |
 | API docs | OpenAPI 3 (tự sinh) | `NFR-MAINT-04` |
 
 ---
@@ -25,12 +25,14 @@ phải được ghi nhận bằng một ADR mới.
 ```bash
 cd BackEnd
 cp .env.example .env
-docker compose up -d postgres redis minio minio-init
+docker compose up -d postgres redis
 
-# Firebase Auth Emulator — bắt buộc, xem mục 0 bên dưới
-npx firebase emulators:start --only auth &
+# Firebase Emulator — bắt buộc, xem mục 0 bên dưới.
+# `storage` để ảnh chấm công và file export không ghi lên bucket thật.
+npx firebase emulators:start --only auth,storage &
 export FIREBASE_PROJECT_ID=demo-smartface
 export FIREBASE_AUTH_EMULATOR_HOST=localhost:9099
+export FIREBASE_STORAGE_EMULATOR_HOST=localhost:9199
 
 npm install
 npx prisma migrate dev --name init
@@ -42,7 +44,7 @@ npm run start:dev
 ### Cách B — hạ tầng có sẵn
 
 ```bash
-cp .env.example .env       # sửa DATABASE_URL, REDIS_HOST, S3_*, FIREBASE_*
+cp .env.example .env       # sửa DATABASE_URL, REDIS_HOST, FIREBASE_*
                            # chưa dựng được Redis? đặt REDIS_ENABLED=false (xem mục 7)
 npm install
 npx prisma migrate deploy
@@ -145,8 +147,8 @@ reset cơ sở dữ liệu. Tài khoản do HR cấp qua API thì **luôn** bắ
 ```
 BackEnd/
 ├── prisma/
-│   ├── schema.prisma              # Mô hình dữ liệu (docs/07)
-│   ├── seed.ts                    # Dữ liệu khởi tạo (docs/07 mục 4.5)
+│   ├── schema.prisma              # Mô hình dữ liệu (docs/13)
+│   ├── seed.ts                    # Dữ liệu khởi tạo (docs/13 mục 4.5)
 │   └── sql/
 │       ├── 01_immutability_and_rls.sql   # BR-06, BR-08, RLS (ADR-05)
 │       └── 02_partitioning.sql           # Partition attendance_log theo tháng (D7)
@@ -166,7 +168,7 @@ BackEnd/
     ├── infra/
     │   ├── prisma/                # PrismaService singleton + BaseRepository + TransactionManager
     │   ├── redis/                 # OTP, nonce, rate limit, cache
-    │   ├── storage/               # S3 + presigned URL
+    │   ├── storage/               # Cloud Storage for Firebase + signed URL
     │   ├── queue/                 # BullMQ + 7 processor + scheduler + JobsRepository
     │   └── logger/                # pino, có traceId, che dữ liệu nhạy cảm
     └── modules/
@@ -297,7 +299,7 @@ Chạy lại nhiều lần cho cùng `(employee, date)` phải ra kết quả **
 
 ## 4. Luồng chấm công — thứ tự kiểm tra
 
-Đây là endpoint quan trọng nhất hệ thống. Thứ tự này **không được đổi** (`docs/02` mục 8.2):
+Đây là endpoint quan trọng nhất hệ thống. Thứ tự này **không được đổi** (`docs/11` mục 8.2):
 
 ```
 1. JWT hợp lệ + X-Device-Id khớp token       → JwtAuthGuard        → 401
@@ -390,7 +392,7 @@ GET /v1/meta/error-codes
 ```
 
 App/Web **import bảng này** rồi ánh xạ sang i18n của mình. Không hard-code chuỗi
-tiếng Việt rải rác trong Flutter/React (`docs/03` mục 3.3).
+tiếng Việt rải rác trong Flutter/React (`docs/02` mục 3.3).
 
 ### Header chuẩn
 
@@ -433,7 +435,7 @@ Sự kiện: `request.decided` · `request.pending` · `attendance.recorded` ·
 
 ## 6. Cấp tài khoản và đăng nhập lần đầu
 
-Một đường duy nhất: **HR cấp tài khoản**. Mã mời đã bỏ hẳn (`docs/01` mục 9).
+Một đường duy nhất: **HR cấp tài khoản**. Mã mời đã bỏ hẳn (`docs/01` mục 11).
 
 ```
 Web:  POST /admin/employees   → trả về { account: { email, temporaryPassword, loginDomain } }
@@ -514,7 +516,7 @@ WORKER_ENABLED=true  node dist/worker
 ```
 
 Nhờ vậy scale API (theo CPU/RPS) và worker (theo độ dài queue) độc lập được
-(`docs/02` mục 12.2).
+(`docs/11` mục 12.2).
 
 Cờ này được đọc lúc **dựng module**, không phải lúc chạy: `@Processor()` của
 `@nestjs/bullmq` tạo `Worker` ngay khi class được đăng ký làm provider, và
@@ -589,7 +591,7 @@ biến (`BR-06`).
 Đặt chính sách `<= 0` nghĩa là **giữ vĩnh viễn**, không phải xoá tất cả.
 
 Lifecycle rule trên bucket là lớp thứ hai — trần cứng chạy kể cả khi worker
-chết. Xem [docs/r2-lifecycle.md](docs/r2-lifecycle.md).
+chết. Xem [docs/storage-lifecycle.md](docs/storage-lifecycle.md).
 
 ### Lệnh thường dùng
 
@@ -619,7 +621,7 @@ hạ tầng, dữ liệu khách hàng, hoặc một quyết định đã bị ho
 | **Hiệu chỉnh ngưỡng AI** | Đang dùng mặc định `0.45` / `0.70` / `0.60` | Không phải việc code — cần bộ ảnh thật của khách hàng để dựng ma trận similarity genuine/impostor rồi quét ngưỡng. Riêng phần code: `AiModelVersion.defaultMatchThreshold` **không consumer nào đọc**, tất cả chỉ đọc `PolicyKeys` — đổi model không tự kéo theo ngưỡng | Quét `t` từ 0.20→0.80, chọn theo FAR mục tiêu (1:1 = 0,1%; 1:N N≤100 = 0,001%; N≥500 = 0,0001%), **không dùng EER**. Ghi kết quả vào `AiModelVersion`, đặt override qua `CompanyPolicy`. FRR > 10% thì sửa khâu đăng ký/ánh sáng, đừng hạ ngưỡng. Quy trình ở [`../docs/00`](../docs/00-kien-thuc-nen-tang.md) Phần 2 | ✅ Có |
 | **Test cách ly tenant** (`NFR-SEC-05`) | **Đã viết** — [test/tenant-isolation.e2e-spec.ts](test/tenant-isolation.e2e-spec.ts), 4 nhóm kịch bản (GET chéo tenant, list không rò rỉ, leo thang bằng `X-Company-Id`, kiểm vai trò) | Chưa chạy được tự động: không có `.env.test`, không có `globalSetup` dựng schema. Muốn chạy phải tự trỏ `DATABASE_URL` sang DB test + Redis + Firebase emulator (điều kiện ghi ở đầu tệp test) | `.env.test` + `globalSetup` + đưa vào CI. Xem dòng **CI + coverage gate** bên dưới | ✅ Có |
 | **CI + coverage gate** | Chưa có | Repo không có `.github/workflows`, và grep `coverageThreshold` toàn repo = 0 kết quả. Nên câu "test cách ly tenant FAIL = chặn release" (`NFR-SEC-05`) và "payroll ≥ 90%" (`NFR-MAINT-01`) hiện **không có gì cưỡng chế** | Workflow chạy `typecheck` → `test` → `test:e2e`, thêm `coverageThreshold` cho `modules/payroll` | ✅ Có |
-| **Chế độ offline** (`FR-APP-STAT-06`) | Chưa làm — chỉ có cột `attendance_log.isOffline`, không nơi nào ghi/đọc | Mâu thuẫn trực tiếp với `BR-01`: bản ghi offline buộc phải lấy giờ máy, đúng lỗ hổng mà `AF-17`/`AF-18` sinh ra để bịt. Endpoint `POST /v1/attendance/sync-offline` đã đặc tả ở `docs/08` mục 8 nhưng chưa tồn tại | Ép `decision = PENDING_REVIEW` **không phụ thuộc fraud score**, không tự vào bảng công, phải người duyệt (`docs/03` mục 9.1). Ưu tiên *Could* → Giai đoạn 3 | Không |
+| **Chế độ offline** (`FR-APP-STAT-06`) | Chưa làm — chỉ có cột `attendance_log.isOffline`, không nơi nào ghi/đọc | Mâu thuẫn trực tiếp với `BR-01`: bản ghi offline buộc phải lấy giờ máy, đúng lỗ hổng mà `AF-17`/`AF-18` sinh ra để bịt. Endpoint `POST /v1/attendance/sync-offline` đã đặc tả ở `docs/15` mục 8 nhưng chưa tồn tại | Ép `decision = PENDING_REVIEW` **không phụ thuộc fraud score**, không tự vào bảng công, phải người duyệt (`docs/02` mục 12.1). Ưu tiên *Could* → Giai đoạn 3 | Không |
 | **Kiosk 1:N** | Chưa làm — AI Server đã sẵn `/v1/identify` + `/v1/index/*`, thiếu phía Backend | ① Embedding lưu dạng `Bytes`, pgvector đang comment trong `schema.prisma`; ② không có `PolicyKey` nào cho ngưỡng 1:N lẫn `margin` tối thiểu — không dùng chung `0.45` được vì `FAR_mỗi_so_sánh ≤ FAR_mong_muốn / N`; ③ không có job đẩy embedding lên `/v1/index/upsert`, cũng không nạp lại khi AI Server restart (chỉ mục nằm trong RAM) | Cài pgvector rồi làm theo hướng dẫn ghi sẵn trong `schema.prisma` (`ALTER TABLE face_profile ADD COLUMN embedding vector(512)` + HNSW index). `namespace` **bắt buộc** là `companyId` — trộn hai công ty = nhận nhầm người chéo tenant | Không |
 | **2FA cho Admin** (`NFR-SEC-11`) | Máy móc **đã đủ và có test** (OtpService, SmsService, `twoFactorPhone`, recovery code, 5 endpoint `2fa/*`) — thiếu phần cưỡng chế | 2FA hiện thuần opt-in: `AuthService.createSession` chỉ đọc `twoFactorEnabled`, không đọc `isSystemAdmin` hay vai trò; `resolveNextStep()` cho admin đi thẳng `HOME`; `disableTwoFactor()` không chặn admin tự tắt. Không có guard 2FA nào trong `common/guards/` | Thêm policy key bắt buộc 2FA cho admin → `resolveNextStep()` trả bước thiết lập 2FA → guard kiểu `PasswordChangeGuard` chặn mọi API trừ `2fa/*`, `me`, `logout` → chặn `disableTwoFactor()` với tài khoản admin. ⚠ `SMS_PROVIDER` mặc định là `console`, phải nối eSMS thật trước | Không |
 | **Export theo template tuỳ biến** | Mới có mẫu mặc định, cột viết cứng | DTO **có** nhận `template` và `format` nhưng `export.processor.ts` không đọc → cả hai bị bỏ qua âm thầm; xin `format: 'CSV'` vẫn nhận về `.xlsx`. Grep `MISA`/`Fast` trong `src` = 0 kết quả. (`departmentIds` trước đây cũng bị bỏ qua — **đã sửa**, xem mục 8.1 bên dưới) | Hoặc bỏ hai trường khỏi DTO (đừng hứa cái không làm), hoặc đưa định nghĩa cột (nhãn + thứ tự) vào cấu hình rồi cho processor đọc theo tên template, kèm nhánh CSV | Không |
@@ -652,7 +654,7 @@ Ràng buộc này được khoá bằng [export-scope.spec.ts](src/modules/atten
 
 ## 9. Checklist khi thêm endpoint mới
 
-Trích `docs/08` mục 11 — dán vào PR description:
+Trích `docs/15` mục 11 — dán vào PR description:
 
 - [ ] Có `TenantGuard`; mọi query lọc theo `companyId` (`BR-09`)
 - [ ] Nếu đẩy job chạy nền: phạm vi phòng ban đã chốt lúc nhận request và ghi vào `params` (mục 8.1)

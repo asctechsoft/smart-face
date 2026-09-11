@@ -1,6 +1,6 @@
 -- ============================================================================
 --  SmartFace — Partition attendance_log theo tháng (D7)
---  Nguồn: docs/07-mo-hinh-du-lieu.md mục 4.1
+--  Nguồn: docs/13-mo-hinh-du-lieu.md mục 4.1
 --
 --  Ước tính: 500 NV × 4 lượt/ngày × 250 ngày = 500.000 dòng/năm/công ty
 --            100 công ty → 50 triệu dòng/năm

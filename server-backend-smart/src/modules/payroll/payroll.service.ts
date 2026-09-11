@@ -2,6 +2,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Injectable, Logger } from '@nestjs/common';
 import { DailyStatus, PayrollPeriodStatus, Prisma } from '@prisma/client';
 import { Queue } from 'bullmq';
+import { PERIOD_LOCKED_STATUSES } from 'src/common/constants/payroll-period.constants';
 import { AppException } from 'src/common/errors';
 import { eachWorkDate, formatWorkDate, parseWorkDate } from 'src/common/utils';
 import { isRedisEnabled } from 'src/config/configuration';
@@ -10,6 +11,7 @@ import { JOBS, QUEUES } from 'src/infra/queue/queue.constants';
 import { AuditService } from '../audit/audit.service';
 import { FraudService } from '../fraud/fraud.service';
 import { PolicyKeys, PenaltyRule } from '../policy/policy.constants';
+import { NotificationService } from '../notification/notification.service';
 import { PolicyService } from '../policy/policy.service';
 import { PayrollEngineService } from './payroll-engine.service';
 import { PayrollRepository } from './payroll.repository';
@@ -32,6 +34,7 @@ export class PayrollService {
     private readonly policy: PolicyService,
     private readonly fraud: FraudService,
     private readonly audit: AuditService,
+    private readonly notifications: NotificationService,
     @InjectQueue(QUEUES.PAYROLL) private readonly payrollQueue: Queue,
     @InjectQueue(QUEUES.EXPORT) private readonly exportQueue: Queue,
   ) {}
@@ -86,7 +89,7 @@ export class PayrollService {
    */
   async recalculatePeriod(ctx: TenantContext, periodId: string) {
     const period = await this.getPeriod(ctx.companyId, periodId);
-    if (period.status === PayrollPeriodStatus.CLOSED) {
+    if (PERIOD_LOCKED_STATUSES.includes(period.status)) {
       throw new AppException('PAY_PERIOD_CLOSED');
     }
 
@@ -223,14 +226,50 @@ export class PayrollService {
   }
 
   /**
-   * Chốt kỳ — snapshot bảng công vào `PayrollSummary` rồi KHOÁ kỳ (BR-07).
+   * ## State machine kỳ công (docs/05 §13.1 · docs/13 §5.4)
    *
-   * @param force cho phép chốt dù còn blocker, nhưng BẮT BUỘC ghi lý do vào audit.
+   * ```
+   *   OPEN ──submitLock (Kế toán)──► PENDING_APPROVAL ──approveLock (Giám đốc)──► LOCKED
+   *     ▲                                   │                                       │
+   *     └────────rejectLock (Giám đốc)──────┘                                       │
+   *     ▲                                                                           │
+   *     └── REOPENED ◄──────────────approveReopen (Giám đốc, bắt buộc lý do)────────┘
+   * ```
+   *
+   * Điểm cốt lõi của thiết kế này là **tách người gửi khỏi người duyệt**
+   * (docs/08 §1.1 ranh giới #1). Trước đây một mình Kế toán bấm `close` là kỳ
+   * khoá luôn — không có ai đối chiếu trước khi bảng lương thành bất biến.
+   *
+   * Điểm cốt lõi thứ hai: **mỗi lần tính ra một `PayrollPeriodVersion` mới, cộng
+   * dồn chứ không ghi đè.** Bản cũ dùng `replaceSummaries()` xoá sạch rồi ghi
+   * lại, nên mở lại kỳ là mất bộ số đã phát hành — không còn gì để đối chiếu khi
+   * nhân viên hỏi vì sao lương tháng trước khác con số đã báo. `PayrollSummary`
+   * vẫn giữ nguyên vai trò "bộ số đang hiệu lực" để các màn hình cũ không vỡ,
+   * nhưng nguồn sự thật để giải trình là bảng version.
    */
-  async closePeriod(ctx: TenantContext, periodId: string, reason: string, force = false) {
+
+  /**
+   * Kế toán gửi đề nghị chốt kỳ → `PENDING_APPROVAL` (FR-WEB-PERIOD-08).
+   *
+   * Tính bảng công và ghi thành version mới NGAY Ở BƯỚC NÀY, không đợi Giám đốc
+   * duyệt: Giám đốc phải duyệt một bộ số cụ thể, xem được, chứ không phải duyệt
+   * một lời hứa rồi số mới được tính sau lưng. Từ lúc này dữ liệu trong kỳ bị
+   * khoá sửa (`PERIOD_LOCKED_STATUSES`) để bộ số được duyệt đúng là bộ số đã xem.
+   *
+   * @param force chốt dù còn blocker — lý do vào audit, người bấm chịu trách nhiệm.
+   */
+  async submitLock(ctx: TenantContext, periodId: string, reason: string, force = false) {
     const period = await this.getPeriod(ctx.companyId, periodId);
-    if (period.status === PayrollPeriodStatus.CLOSED) {
-      throw new AppException('PAY_PERIOD_CLOSED');
+
+    if (
+      period.status !== PayrollPeriodStatus.OPEN &&
+      period.status !== PayrollPeriodStatus.REOPENED
+    ) {
+      throw new AppException('PERIOD_INVALID_TRANSITION', {
+        from: period.status,
+        to: PayrollPeriodStatus.PENDING_APPROVAL,
+        allowedFrom: [PayrollPeriodStatus.OPEN, PayrollPeriodStatus.REOPENED],
+      });
     }
 
     const report = await this.preCloseReport(ctx.companyId, periodId);
@@ -239,70 +278,355 @@ export class PayrollService {
     }
 
     const summaries = await this.buildSummaries(ctx.companyId, period.startDate, period.endDate);
+    const rows = summaries.map(({ employee: _employee, ...row }) => row);
+
+    // Chụp chính sách ĐANG hiệu lực ở cuối kỳ, không phải hôm nay: kỳ tháng 8
+    // chốt vào tháng 9 phải tính theo chính sách của tháng 8 (BR-12).
+    const policySnapshot = await this.policy.resolveAll(ctx.companyId, period.endDate);
+    const version = period.currentVersion + 1;
 
     await this.transactions.run(async (tx) => {
-      // `buildSummaries` kèm sẵn `employee` để màn hình xem trước hiển thị được.
-      // Ảnh chụp trong DB chỉ nhận đúng các cột của bảng — để lọt trường thừa vào
-      // `createMany` là Prisma ném lỗi ngay lúc chốt kỳ.
-      await this.payrolls.replaceSummaries(
-        ctx.companyId,
-        periodId,
-        summaries.map(({ employee: _employee, ...row }) => row),
-        tx,
-      );
-      await this.payrolls.updatePeriodStatus(
+      await this.payrolls.createPeriodVersion(
         ctx.companyId,
         periodId,
         {
-          status: PayrollPeriodStatus.CLOSED,
-          closedAt: new Date(),
-          closedBy: ctx.userId,
+          version,
+          calculatedBy: ctx.userId,
+          policySnapshot: policySnapshot as Prisma.InputJsonValue,
+          summary: this.aggregateVersionSummary(
+            rows,
+            force,
+            report.blockers,
+          ) as Prisma.InputJsonValue,
+        },
+        tx,
+      );
+      await this.payrolls.replaceSummaries(ctx.companyId, periodId, rows, tx);
+      await this.payrolls.updatePeriodStatus(
+        ctx.companyId,
+        periodId,
+        { status: PayrollPeriodStatus.PENDING_APPROVAL, currentVersion: version },
+        tx,
+      );
+      await this.payrolls.recordTransition(
+        ctx.companyId,
+        periodId,
+        {
+          fromStatus: period.status,
+          toStatus: PayrollPeriodStatus.PENDING_APPROVAL,
+          actorId: ctx.userId,
+          reason,
+          affectedScope: {
+            version,
+            employeeCount: rows.length,
+            forced: force,
+          } as Prisma.InputJsonValue,
+        },
+        tx,
+      );
+    });
+
+    await this.notifyApprovers(ctx, period.name, 'PERIOD_SUBMIT_LOCK', {
+      title: 'Kỳ công chờ duyệt chốt',
+      body: `Kế toán đã gửi đề nghị chốt kỳ "${period.name}". Cần bạn duyệt.`,
+      data: { periodId, version },
+    });
+
+    await this.audit.record(ctx, {
+      action: 'PAYROLL_SUBMIT_LOCK',
+      targetType: 'PAYROLL_PERIOD',
+      targetId: periodId,
+      reason,
+      before: { status: period.status },
+      after: {
+        status: PayrollPeriodStatus.PENDING_APPROVAL,
+        version,
+        employeeCount: rows.length,
+        forced: force,
+        blockers: report.blockers,
+      },
+    });
+
+    return {
+      status: PayrollPeriodStatus.PENDING_APPROVAL,
+      version,
+      employeeCount: rows.length,
+      forced: force,
+    };
+  }
+
+  /**
+   * Giám đốc duyệt chốt → `LOCKED` (FR-WEB-PERIOD-09).
+   *
+   * Không tính lại gì cả — chỉ đóng dấu lên đúng version Kế toán đã gửi. Tính
+   * lại ở bước này nghĩa là Giám đốc bấm duyệt cho bộ số A rồi hệ thống khoá bộ
+   * số B.
+   */
+  async approveLock(ctx: TenantContext, periodId: string, reason: string) {
+    const period = await this.getPeriod(ctx.companyId, periodId);
+
+    if (period.status !== PayrollPeriodStatus.PENDING_APPROVAL) {
+      throw new AppException('PERIOD_INVALID_TRANSITION', {
+        from: period.status,
+        to: PayrollPeriodStatus.LOCKED,
+        allowedFrom: [PayrollPeriodStatus.PENDING_APPROVAL],
+      });
+    }
+
+    const now = new Date();
+    await this.transactions.run(async (tx) => {
+      await this.payrolls.updatePeriodStatus(
+        ctx.companyId,
+        periodId,
+        { status: PayrollPeriodStatus.LOCKED, closedAt: now, closedBy: ctx.userId },
+        tx,
+      );
+      await this.payrolls.recordTransition(
+        ctx.companyId,
+        periodId,
+        {
+          fromStatus: PayrollPeriodStatus.PENDING_APPROVAL,
+          toStatus: PayrollPeriodStatus.LOCKED,
+          actorId: ctx.userId,
+          reason,
+          affectedScope: { version: period.currentVersion } as Prisma.InputJsonValue,
         },
         tx,
       );
     });
 
     await this.audit.record(ctx, {
-      action: 'PAYROLL_CLOSE',
+      action: 'PAYROLL_APPROVE_LOCK',
       targetType: 'PAYROLL_PERIOD',
       targetId: periodId,
       reason,
-      after: {
-        employeeCount: summaries.length,
-        forced: force,
-        blockers: report.blockers,
-      },
+      before: { status: PayrollPeriodStatus.PENDING_APPROVAL },
+      after: { status: PayrollPeriodStatus.LOCKED, version: period.currentVersion, closedAt: now },
     });
 
-    return { closed: true, employeeCount: summaries.length, forced: force };
+    return { status: PayrollPeriodStatus.LOCKED, version: period.currentVersion, closedAt: now };
   }
 
-  /** Mở lại kỳ đã chốt — thao tác ĐẶC QUYỀN, bắt buộc lý do + audit (BR-07). */
-  async reopenPeriod(ctx: TenantContext, periodId: string, reason: string) {
+  /** Giám đốc từ chối đề nghị chốt → về `OPEN` để Kế toán sửa rồi gửi lại. */
+  async rejectLock(ctx: TenantContext, periodId: string, reason: string) {
     const period = await this.getPeriod(ctx.companyId, periodId);
-    if (period.status !== PayrollPeriodStatus.CLOSED) {
-      throw new AppException('PAY_PERIOD_NOT_FOUND', {
-        reason: 'Kỳ này chưa được chốt nên không cần mở lại.',
+
+    if (period.status !== PayrollPeriodStatus.PENDING_APPROVAL) {
+      throw new AppException('PERIOD_INVALID_TRANSITION', {
+        from: period.status,
+        to: PayrollPeriodStatus.OPEN,
+        allowedFrom: [PayrollPeriodStatus.PENDING_APPROVAL],
       });
     }
 
-    await this.payrolls.updatePeriodStatus(ctx.companyId, periodId, {
-      status: PayrollPeriodStatus.REVIEWING,
-      reopenedAt: new Date(),
-      reopenedBy: ctx.userId,
-      reopenReason: reason,
+    await this.transactions.run(async (tx) => {
+      await this.payrolls.updatePeriodStatus(
+        ctx.companyId,
+        periodId,
+        { status: PayrollPeriodStatus.OPEN },
+        tx,
+      );
+      await this.payrolls.recordTransition(
+        ctx.companyId,
+        periodId,
+        {
+          fromStatus: PayrollPeriodStatus.PENDING_APPROVAL,
+          toStatus: PayrollPeriodStatus.OPEN,
+          actorId: ctx.userId,
+          reason,
+        },
+        tx,
+      );
     });
 
     await this.audit.record(ctx, {
-      action: 'PAYROLL_REOPEN',
+      action: 'PAYROLL_REJECT_LOCK',
       targetType: 'PAYROLL_PERIOD',
       targetId: periodId,
       reason,
-      before: { status: PayrollPeriodStatus.CLOSED, closedAt: period.closedAt },
-      after: { status: PayrollPeriodStatus.REVIEWING },
+      before: { status: PayrollPeriodStatus.PENDING_APPROVAL },
+      after: { status: PayrollPeriodStatus.OPEN },
     });
 
-    return { reopened: true };
+    return { status: PayrollPeriodStatus.OPEN };
+  }
+
+  /**
+   * Kế toán đề nghị mở lại kỳ đã chốt — KHÔNG đổi trạng thái, chỉ báo Giám đốc.
+   *
+   * ⚠ Đợt 1 chưa có thực thể "yêu cầu leo thang" (FR-WEB-ESC, docs/05 §14): đề
+   * nghị này sống dưới dạng thông báo + audit chứ không phải một bản ghi có
+   * trạng thái duyệt/từ chối. Hệ quả cụ thể: gửi hai lần thì Giám đốc nhận hai
+   * thông báo và không có gì để đánh dấu "đã xử lý". Khi làm `FR-WEB-ESC` ở đợt
+   * 2, thay bằng thực thể thật và bỏ hàm này.
+   */
+  async requestReopen(ctx: TenantContext, periodId: string, reason: string) {
+    const period = await this.getPeriod(ctx.companyId, periodId);
+
+    if (period.status !== PayrollPeriodStatus.LOCKED) {
+      throw new AppException('PERIOD_INVALID_TRANSITION', {
+        from: period.status,
+        to: PayrollPeriodStatus.REOPENED,
+        allowedFrom: [PayrollPeriodStatus.LOCKED],
+      });
+    }
+
+    await this.notifyApprovers(ctx, period.name, 'PERIOD_REOPEN_REQUEST', {
+      title: 'Đề nghị mở lại kỳ công',
+      body: `Kế toán đề nghị mở lại kỳ "${period.name}". Lý do: ${reason}`,
+      data: { periodId },
+    });
+
+    await this.audit.record(ctx, {
+      action: 'PAYROLL_REOPEN_REQUESTED',
+      targetType: 'PAYROLL_PERIOD',
+      targetId: periodId,
+      reason,
+      after: { status: period.status, requested: true },
+    });
+
+    return { requested: true, status: period.status };
+  }
+
+  /**
+   * Giám đốc duyệt mở lại kỳ → `REOPENED` (FR-WEB-PERIOD-10 · BR-07).
+   *
+   * `reason` bắt buộc và đi vào `PeriodTransition`, không chỉ vào cột
+   * `reopenReason` trên kỳ: kỳ mở lại lần thứ hai sẽ ghi đè cột đó và mất lý do
+   * lần đầu.
+   */
+  async approveReopen(ctx: TenantContext, periodId: string, reason: string) {
+    const period = await this.getPeriod(ctx.companyId, periodId);
+
+    if (period.status !== PayrollPeriodStatus.LOCKED) {
+      throw new AppException('PERIOD_INVALID_TRANSITION', {
+        from: period.status,
+        to: PayrollPeriodStatus.REOPENED,
+        allowedFrom: [PayrollPeriodStatus.LOCKED],
+      });
+    }
+
+    const now = new Date();
+    await this.transactions.run(async (tx) => {
+      await this.payrolls.updatePeriodStatus(
+        ctx.companyId,
+        periodId,
+        {
+          status: PayrollPeriodStatus.REOPENED,
+          reopenedAt: now,
+          reopenedBy: ctx.userId,
+          reopenReason: reason,
+        },
+        tx,
+      );
+      await this.payrolls.recordTransition(
+        ctx.companyId,
+        periodId,
+        {
+          fromStatus: PayrollPeriodStatus.LOCKED,
+          toStatus: PayrollPeriodStatus.REOPENED,
+          actorId: ctx.userId,
+          reason,
+          affectedScope: {
+            lockedVersion: period.currentVersion,
+            startDate: period.startDate,
+            endDate: period.endDate,
+          } as Prisma.InputJsonValue,
+        },
+        tx,
+      );
+    });
+
+    await this.audit.record(ctx, {
+      action: 'PAYROLL_APPROVE_REOPEN',
+      targetType: 'PAYROLL_PERIOD',
+      targetId: periodId,
+      reason,
+      before: {
+        status: PayrollPeriodStatus.LOCKED,
+        closedAt: period.closedAt,
+        version: period.currentVersion,
+      },
+      after: { status: PayrollPeriodStatus.REOPENED, reopenedAt: now },
+    });
+
+    return { status: PayrollPeriodStatus.REOPENED, reopenedAt: now };
+  }
+
+  /** Lịch sử các lần tính của kỳ (FR-WEB-PERIOD-07). */
+  async listPeriodVersions(companyId: string, periodId: string) {
+    await this.getPeriod(companyId, periodId);
+    return this.payrolls.findPeriodVersions(companyId, periodId);
+  }
+
+  /** Nhật ký chuyển trạng thái của kỳ (FR-WEB-PERIOD-06). */
+  async listPeriodTransitions(companyId: string, periodId: string) {
+    await this.getPeriod(companyId, periodId);
+    return this.payrolls.findTransitions(companyId, periodId);
+  }
+
+  /** Số tổng hợp lưu kèm mỗi version — đủ để so hai lần chốt mà không cần đọc lại chi tiết. */
+  private aggregateVersionSummary(
+    rows: Array<{
+      workedMinutes: number;
+      otMinutesNormal: number;
+      otMinutesWeekend: number;
+      otMinutesHoliday: number;
+      leaveDays: Prisma.Decimal | number;
+      violationCount: number;
+    }>,
+    forced: boolean,
+    blockers: unknown,
+  ) {
+    return {
+      headcount: rows.length,
+      workedMinutes: rows.reduce((sum, row) => sum + row.workedMinutes, 0),
+      otMinutes: rows.reduce(
+        (sum, row) => sum + row.otMinutesNormal + row.otMinutesWeekend + row.otMinutesHoliday,
+        0,
+      ),
+      leaveDays: rows.reduce((sum, row) => sum + Number(row.leaveDays), 0),
+      violationCount: rows.reduce((sum, row) => sum + row.violationCount, 0),
+      forced,
+      blockers,
+    };
+  }
+
+  /**
+   * Báo cho những người có thẩm quyền duyệt kỳ của công ty.
+   *
+   * Đợt 1 dùng Owner làm đích đến. Khi `PermissionGuard` đi vào vận hành, đổi
+   * sang truy vấn theo quyền `period.approve_lock` để công ty phân quyền tuỳ
+   * biến vẫn nhận được thông báo.
+   */
+  private async notifyApprovers(
+    ctx: TenantContext,
+    periodName: string,
+    type: string,
+    payload: { title: string; body: string; data: Record<string, unknown> },
+  ): Promise<void> {
+    const ownerIds = await this.payrolls.findActiveOwnerEmployeeIds(ctx.companyId);
+    if (ownerIds.length === 0) {
+      this.logger.warn(
+        `Kỳ "${periodName}" cần duyệt nhưng công ty ${ctx.companyId} chưa có Owner nào — không gửi được thông báo.`,
+      );
+      return;
+    }
+
+    await Promise.all(
+      ownerIds.map((employeeId) =>
+        this.notifications.notify({
+          companyId: ctx.companyId,
+          employeeId,
+          type,
+          title: payload.title,
+          body: payload.body,
+          data: payload.data as Prisma.InputJsonValue,
+          channel: 'IN_APP',
+          createdBy: ctx.userId,
+        }),
+      ),
+    );
   }
 
   // ===========================================================================
@@ -314,7 +638,7 @@ export class PayrollService {
     const period = await this.getPeriod(companyId, periodId);
 
     // Kỳ đã chốt → đọc snapshot bất biến; kỳ đang mở → tính trực tiếp.
-    if (period.status === PayrollPeriodStatus.CLOSED) {
+    if (PERIOD_LOCKED_STATUSES.includes(period.status)) {
       const summaries = await this.payrolls.findSummaries(companyId, periodId);
       const employees = await this.payrolls.findEmployeeLabels(
         companyId,

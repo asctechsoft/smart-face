@@ -185,10 +185,7 @@ export class MakeupRepository extends BaseRepository {
    * nên giờ làm bù phải trả nó trước. Trả khoản mới trước sẽ để khoản cũ rơi
    * vào quá hạn trong khi nhân viên đã làm bù đủ giờ.
    */
-  async findOutstandingDebts(
-    companyId: string,
-    employeeId: string,
-  ): Promise<MakeupWorkRecord[]> {
+  async findOutstandingDebts(companyId: string, employeeId: string): Promise<MakeupWorkRecord[]> {
     return this.db().makeupWorkRecord.findMany({
       where: {
         companyId,

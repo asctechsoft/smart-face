@@ -42,7 +42,7 @@ describe('Bảng phân ca', () => {
     ).assertShiftInScope(row, shiftId);
 
   beforeEach(() => {
-    service = new PolicyAdminService({} as never, {} as never, {} as never);
+    service = new PolicyAdminService({} as never, {} as never, {} as never, {} as never);
   });
 
   describe('khoảng ngày phải nằm trong kỳ', () => {
@@ -115,7 +115,12 @@ describe('Bảng phân ca', () => {
     });
 
     const create = (repository: object) =>
-      new PolicyAdminService(repository as never, {} as never, {} as never).createShiftSchedule(
+      new PolicyAdminService(
+        repository as never,
+        {} as never,
+        {} as never,
+        {} as never,
+      ).createShiftSchedule(
         'cmp_1',
         { departmentIds: ['dept_kd'], shiftIds: ['shift_hc'], periodMonth: '2026-08-01' } as never,
         'usr_1',
@@ -173,6 +178,7 @@ describe('Bảng phân ca', () => {
         repository as never,
         {} as never,
         {} as never,
+        {} as never,
       ).getShiftBoard(
         'cmp_1',
         { from: '2026-08-01', to: '2026-08-31', page: 1, pageSize: 25, ...query } as never,
@@ -221,7 +227,12 @@ describe('Bảng phân ca', () => {
     const repository = {
       listShiftSchedules: jest.fn().mockResolvedValue({ items: [schedule()], total: 1 }),
     };
-    const withRepo = new PolicyAdminService(repository as never, {} as never, {} as never);
+    const withRepo = new PolicyAdminService(
+      repository as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
 
     const result = await withRepo.listShiftSchedules(
       'cmp_1',

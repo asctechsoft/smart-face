@@ -13,7 +13,14 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
-import { Audit, CurrentTenant, DepartmentScoped, Roles } from 'src/common/decorators';
+import {
+  Audit,
+  CurrentTenant,
+  DepartmentScoped,
+  IfMatch,
+  RequireVersion,
+  Roles,
+} from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
 import { resolveDepartmentScope } from 'src/common/guards/scope.guard';
 import type { TenantContext } from 'src/common/types/request-context';
@@ -37,7 +44,7 @@ import { PolicyService } from './policy.service';
 import { POLICY_DEFAULTS, PolicyKeys } from './policy.constants';
 
 /**
- * docs/08-hop-dong-api.md mục 6.3 — cấu hình chính sách công ty.
+ * docs/15-hop-dong-api.md mục 6.3 — cấu hình chính sách công ty.
  *
  * Gom vào một chỗ MỌI thứ mà công ty tự cấu hình được (BR-12): ngưỡng chính
  * sách, ca làm việc, ngày lễ, chi nhánh, phòng ban. Nói cách khác, đây là nơi
@@ -127,13 +134,15 @@ export class PolicyController {
     description:
       'Đổi giờ ca đã được phân → tạo phiên bản mới theo hiệu lực thời gian, không sửa đè (bẫy "đổi cấu hình ca giữa tháng" — docs/04 mục 6.4).',
   })
-  @ApiErrors('POL_SHIFT_NOT_FOUND', 'POL_INVALID_TIME_FORMAT')
+  @ApiErrors('POL_SHIFT_NOT_FOUND', 'POL_INVALID_TIME_FORMAT', 'VERSION_CONFLICT')
+  @RequireVersion()
   updateShift(
     @CurrentTenant() ctx: TenantContext,
     @Param('id') id: string,
     @Body() dto: UpsertShiftDto,
+    @IfMatch() expectedVersion?: number,
   ) {
-    return this.admin.updateShift(ctx.companyId, id, dto);
+    return this.admin.updateShift(ctx.companyId, id, dto, expectedVersion);
   }
 
   @Delete('shifts/:id')
@@ -279,7 +288,8 @@ export class PolicyController {
   @Audit({ action: 'SHIFT_SCHEDULE_MEMBER_REMOVE', targetType: 'SHIFT' })
   @ApiOperation({
     summary: 'Bỏ CBNV khỏi bảng phân ca',
-    description: 'Xoá luôn lịch ca của họ TRONG bảng này — nếu không, bảng công vẫn tính theo ca cũ.',
+    description:
+      'Xoá luôn lịch ca của họ TRONG bảng này — nếu không, bảng công vẫn tính theo ca cũ.',
   })
   @ApiErrors('POL_SCHEDULE_NOT_FOUND')
   removeScheduleMembers(

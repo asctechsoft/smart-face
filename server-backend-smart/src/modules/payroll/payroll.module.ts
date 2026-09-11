@@ -1,6 +1,7 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { FraudModule } from '../fraud/fraud.module';
 import { MakeupModule } from '../makeup/makeup.module';
+import { NotificationModule } from '../notification/notification.module';
 import { PayrollEngineService } from './payroll-engine.service';
 import { PayrollController } from './payroll.controller';
 import { PayrollRepository } from './payroll.repository';
@@ -27,7 +28,12 @@ import { PayrollService } from './payroll.service';
  * `forwardRef` và cũng không được tạo ra chiều đó về sau.
  */
 @Module({
-  imports: [forwardRef(() => FraudModule), MakeupModule],
+  /*
+   * `NotificationModule` MỘT CHIỀU: state machine kỳ công phải báo cho Giám đốc
+   * khi Kế toán gửi đề nghị chốt hoặc đề nghị mở lại (docs/05 §13). Chiều ngược
+   * lại không tồn tại và không được tạo ra về sau.
+   */
+  imports: [forwardRef(() => FraudModule), MakeupModule, NotificationModule],
   controllers: [PayrollController],
   providers: [PayrollRepository, PayrollService, PayrollEngineService],
   exports: [PayrollRepository, PayrollService, PayrollEngineService],

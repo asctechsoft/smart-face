@@ -7,9 +7,7 @@ import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { EmployeeCell } from '@/components/EmployeeCell';
-import { StatusBadge, employeeStatusTone } from '@/components/StatusBadge';
 import { ReasonDialog } from '@/components/ReasonDialog';
-import { Icon } from '@/components/Icon';
 import { Can, useCan } from '@/lib/rbac/Can';
 import { EMPLOYEE_STATUS_LABEL, ROLE_LABEL, DEFAULT_PAGE_SIZE } from '@/config/constants';
 import { formatDay } from '@/lib/utils/date';
@@ -17,6 +15,7 @@ import { useAuth } from '@/lib/auth/auth-context';
 import { useBranches, toSelectOptions } from '@/features/shared/org.api';
 import {
   useEmployeeList,
+  useEmployeeSummary,
   useReactivateEmployee,
   useResendInvite,
   useSuspendEmployee,
@@ -28,6 +27,13 @@ import { EmployeeFormDrawer } from './EmployeeFormDrawer';
 import { ImportEmployeesModal } from './ImportEmployeesModal';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import {
+  Badge as StatusBadge,
+  Icon,
+  StatCard,
+  StatCardSkeleton,
+  employeeStatusTone,
+} from '@/components/ui';
 
 type LifecycleAction = 'suspend' | 'reactivate' | 'terminate';
 
@@ -47,7 +53,8 @@ export function EmployeeListPage() {
   const { timezone } = useAuth();
   const toast = useToast();
   const showError = useErrorToast();
-  const canEdit = useCan('employee.edit');
+  const canEdit = useCan('employee.update');
+  const summary = useEmployeeSummary();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -279,7 +286,7 @@ export function EmployeeListPage() {
                 Import Excel
               </Button>
             </Can>
-            <Can do="employee.edit">
+            <Can do="employee.update">
               <Button
                 type="primary"
                 icon={<Icon name="person_add" size={20} />}
@@ -291,6 +298,54 @@ export function EmployeeListPage() {
           </>
         }
       />
+
+      {/*
+        Hang the dat TREN bo loc, khong phai duoi.
+
+        No la moc doi chieu cua ca cong ty va khong doi theo bo loc; dat duoi bo
+        loc thi nguoi dung mac nhien doc no nhu ket qua cua bo loc vua chon.
+      */}
+      <div className="sf-stat-row" style={{ marginBottom: 20 }}>
+        {summary.isPending ? (
+          <>
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+            <StatCardSkeleton />
+          </>
+        ) : (
+          <>
+            <StatCard
+              icon="group"
+              tone="neutral"
+              label="Tổng nhân viên"
+              value={summary.data?.total ?? 0}
+              hint="hồ sơ chưa xoá"
+            />
+            <StatCard
+              icon="how_to_reg"
+              tone="success"
+              label="Đang làm việc"
+              value={summary.data?.active ?? 0}
+              hint="đăng nhập và chấm công được"
+            />
+            <StatCard
+              icon="hourglass_top"
+              tone="warning"
+              label="Chờ kích hoạt"
+              value={summary.data?.pendingActivation ?? 0}
+              hint="đã mời, chưa đăng nhập lần đầu"
+            />
+            <StatCard
+              icon="person_off"
+              tone="error"
+              label="Tạm ngưng / Nghỉ việc"
+              value={summary.data?.inactive ?? 0}
+              hint="không còn chấm công"
+            />
+          </>
+        )}
+      </div>
 
       <FilterBar activeCount={activeFilters} onClear={() => setSearchParams({}, { replace: true })}>
         <FilterField label="Trạng thái" htmlFor="e-status" width={180}>
@@ -352,7 +407,7 @@ export function EmployeeListPage() {
         emptyTitle="Chưa có nhân viên nào khớp bộ lọc"
         emptyDescription="Thêm từng người bằng nút Thêm nhân viên, hoặc tải lên file Excel để tạo hàng loạt."
         emptyAction={
-          <Can do="employee.edit">
+          <Can do="employee.update">
             <Button type="primary" onClick={() => setFormTarget({ mode: 'create' })}>
               Thêm nhân viên
             </Button>

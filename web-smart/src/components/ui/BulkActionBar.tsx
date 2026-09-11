@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 /**
  * Thanh hành động hàng loạt — docs/16 mục 11.17.
  *
- * Nền `teal-700`, radius `8px`, cao `56px`, `shadow-lg`, `z-sticky`.
+ * Nền `blue-700`, radius `8px`, cao `56px`, `shadow-lg`, `z-sticky`.
  *
  * `aria-live="polite"` là bắt buộc (mục 11.17 và 14.2 điều 7): thanh này xuất
  * hiện khi người dùng tick checkbox ở nơi khác trên màn hình. Không thông báo

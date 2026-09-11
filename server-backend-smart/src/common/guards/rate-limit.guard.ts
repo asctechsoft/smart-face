@@ -53,7 +53,9 @@ export class RateLimitGuard implements CanActivate {
 
     if (count > options.limit) {
       const retryAfter = await this.redis.ttl(key);
-      const response = context.switchToHttp().getResponse<{ setHeader(k: string, v: string): void }>();
+      const response = context
+        .switchToHttp()
+        .getResponse<{ setHeader(k: string, v: string): void }>();
       response.setHeader('Retry-After', String(Math.max(retryAfter, 1)));
       response.setHeader('X-RateLimit-Remaining', '0');
       throw new AppException('SYS_RATE_LIMITED', {
@@ -63,7 +65,9 @@ export class RateLimitGuard implements CanActivate {
       });
     }
 
-    const response = context.switchToHttp().getResponse<{ setHeader(k: string, v: string): void }>();
+    const response = context
+      .switchToHttp()
+      .getResponse<{ setHeader(k: string, v: string): void }>();
     response.setHeader('X-RateLimit-Remaining', String(Math.max(options.limit - count, 0)));
 
     return true;
@@ -72,7 +76,8 @@ export class RateLimitGuard implements CanActivate {
   private resolveSubject(request: AuthenticatedRequest, by: NonNullable<RateLimitOptions['by']>) {
     const ip = request.ip ?? 'unknown-ip';
     const userId = request.ctx?.userId ?? 'anonymous';
-    const deviceId = request.ctx?.deviceId ?? (request.headers['x-device-id'] as string) ?? 'no-device';
+    const deviceId =
+      request.ctx?.deviceId ?? (request.headers['x-device-id'] as string) ?? 'no-device';
 
     switch (by) {
       case 'ip':

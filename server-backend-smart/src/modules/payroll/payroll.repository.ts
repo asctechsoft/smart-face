@@ -13,6 +13,7 @@ import {
   Prisma,
   RequestStatus,
 } from '@prisma/client';
+import { periodLockedFilter } from 'src/common/constants/payroll-period.constants';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
@@ -140,6 +141,7 @@ export class PayrollRepository extends BaseRepository {
       reopenedAt?: Date;
       reopenedBy?: string;
       reopenReason?: string;
+      currentVersion?: number;
     },
     tx?: Prisma.TransactionClient,
   ): Promise<number> {
@@ -159,11 +161,96 @@ export class PayrollRepository extends BaseRepository {
     return this.db().payrollPeriod.findMany({
       where: {
         companyId,
-        status: PayrollPeriodStatus.CLOSED,
+        status: periodLockedFilter(),
         startDate: { lte: to },
         endDate: { gte: from },
       },
       select: { startDate: true, endDate: true, name: true },
+    });
+  }
+
+  // ===========================================================================
+  //  Version kỳ công & nhật ký chuyển trạng thái (docs/13 §5.4)
+  // ===========================================================================
+
+  /**
+   * Ghi một version mới của kỳ.
+   *
+   * Khác `replaceSummaries` ở chỗ CỘNG DỒN chứ không ghi đè: mỗi lần tính lại
+   * sinh một bản ghi mới, bản cũ còn nguyên. Đây là điều kiện để hai lần xuất
+   * cùng một kỳ ở cùng một version cho ra cùng con số (FR-WEB-PERIOD-05), và để
+   * giải trình được vì sao kỳ mở lại ra số khác kỳ chốt lần đầu.
+   */
+  async createPeriodVersion(
+    companyId: string,
+    periodId: string,
+    data: {
+      version: number;
+      calculatedBy: string;
+      policySnapshot: Prisma.InputJsonValue;
+      summary: Prisma.InputJsonValue;
+    },
+    tx?: Prisma.TransactionClient,
+  ) {
+    return this.db(tx).payrollPeriodVersion.create({
+      data: { companyId, periodId, ...data },
+    });
+  }
+
+  /**
+   * Employee id của các Owner còn hiệu lực — đích đến của thông báo cần duyệt.
+   *
+   * `revokedAt: null` là điều kiện bắt buộc: Owner đã bị gỡ vẫn còn dòng trong
+   * bảng (bảng này không xoá cứng để giữ vết ai từng có quyền).
+   */
+  async findActiveOwnerEmployeeIds(companyId: string): Promise<string[]> {
+    const rows = await this.db().companyOwner.findMany({
+      where: { companyId, revokedAt: null },
+      select: { employeeId: true },
+    });
+    return rows.map((row) => row.employeeId);
+  }
+
+  async findPeriodVersions(companyId: string, periodId: string) {
+    return this.db().payrollPeriodVersion.findMany({
+      where: { companyId, periodId },
+      orderBy: { version: 'desc' },
+    });
+  }
+
+  async findPeriodVersion(companyId: string, periodId: string, version: number) {
+    return this.db().payrollPeriodVersion.findFirst({
+      where: { companyId, periodId, version },
+    });
+  }
+
+  /**
+   * Nhật ký chuyển trạng thái. Ghi MỌI lần chuyển, kể cả bị từ chối.
+   *
+   * Các cột `reopenedAt/By/Reason` trên `PayrollPeriod` chỉ giữ được LẦN CUỐI —
+   * kỳ mở lại hai lần là mất lý do lần đầu. Bảng này giữ đủ chuỗi.
+   */
+  async recordTransition(
+    companyId: string,
+    periodId: string,
+    data: {
+      fromStatus: PayrollPeriodStatus;
+      toStatus: PayrollPeriodStatus;
+      actorId: string;
+      reason?: string;
+      affectedScope?: Prisma.InputJsonValue;
+    },
+    tx?: Prisma.TransactionClient,
+  ) {
+    return this.db(tx).periodTransition.create({
+      data: { companyId, periodId, ...data },
+    });
+  }
+
+  async findTransitions(companyId: string, periodId: string) {
+    return this.db().periodTransition.findMany({
+      where: { companyId, periodId },
+      orderBy: { createdAt: 'asc' },
     });
   }
 

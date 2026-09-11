@@ -99,12 +99,19 @@ export interface AttendanceLog {
 
 export interface AttendanceAdjustment {
   id: string;
+  employeeId: string;
+  /** Ngày công bị sửa, `YYYY-MM-DD`. KHÁC `createdAt` — sửa hôm nay cho ngày hôm kia. */
+  workDate: string;
+  /** `null` = BỔ SUNG một bản ghi hoàn toàn mới (quên chấm công). */
   attendanceLogId: string | null;
   adjustType: string;
   beforeValue: Record<string, unknown> | null;
   afterValue: Record<string, unknown> | null;
   reason: string;
+  requestId: string | null;
   createdByUserId: string;
+  /** Tên người thao tác, do Backend tra sẵn — bảng `attendance_adjustment` không có quan hệ này. */
+  createdByName: string | null;
   createdAt: string;
 }
 
@@ -185,11 +192,19 @@ export function useAttendanceLogDetail(logId: string | null) {
   });
 }
 
-export function useAttendanceAdjustments(employeeId: string | null, from?: string, to?: string) {
+/**
+ * Lịch sử hiệu chỉnh công của MỘT CBNV, đọc từ phía quản trị.
+ *
+ * ⚠ KHÔNG dùng `/attendance/adjustments` (không có `admin/`): đó là endpoint tự
+ * phục vụ, nó lấy `employeeId` từ JWT của người đang đăng nhập và **bỏ qua**
+ * tham số gửi lên. Gọi nhầm đường đó từ màn quản trị sẽ hiện lịch sử điều chỉnh
+ * của chính kế toán đang mở màn hình, dưới tên của nhân viên họ đang xem.
+ */
+export function useEmployeeAdjustments(employeeId: string | null, from?: string, to?: string) {
   return useQuery({
     queryKey: [...qk.attendanceAdjustments(employeeId ?? ''), from, to],
     queryFn: () =>
-      api.get<AttendanceAdjustment[]>('/attendance/adjustments', { employeeId, from, to }),
+      api.get<AttendanceAdjustment[]>('/admin/attendance/adjustments', { employeeId, from, to }),
     enabled: Boolean(employeeId),
   });
 }
@@ -229,6 +244,8 @@ export function useExportAttendance() {
       from?: string;
       to?: string;
       departmentIds?: string[];
+      /** Thu hẹp xuống vài người. Backend giao với phạm vi phòng ban, không nới quyền. */
+      employeeIds?: string[];
       format?: 'XLSX' | 'CSV';
     }) => api.post<ExportJob>('/admin/attendance/export', payload),
   });

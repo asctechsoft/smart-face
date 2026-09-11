@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Button } from 'antd';
-import { Icon } from './Icon';
+import { Icon } from './ui';
 
 /**
  * Thanh bộ lọc phía trên bảng.

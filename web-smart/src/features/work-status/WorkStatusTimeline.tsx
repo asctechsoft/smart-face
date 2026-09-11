@@ -184,10 +184,10 @@ export function WorkStatusTimeline({
                 bottom: 0,
                 ...band(range.fromMinutes, range.toMinutes),
                 background: approved
-                  ? 'var(--sf-teal-100)'
-                  : 'repeating-linear-gradient(45deg, var(--sf-teal-50) 0 6px, transparent 6px 12px)',
-                borderTop: approved ? 'none' : '1px dashed var(--sf-teal-400)',
-                borderBottom: approved ? 'none' : '1px dashed var(--sf-teal-400)',
+                  ? 'var(--sf-blue-100)'
+                  : 'repeating-linear-gradient(45deg, var(--sf-blue-50) 0 6px, transparent 6px 12px)',
+                borderTop: approved ? 'none' : '1px dashed var(--sf-blue-400)',
+                borderBottom: approved ? 'none' : '1px dashed var(--sf-blue-400)',
               }}
             />
           </Tooltip>
@@ -205,7 +205,7 @@ export function WorkStatusTimeline({
             height: TRACK_HEIGHT - 16,
             borderRadius: 3,
             ...band(piece.fromMinutes, piece.toMinutes),
-            background: WORKED_COLOR[state] ?? 'var(--sf-teal-600)',
+            background: WORKED_COLOR[state] ?? 'var(--sf-blue-600)',
           }}
         />
       ))}
@@ -431,7 +431,7 @@ export function TimelineAxis({ window }: { window: MinuteRange }) {
  * vào một kênh thị giác là biến nó thành không kênh nào.
  */
 const WORKED_COLOR: Partial<Record<WorkState, string>> = {
-  WORKING: 'var(--sf-teal-600)',
+  WORKING: 'var(--sf-blue-600)',
   DONE: 'var(--sf-success-600)',
   OUTSIDE: 'var(--sf-warning-700)',
   MISSING_CHECKOUT: 'var(--sf-warning-700)',
@@ -450,7 +450,7 @@ const MARK_COLOR: Record<string, string> = {
   CHECK_OUT: 'var(--sf-neutral-800)',
   BREAK_OUT: 'var(--sf-warning-800)',
   BREAK_IN: 'var(--sf-warning-800)',
-  RANDOM_CHECK: 'var(--sf-teal-500)',
+  RANDOM_CHECK: 'var(--sf-blue-500)',
 };
 
 const AUTH_LABEL: Record<string, string> = {

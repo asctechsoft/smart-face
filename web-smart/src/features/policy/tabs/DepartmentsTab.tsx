@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Button, Input, Modal, Select } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
-import { Icon } from '@/components/Icon';
 import { useCan } from '@/lib/rbac/Can';
 import { useBranches, useDepartments, type Department } from '@/features/shared/org.api';
 import { useUpsertDepartment } from '../policy.api';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Icon } from '@/components/ui';
 
 /**
  * Phòng ban.
@@ -18,7 +18,7 @@ import { useErrorToast } from '@/lib/errors/use-error-toast';
  * Vì vậy để trống ô "Trưởng phòng" làm cả luồng duyệt đơn của phòng đó đứng lại.
  */
 export function DepartmentsTab() {
-  const canEdit = useCan('policy.edit');
+  const canEdit = useCan('policy.update');
   const departments = useDepartments();
   const branches = useBranches();
   const [editing, setEditing] = useState<Partial<Department> | null>(null);

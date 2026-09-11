@@ -1,8 +1,5 @@
 import { Alert, Divider, Drawer, Empty, Tag } from 'antd';
 import { DetailField, DetailGrid, DetailSection } from '@/components/DetailField';
-import { StatusBadge, severityTone } from '@/components/StatusBadge';
-import { Icon } from '@/components/Icon';
-import { CardSkeleton } from '@/components/Skeleton';
 import { useAuth } from '@/lib/auth/auth-context';
 import { formatDay, formatSecondsGap, formatTimeWithSeconds } from '@/lib/utils/date';
 import { formatDistance, formatScore } from '@/lib/utils/format';
@@ -10,6 +7,7 @@ import { FRAUD_CODE_LABEL, FRAUD_SEVERITY_LABEL } from '@/config/constants';
 import { env } from '@/config/env';
 import { useAttendanceLogs, type AttendanceLog } from './attendance.api';
 import { ApiErrorState } from '@/components/ApiErrorState';
+import { Badge as StatusBadge, CardSkeleton, Icon, severityTone } from '@/components/ui';
 
 /**
  * Chi tiết một ngày công — docs/04 mục 3.2 (`FR-WEB-ATT-03`).

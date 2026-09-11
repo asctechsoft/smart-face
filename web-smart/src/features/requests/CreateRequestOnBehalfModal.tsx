@@ -38,9 +38,19 @@ import { useErrorToast } from '@/lib/errors/use-error-toast';
  */
 export function CreateRequestOnBehalfModal({
   open,
+  employee,
   onClose,
 }: {
   open: boolean;
+  /**
+   * Khoá sẵn người được lập đơn — dùng khi mở từ màn chi tiết bảng công của
+   * đúng người đó.
+   *
+   * Khoá chứ không chỉ điền sẵn: người dùng vừa nhìn 31 ngày công của một người
+   * rồi bấm "Gửi yêu cầu bổ sung", nên một ô chọn còn đổi được ở đây chỉ tạo ra
+   * đúng một kết cục — đơn bổ sung công gắn nhầm sang người khác.
+   */
+  employee?: { id: string; fullName: string };
   onClose: () => void;
 }) {
   const toast = useToast();
@@ -48,13 +58,14 @@ export function CreateRequestOnBehalfModal({
   const create = useCreateRequestOnBehalf();
 
   const requestTypes = useRequestTypes();
-  // Chỉ tải khi hộp thoại mở — trang bên dưới không cần danh sách này.
+  // Chỉ tải khi hộp thoại mở — trang bên dưới không cần danh sách này. Người
+  // được khoá sẵn cũng không cần: tên của họ đã có trong props.
   // `pageSize` trần của API là 100; gửi lớn hơn bị ép về 100 chứ không báo lỗi.
   const employees = useEmployeeList(
-    open ? { pageSize: 100, status: EMPLOYABLE_STATUSES } : { pageSize: 1 },
+    open && !employee ? { pageSize: 100, status: EMPLOYABLE_STATUSES } : { pageSize: 1 },
   );
 
-  const [employeeId, setEmployeeId] = useState<string | undefined>();
+  const [employeeId, setEmployeeId] = useState<string | undefined>(employee?.id);
   const [requestTypeCode, setRequestTypeCode] = useState<string | undefined>();
   const [range, setRange] = useState<{ from?: string; to?: string }>({});
   const [isHalfDay, setIsHalfDay] = useState(false);
@@ -122,7 +133,10 @@ export function CreateRequestOnBehalfModal({
     Boolean(employeeId && requestTypeCode && startAt && endAt) && timeOk && reasonOk && onBehalfOk;
 
   function reset() {
-    setEmployeeId(undefined);
+    // Về lại người đã khoá, không về `undefined`: hộp thoại mở lại từ màn chi
+    // tiết mà ô nhân viên trống thì người dùng phải chọn lại chính người họ
+    // đang đứng xem.
+    setEmployeeId(employee?.id);
     setRequestTypeCode(undefined);
     setRange({});
     setIsHalfDay(false);
@@ -200,12 +214,17 @@ export function CreateRequestOnBehalfModal({
             style={{ width: '100%' }}
             placeholder="Tìm theo tên hoặc mã nhân viên"
             loading={employees.isLoading}
+            disabled={Boolean(employee)}
             value={employeeId}
             onChange={setEmployeeId}
-            options={(employees.data?.items ?? []).map((employee) => ({
-              value: employee.id,
-              label: `${employee.fullName} · ${employee.employeeCode}`,
-            }))}
+            options={
+              employee
+                ? [{ value: employee.id, label: employee.fullName }]
+                : (employees.data?.items ?? []).map((row) => ({
+                    value: row.id,
+                    label: `${row.fullName} · ${row.employeeCode}`,
+                  }))
+            }
           />
         </Field>
 
@@ -341,7 +360,7 @@ export function CreateRequestOnBehalfModal({
                       borderRadius: 9999,
                       display: 'grid',
                       placeItems: 'center',
-                      background: 'var(--sf-teal-700)',
+                      background: 'var(--sf-blue-700)',
                       color: '#FFFFFF',
                       fontSize: 12,
                       fontWeight: 700,

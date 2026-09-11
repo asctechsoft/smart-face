@@ -72,6 +72,9 @@ export class AuditInterceptor implements NestInterceptor {
             targetId: targetId ?? null,
             reason: reason || null,
             traceId: ctx?.traceId ?? request.traceId ?? null,
+            correlationId: ctx?.correlationId ?? request.correlationId ?? null,
+            stepUpChallengeId: request.stepUpChallengeId ?? null,
+            supportSessionId: ctx?.supportSessionId ?? null,
           });
         },
       }),
@@ -89,6 +92,9 @@ export class AuditInterceptor implements NestInterceptor {
       targetId: string | null;
       reason: string | null;
       traceId: string | null;
+      correlationId: string | null;
+      stepUpChallengeId: string | null;
+      supportSessionId: string | null;
     },
   ): Promise<void> {
     try {
@@ -103,6 +109,9 @@ export class AuditInterceptor implements NestInterceptor {
         targetId: data.targetId,
         reason: data.reason,
         traceId: data.traceId,
+        correlationId: data.correlationId,
+        stepUpChallengeId: data.stepUpChallengeId,
+        supportSessionId: data.supportSessionId,
       });
     } catch (error) {
       // Ghi audit thất bại KHÔNG được làm hỏng nghiệp vụ đã thực hiện xong,

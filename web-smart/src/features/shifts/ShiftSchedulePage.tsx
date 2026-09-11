@@ -4,8 +4,6 @@ import { Alert, Button, DatePicker, Input, Pagination, Popover, Tooltip } from '
 import { PageHeader } from '@/components/PageHeader';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { EmptyState } from '@/components/ui';
-import { TableSkeleton } from '@/components/Skeleton';
-import { Icon } from '@/components/Icon';
 import { DepartmentTreeSelect } from '@/components/DepartmentTreeSelect';
 import { Can, useCan } from '@/lib/rbac/Can';
 import { toWorkDate } from '@/lib/utils/date';
@@ -24,6 +22,7 @@ import {
 import { ApiErrorState } from '@/components/ApiErrorState';
 import { ConfirmDialog, useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Icon, TableSkeleton } from '@/components/ui';
 
 /** Trần khoảng ngày do Backend đặt (`MAX_BOARD_DAYS`) — chặn sớm ở đây để báo lỗi tử tế hơn 422. */
 const MAX_DAYS = 62;
@@ -677,8 +676,8 @@ function ShiftCell({
               lineHeight: '20px',
               fontWeight: 600,
               background: shift.crossesMidnight
-                ? 'var(--sf-teal-900, #0F3D33)'
-                : 'var(--sf-teal-700)',
+                ? 'var(--sf-blue-900, #0F3D33)'
+                : 'var(--sf-blue-700)',
               color: '#FFFFFF',
             }}
           >
@@ -799,8 +798,8 @@ function ShiftLegend({ shifts }: { shifts: Shift[] }) {
               fontSize: 12,
               fontWeight: 600,
               background: shift.crossesMidnight
-                ? 'var(--sf-teal-900, #0F3D33)'
-                : 'var(--sf-teal-700)',
+                ? 'var(--sf-blue-900, #0F3D33)'
+                : 'var(--sf-blue-700)',
               color: '#FFFFFF',
             }}
           >

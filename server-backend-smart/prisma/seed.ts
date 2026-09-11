@@ -1,5 +1,5 @@
 /**
- * Seed dữ liệu khởi tạo — docs/07-mo-hinh-du-lieu.md mục 4.5.
+ * Seed dữ liệu khởi tạo — docs/13-mo-hinh-du-lieu.md mục 4.5.
  *
  * Chạy: `npm run seed`
  *
@@ -17,10 +17,16 @@
 // ts-node thì không — thiếu dòng này seed chết với "Environment variable not found".
 import 'dotenv/config';
 
-import { PrismaClient, ShiftType, SystemRole } from '@prisma/client';
+import { PrismaClient, ScopeLevel, ShiftType, SystemRole } from '@prisma/client';
 import { cert, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { buildUniqueEmployeeCode } from '../src/common/utils/employee-code.util';
+import {
+  ALL_PERMISSION_CODES,
+  PERMISSION_CATALOG,
+  SYSTEM_ROLE_DEFINITIONS,
+  permissionModule,
+} from '../src/modules/access/permission.constants';
 
 const prisma = new PrismaClient();
 
@@ -108,58 +114,155 @@ async function main(): Promise<void> {
   console.log('▶ Bắt đầu seed dữ liệu SmartFace...');
 
   // --- 1. Gói dịch vụ --------------------------------------------------------
+  //
+  // Catalog Free / Plus / Max theo bản thiết kế v2.1 (màn "Chỉnh sửa gói dịch vụ"
+  // của Quản trị nền tảng). Thay cho bộ Trial/Basic/Pro/Enterprise cũ.
+  //
+  // `features` là nguồn sự thật cho feature flag; các cột `max*` là bản sao được
+  // trải phẳng để ràng buộc ở tầng DB và query nhanh. Giới hạn phải được CƯỠNG
+  // CHẾ Ở BACKEND, không phải chỉ ẩn nút trên UI (`FR-ADM-PKG-03`).
   const plans = [
     {
-      name: 'Trial',
+      code: 'FREE',
+      name: 'Free',
+      description: 'Dùng thử: chấm công cơ bản cho nhóm nhỏ.',
       maxEmployees: 20,
       maxBranches: 1,
-      maxRecognitionsPerMonth: 2000,
+      maxDepartments: 1,
+      maxShifts: 1,
+      maxAdminAccounts: 1,
+      maxRecognitionsPerMonth: 2_000,
       storageGb: 5,
       photoRetentionDays: 30,
-      features: { rotatingShift: false, ot: true, multiBranch: false, apiIntegration: false },
+      dataRetentionDays: 30,
+      features: {
+        appAccount: true,
+        leaveApproval: false,
+        advancedScheduling: false,
+        excelExport: false,
+        advancedReport: false,
+        apiIntegration: false,
+        fullAuditLog: false,
+      },
       pricePerMonth: 0,
+      isDefault: true,
+      sortOrder: 1,
     },
     {
-      name: 'Basic',
-      maxEmployees: 50,
-      maxBranches: 2,
-      maxRecognitionsPerMonth: 10_000,
-      storageGb: 20,
-      photoRetentionDays: 90,
-      features: { rotatingShift: true, ot: true, multiBranch: false, apiIntegration: false },
-      pricePerMonth: 1_500_000,
-    },
-    {
-      name: 'Pro',
+      code: 'PLUS',
+      name: 'Plus',
+      description: 'Doanh nghiệp vừa: đơn từ, phân ca nâng cao, xuất Excel.',
       maxEmployees: 200,
       maxBranches: 5,
+      maxDepartments: 20,
+      maxShifts: 10,
+      maxAdminAccounts: 5,
       maxRecognitionsPerMonth: 50_000,
       storageGb: 100,
       photoRetentionDays: 180,
-      features: { rotatingShift: true, ot: true, multiBranch: true, apiIntegration: false },
+      dataRetentionDays: 365,
+      features: {
+        appAccount: true,
+        leaveApproval: true,
+        advancedScheduling: true,
+        excelExport: true,
+        advancedReport: true,
+        apiIntegration: false,
+        fullAuditLog: false,
+      },
       pricePerMonth: 5_000_000,
+      isDefault: false,
+      sortOrder: 2,
     },
     {
-      name: 'Enterprise',
+      code: 'MAX',
+      name: 'Max',
+      description: 'Không giới hạn quy mô, tích hợp API và audit log đầy đủ.',
       maxEmployees: null,
       maxBranches: null,
+      maxDepartments: null,
+      maxShifts: null,
+      maxAdminAccounts: null,
       maxRecognitionsPerMonth: null,
       storageGb: 500,
       photoRetentionDays: 365,
-      features: { rotatingShift: true, ot: true, multiBranch: true, apiIntegration: true },
+      dataRetentionDays: 1825,
+      features: {
+        appAccount: true,
+        leaveApproval: true,
+        advancedScheduling: true,
+        excelExport: true,
+        advancedReport: true,
+        apiIntegration: true,
+        fullAuditLog: true,
+      },
       pricePerMonth: null,
+      isDefault: false,
+      sortOrder: 3,
     },
   ];
 
   for (const plan of plans) {
     await prisma.subscriptionPlan.upsert({
-      where: { name: plan.name },
+      where: { code: plan.code },
       create: plan,
       update: plan,
     });
   }
-  const proPlan = await prisma.subscriptionPlan.findUniqueOrThrow({ where: { name: 'Pro' } });
+  const demoPlan = await prisma.subscriptionPlan.findUniqueOrThrow({ where: { code: 'PLUS' } });
   console.log(`  ✓ ${plans.length} gói dịch vụ`);
+
+  // --- 1b. Danh mục quyền & vai trò hệ thống (docs/08 §2 · E-V21.1) ----------
+  //
+  // Idempotent và KHÔNG xoá gì: quyền bị gỡ khỏi code mà vẫn còn dòng trong bảng
+  // chỉ là rác vô hại, còn xoá nhầm là gỡ quyền của người đang dùng thật.
+  for (const code of ALL_PERMISSION_CODES) {
+    await prisma.permission.upsert({
+      where: { code },
+      create: { code, module: permissionModule(code), description: PERMISSION_CATALOG[code] },
+      update: { module: permissionModule(code), description: PERMISSION_CATALOG[code] },
+    });
+  }
+
+  for (const definition of SYSTEM_ROLE_DEFINITIONS) {
+    // `companyId = null` là vai trò dùng chung mọi tenant. Postgres coi mọi NULL
+    // là khác nhau nên `@@unique([companyId, code])` KHÔNG áp cho hàng có null —
+    // phải tự tra trước thay vì dựa vào upsert.
+    const existing = await prisma.role.findFirst({
+      where: { companyId: null, code: definition.code },
+    });
+    const role = existing
+      ? await prisma.role.update({
+          where: { id: existing.id },
+          data: {
+            name: definition.name,
+            description: definition.description,
+            isSystem: true,
+            deletedAt: null,
+          },
+        })
+      : await prisma.role.create({
+          data: {
+            companyId: null,
+            code: definition.code,
+            name: definition.name,
+            description: definition.description,
+            isSystem: true,
+          },
+        });
+
+    const permissions = await prisma.permission.findMany({
+      where: { code: { in: definition.permissions } },
+      select: { id: true },
+    });
+    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
+    await prisma.rolePermission.createMany({
+      data: permissions.map((permission) => ({ roleId: role.id, permissionId: permission.id })),
+    });
+  }
+  console.log(
+    `  ✓ ${ALL_PERMISSION_CODES.length} quyền · ${SYSTEM_ROLE_DEFINITIONS.length} vai trò hệ thống`,
+  );
 
   // --- 2. Admin hệ thống -----------------------------------------------------
   //
@@ -200,9 +303,9 @@ async function main(): Promise<void> {
       taxCode: '0101234567',
       timezone: 'Asia/Ho_Chi_Minh',
       status: 'ACTIVE',
-      planId: proPlan.id,
+      planId: demoPlan.id,
     },
-    update: { domain: COMPANY_DOMAIN, planId: proPlan.id, status: 'ACTIVE' },
+    update: { domain: COMPANY_DOMAIN, planId: demoPlan.id, status: 'ACTIVE' },
   });
   console.log(`  ✓ Công ty ${company.name} (${company.code}, tên miền ${company.domain})`);
 
@@ -242,7 +345,10 @@ async function main(): Promise<void> {
     });
   }
 
-  const departmentNames = ['Kỹ thuật', 'Kinh doanh', 'Nhân sự', 'Kế toán'];
+  // "Ban giám đốc" tách riêng, không nhét Giám đốc vào phòng Kế toán: phạm vi
+  // dữ liệu của Quản lý được cắt theo phòng ban, và một Giám đốc ngồi trong
+  // phòng Kế toán làm mọi phép kiểm phạm vi trở nên khó đọc.
+  const departmentNames = ['Ban giám đốc', 'Kỹ thuật', 'Kinh doanh', 'Nhân sự', 'Kế toán'];
   const departments: Record<string, string> = {};
   for (const name of departmentNames) {
     let department = await prisma.department.findFirst({
@@ -529,6 +635,17 @@ async function main(): Promise<void> {
   console.log(`  ✓ ${Object.keys(policies).length} khoá chính sách`);
 
   // --- 11. Nhân viên mẫu -----------------------------------------------------
+  //
+  // ## MỘT VAI TRÒ MỘT TÀI KHOẢN — không gộp
+  //
+  // Bản trước gộp `COMPANY_ADMIN` và `HR_PAYROLL` vào `an@amobi.vn`. Tài khoản
+  // đó thấy menu của cả hai vai trò cùng lúc, nên KHÔNG kiểm được thứ quan
+  // trọng nhất của mô hình v2.1: ranh giới #1 của `docs/08` §1.1 — Kế toán gửi
+  // đề nghị chốt kỳ, Giám đốc duyệt, và một người không làm cả hai bước.
+  //
+  // Với seed cũ, mở màn Kỳ công sẽ thấy CẢ "Gửi duyệt chốt" lẫn "Duyệt chốt"
+  // trên cùng một hàng — đúng cái mà cả bảng phân quyền lẫn bộ test sinh ra để
+  // ngăn. Tách ra thì mỗi tài khoản chỉ thấy nút của mình.
   const sampleEmployees: Array<{
     fullName: string;
     email: string;
@@ -536,6 +653,10 @@ async function main(): Promise<void> {
     department: string;
     position: string;
     roles: SystemRole[];
+    /** Mã vai trò v2.1 trong bảng `role` — nguồn thật của `/v1/access/me`. */
+    accessRole: string;
+    /** Chủ sở hữu công ty (`BR-15`) — ghi thêm một dòng `CompanyOwner`. */
+    isOwner?: boolean;
   }> = [
     {
       fullName: 'Nguyễn Văn Đức',
@@ -544,6 +665,7 @@ async function main(): Promise<void> {
       department: 'Kỹ thuật',
       position: 'Nhân viên',
       roles: [SystemRole.EMPLOYEE],
+      accessRole: 'EMPLOYEE',
     },
     {
       fullName: 'Trần Văn Bình',
@@ -552,22 +674,40 @@ async function main(): Promise<void> {
       department: 'Kỹ thuật',
       position: 'Trưởng phòng',
       roles: [SystemRole.EMPLOYEE, SystemRole.MANAGER],
+      accessRole: 'MANAGER',
     },
     {
       fullName: 'Lê Thị Hoa',
       email: 'hoa@amobi.vn',
       phone: '0901234569',
-      department: 'Nhân sự',
-      position: 'Chuyên viên nhân sự',
+      department: 'Kế toán',
+      position: 'Kế toán trưởng',
       roles: [SystemRole.EMPLOYEE, SystemRole.HR_PAYROLL],
+      accessRole: 'HR_PAYROLL',
     },
     {
+      // Giám đốc — CHỈ `COMPANY_ADMIN`. Không có `HR_PAYROLL`, và đó là điểm
+      // chính: người này duyệt chốt kỳ nhưng không gửi được đề nghị chốt.
       fullName: 'Phạm Thị An',
       email: 'an@amobi.vn',
       phone: '0901234570',
-      department: 'Kế toán',
-      position: 'Kế toán trưởng',
-      roles: [SystemRole.EMPLOYEE, SystemRole.HR_PAYROLL, SystemRole.COMPANY_ADMIN],
+      department: 'Ban giám đốc',
+      position: 'Giám đốc',
+      roles: [SystemRole.EMPLOYEE, SystemRole.COMPANY_ADMIN],
+      accessRole: 'COMPANY_ADMIN',
+    },
+    {
+      // Chủ sở hữu — trên Giám đốc một bậc: chỉ vai trò này có `owner.assign`.
+      // Mang `SystemRole.COMPANY_ADMIN` ở lớp tương thích cũ vì enum `SystemRole`
+      // không có `OWNER`; vai trò thật nằm ở `RoleAssignment`.
+      fullName: 'Vũ Quốc Khánh',
+      email: 'owner@amobi.vn',
+      phone: '0901234571',
+      department: 'Ban giám đốc',
+      position: 'Chủ tịch',
+      roles: [SystemRole.EMPLOYEE, SystemRole.COMPANY_ADMIN],
+      accessRole: 'OWNER',
+      isOwner: true,
     },
   ];
 
@@ -587,6 +727,29 @@ async function main(): Promise<void> {
       where: { companyId: company.id, phone: sample.phone },
     });
     if (existing) {
+      /*
+       * CẬP NHẬT chứ không bỏ qua.
+       *
+       * Bản trước `continue` ngay khi hồ sơ đã tồn tại, nên mọi thay đổi trong
+       * bảng `sampleEmployees` — đổi vai trò, đổi phòng ban — không bao giờ tới
+       * được cơ sở dữ liệu đã seed một lần. Người sửa seed rồi chạy lại sẽ thấy
+       * dữ liệu cũ nguyên vẹn và không hiểu vì sao.
+       *
+       * KHÔNG đụng tới `employeeCode`: nó bất biến sau lần chấm công đầu (BR-04).
+       */
+      await prisma.employee.update({
+        where: { id: existing.id },
+        data: {
+          fullName: sample.fullName,
+          departmentId: departments[sample.department],
+          position: sample.position,
+          roles: sample.roles,
+          status: 'ACTIVE',
+          managedDepartmentIds: sample.roles.includes(SystemRole.MANAGER)
+            ? [departments[sample.department]]
+            : [],
+        },
+      });
       createdEmployees[sample.fullName] = existing.id;
       continue;
     }
@@ -621,7 +784,13 @@ async function main(): Promise<void> {
         position: sample.position,
         contractType: 'Chính thức',
         joinedAt: new Date('2026-01-15'),
-        status: 'PENDING_ACTIVATION',
+        // ACTIVE chứ không phải PENDING_ACTIVATION.
+        //
+        // `findActiveEmployeeIds` lọc đúng `status = 'ACTIVE'`, nên để
+        // PENDING_ACTIVATION thì MỌI dashboard đếm ra 0 người và màn Tổng quan
+        // trông như hỏng. Trong đời thật trạng thái này chuyển sang ACTIVE ở
+        // lần nhân viên đăng nhập đầu tiên; seed đi thẳng tới đó.
+        status: 'ACTIVE',
         roles: sample.roles,
         managedDepartmentIds: sample.roles.includes(SystemRole.MANAGER)
           ? [departments[sample.department]]
@@ -642,6 +811,85 @@ async function main(): Promise<void> {
       update: {},
     });
   }
+
+  // --- 11b. Gán vai trò v2.1 (RoleAssignment) --------------------------------
+  //
+  // ⚠ Đây là thứ bản seed trước THIẾU HẲN.
+  //
+  // Seed cũ tạo danh mục `role` + `role_permission` nhưng không gán vai trò cho
+  // ai. `AccessService` khi đó rơi về `fallbackFromLegacyRoles` — suy quyền từ
+  // `SystemRole` cũ. Nó chạy được, nhưng đường chạy THẬT (`RoleAssignment` có
+  // `validFrom`/`validTo`, có scope, có người cấp) thì không bao giờ được thực
+  // thi trong môi trường phát triển, nên lỗi ở đó chỉ lộ ra khi lên production.
+  //
+  // `grantedById` là BẮT BUỘC trong lược đồ, và đó là chủ ý: mọi quyền trong hệ
+  // thống phải truy được về người đã cấp nó (`BR-08`). Ở đây người cấp là Chủ
+  // sở hữu — kể cả với chính vai trò của Chủ sở hữu, vì công ty mới lập thì
+  // không có ai khác để cấp.
+  const ownerSample = sampleEmployees.find((row) => row.isOwner);
+  const granterId = ownerSample ? createdEmployees[ownerSample.fullName] : undefined;
+
+  for (const sample of sampleEmployees) {
+    const employeeId = createdEmployees[sample.fullName];
+    if (!employeeId || !granterId) continue;
+
+    const role = await prisma.role.findFirst({
+      where: { companyId: null, code: sample.accessRole },
+    });
+    if (!role) continue;
+
+    /*
+     * Thu hồi vai trò cũ không còn khớp — bằng `validTo`, KHÔNG xoá dòng.
+     *
+     * Đây chính là cách hệ thống thu hồi quyền trong đời thật (`FR-GDW-ROLE-03`),
+     * nên seed đi đúng đường đó thay vì `deleteMany`. Nó cũng là thứ khiến việc
+     * tách `an@amobi.vn` khỏi `HR_PAYROLL` có hiệu lực trên cơ sở dữ liệu đã
+     * seed từ trước: dòng cũ bị đóng lại chứ không bị bỏ quên.
+     */
+    await prisma.roleAssignment.updateMany({
+      where: { companyId: company.id, employeeId, validTo: null, roleId: { not: role.id } },
+      data: { validTo: new Date() },
+    });
+
+    const existingAssignment = await prisma.roleAssignment.findFirst({
+      where: { companyId: company.id, employeeId, roleId: role.id, validTo: null },
+    });
+    if (!existingAssignment) {
+      await prisma.roleAssignment.create({
+        data: {
+          companyId: company.id,
+          employeeId,
+          roleId: role.id,
+          // Quản lý bị giới hạn ở phòng ban mình phụ trách; các vai trò khác
+          // làm việc trên toàn công ty. Đây là chỗ `scopeIds` mang nghĩa thật:
+          // để rỗng cho COMPANY nghĩa là "mọi phòng ban", không phải "không có".
+          scopeLevel:
+            sample.accessRole === 'MANAGER' ? ScopeLevel.DEPARTMENT : ScopeLevel.COMPANY,
+          scopeIds:
+            sample.accessRole === 'MANAGER' ? [departments[sample.department]] : [],
+          validFrom: new Date('2026-01-01'),
+          grantedById: granterId,
+          reason: 'Khởi tạo dữ liệu mẫu',
+        },
+      });
+    }
+
+    if (sample.isOwner) {
+      const existingOwner = await prisma.companyOwner.findFirst({
+        where: { companyId: company.id, employeeId, revokedAt: null },
+      });
+      if (!existingOwner) {
+        await prisma.companyOwner.create({
+          data: {
+            companyId: company.id,
+            employeeId,
+            grantedBy: granterId,
+          },
+        });
+      }
+    }
+  }
+  console.log(`  ✓ ${sampleEmployees.length} phân vai trò (RoleAssignment)`);
 
   // Gán trưởng phòng cho phòng Kỹ thuật — cần cho bước duyệt DIRECT_MANAGER.
   if (createdEmployees['Trần Văn Bình']) {
@@ -702,11 +950,16 @@ async function main(): Promise<void> {
     console.log(`   Tài khoản đã tạo trên Auth Emulator tại ${emulatorHost}`);
   }
   console.log('');
-  console.log(`     Admin nền tảng : ${ADMIN_EMAIL}          (không cần tên miền)`);
-  console.log(`     Admin công ty  : an@amobi.vn    tên miền ${COMPANY_DOMAIN}`);
-  console.log(`     HR             : hoa@amobi.vn   tên miền ${COMPANY_DOMAIN}`);
-  console.log(`     Quản lý        : binh@amobi.vn  tên miền ${COMPANY_DOMAIN}`);
-  console.log(`     Nhân viên      : duc@amobi.vn   tên miền ${COMPANY_DOMAIN}`);
+  console.log('   Mỗi vai trò MỘT tài khoản — dùng để kiểm giao diện đổi theo quyền:');
+  console.log('');
+  console.log(`     Quản trị nền tảng : ${ADMIN_EMAIL}   (không thuộc công ty nào)`);
+  console.log('     Chủ sở hữu        : owner@amobi.vn');
+  console.log('     Giám đốc          : an@amobi.vn');
+  console.log('     Kế toán / HR      : hoa@amobi.vn');
+  console.log('     Quản lý           : binh@amobi.vn      (giới hạn phòng Kỹ thuật)');
+  console.log('     Nhân viên         : duc@amobi.vn');
+  console.log('');
+  console.log(`   Tên miền công ty: ${COMPANY_DOMAIN}`);
 }
 
 main()

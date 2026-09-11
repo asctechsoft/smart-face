@@ -4,7 +4,7 @@
 > Toàn bộ số liệu dưới đây được trích trực tiếp từ PostgreSQL bằng truy vấn `pg_constraint`,
 > `information_schema` và đối chiếu với `prisma/schema.prisma`.
 >
-> Khác với [07-mo-hinh-du-lieu.md](07-mo-hinh-du-lieu.md) — tài liệu đó mô tả *ý đồ thiết kế*
+> Khác với [13-mo-hinh-du-lieu.md](13-mo-hinh-du-lieu.md) — tài liệu đó mô tả *ý đồ thiết kế*
 > và lý do nghiệp vụ. Tài liệu này trả lời câu hỏi *"database hiện đang trông như thế nào"*.
 
 ---
@@ -937,7 +937,7 @@ sau đắt hơn, vì buộc phải chép toàn bộ dữ liệu sang bảng mớ
 | ~10 triệu | Vài phút, cần cửa sổ bảo trì |
 | ~50 triệu | Hàng chục phút, cần quy trình chuyển đổi có kế hoạch |
 
-Theo ước tính ở [07-mo-hinh-du-lieu.md](07-mo-hinh-du-lieu.md): 500 nhân viên × 4 lượt/ngày ×
+Theo ước tính ở [13-mo-hinh-du-lieu.md](13-mo-hinh-du-lieu.md): 500 nhân viên × 4 lượt/ngày ×
 250 ngày ≈ **500.000 dòng/năm/công ty**. PostgreSQL 17 xử lý bảng 10–20 triệu dòng rất thoải
 mái nếu index đúng — mà 4 index hiện có của `attendance_log` là đúng. Suy ra ngưỡng quyết định
 **không phải thời gian mà là số công ty onboard**: 1 công ty ≈ 20 năm, 10 công ty ≈ 2 năm,
@@ -1067,9 +1067,9 @@ ngoặc kép.**
 
 ## 10. Liên kết tài liệu
 
-- [07-mo-hinh-du-lieu.md](07-mo-hinh-du-lieu.md) — ý đồ thiết kế và lý do nghiệp vụ
-- [02-kien-truc-he-thong.md](02-kien-truc-he-thong.md) — kiến trúc tổng thể, ADR
-- [06-anti-fraud.md](06-anti-fraud.md) — chi tiết `fraud_flag` và cơ chế chấm điểm
-- [12-luong-cham-cong-chi-tiet.md](12-luong-cham-cong-chi-tiet.md) — luồng ghi `attendance_log`
+- [13-mo-hinh-du-lieu.md](13-mo-hinh-du-lieu.md) — ý đồ thiết kế và lý do nghiệp vụ
+- [11-kien-truc-va-technology-stack.md](11-kien-truc-va-technology-stack.md) — kiến trúc tổng thể, ADR
+- [09-anti-fraud.md](09-anti-fraud.md) — chi tiết `fraud_flag` và cơ chế chấm điểm
+- [18-luong-cham-cong-chi-tiet.md](18-luong-cham-cong-chi-tiet.md) — luồng ghi `attendance_log`
 - `server-backend-smart/prisma/schema.prisma` — nguồn sự thật của cấu trúc
 - `server-backend-smart/prisma/sql/` — ràng buộc không biểu diễn được bằng Prisma

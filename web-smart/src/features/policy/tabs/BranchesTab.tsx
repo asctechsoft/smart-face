@@ -2,12 +2,12 @@ import { useState } from 'react';
 import { Alert, Button, Input, InputNumber, Modal, Select, Slider } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { DataTable } from '@/components/DataTable';
-import { Icon } from '@/components/Icon';
 import { useCan } from '@/lib/rbac/Can';
 import { useBranches, type Branch } from '@/features/shared/org.api';
 import { useUpsertBranch } from '../policy.api';
 import { useToast } from '@/components/ui';
 import { useErrorToast } from '@/lib/errors/use-error-toast';
+import { Icon } from '@/components/ui';
 
 /**
  * Chi nhánh & geofence — `FR-WEB-POL-09`, docs/04 mục 11.1.
@@ -23,7 +23,7 @@ import { useErrorToast } from '@/lib/errors/use-error-toast';
  * `192.168.x.x` — địa chỉ mà máy chủ không bao giờ nhìn thấy.
  */
 export function BranchesTab() {
-  const canEdit = useCan('policy.edit');
+  const canEdit = useCan('policy.update');
   const branches = useBranches();
   const [editing, setEditing] = useState<Partial<Branch> | null>(null);
 

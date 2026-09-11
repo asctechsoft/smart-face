@@ -1,11 +1,18 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Bucket } from '@google-cloud/storage';
 import { App, cert, deleteApp, initializeApp } from 'firebase-admin/app';
 import { Auth, DecodedIdToken, getAuth, UserRecord } from 'firebase-admin/auth';
+import { getStorage, Storage } from 'firebase-admin/storage';
 import { AppException } from 'src/common/errors';
+import { StorageBucketProvider } from '../storage/storage-bucket.provider';
 
 /**
- * Firebase Authentication — nhà cung cấp danh tính của hệ thống.
+ * Firebase Authentication — nhà cung cấp danh tính của hệ thống, đồng thời là
+ * chủ sở hữu Firebase App dùng chung cho Cloud Storage (`StorageService`).
+ *
+ * Chỉ có MỘT App được khởi tạo ở đây để service account (`FIREBASE_*`) chỉ phải
+ * khai một lần và signed URL của Storage ký được bằng chính khoá riêng đó.
  *
  * ## Ranh giới trách nhiệm
  *
@@ -30,10 +37,13 @@ import { AppException } from 'src/common/errors';
  * chết ngay lúc khởi động.
  */
 @Injectable()
-export class FirebaseService implements OnModuleInit, OnModuleDestroy {
+export class FirebaseService implements OnModuleInit, OnModuleDestroy, StorageBucketProvider {
   private readonly logger = new Logger(FirebaseService.name);
   private app!: App;
   private auth!: Auth;
+  private storage!: Storage;
+  private storageBucketName = '';
+  private storageEmulatorHost = '';
 
   constructor(private readonly config: ConfigService) {}
 
@@ -68,6 +78,45 @@ export class FirebaseService implements OnModuleInit, OnModuleDestroy {
       'smartface-auth',
     );
     this.auth = getAuth(this.app);
+    this.initStorage(projectId);
+  }
+
+  /**
+   * Cloud Storage for Firebase — ảnh chấm công, ảnh hồ sơ khuôn mặt, file đính
+   * kèm và file export đều nằm ở đây (xem `StorageService`).
+   *
+   * Bucket mặc định của một dự án Firebase là `<projectId>.firebasestorage.app`.
+   * Dự án tạo trước tháng 10/2024 vẫn dùng `<projectId>.appspot.com`, nên tên
+   * bucket phải khai được qua `FIREBASE_STORAGE_BUCKET`.
+   */
+  private initStorage(projectId: string): void {
+    const configured = this.config.get<string>('storage.bucket', '');
+    this.storageBucketName = configured || `${projectId}.firebasestorage.app`;
+
+    const emulator = this.config.get<string>('storage.emulatorHost', '');
+    if (emulator) {
+      // Cùng lý do với Auth Emulator: SDK của Google Cloud Storage CHỈ đọc biến
+      // môi trường này, không có tham số tương ứng. Phải đặt TRƯỚC `getStorage`
+      // vì client được dựng ngay trong lời gọi đó.
+      this.storageEmulatorHost = emulator.startsWith('http') ? emulator : `http://${emulator}`;
+      process.env.STORAGE_EMULATOR_HOST = this.storageEmulatorHost;
+      this.logger.warn(
+        `Đang dùng Storage Emulator tại ${this.storageEmulatorHost} — file KHÔNG lên Firebase thật ` +
+          'và không ký được signed URL, nên link tải trả về là URL trần của emulator.',
+      );
+    }
+
+    this.storage = getStorage(this.app);
+  }
+
+  /** Bucket dùng chung cho toàn hệ thống. */
+  getStorageBucket(): Bucket {
+    return this.storage.bucket(this.storageBucketName);
+  }
+
+  /** Rỗng khi đang chạy với Firebase thật. */
+  getStorageEmulatorHost(): string {
+    return this.storageEmulatorHost;
   }
 
   async onModuleDestroy(): Promise<void> {

@@ -1,5 +1,5 @@
 /**
- * Thư viện component dùng chung — docs/16-quy-chuan-style-guide.md mục 11.
+ * Thư viện component dùng chung — docs/20-quy-chuan-style-guide.md mục 11.
  *
  * Mọi màn hình nhập từ đây, không nhập thẳng từ file con: đường dẫn ổn định thì
  * đổi cấu trúc thư mục về sau không phải sửa 50 chỗ import.
@@ -33,8 +33,14 @@
  * `routes/layouts/ManagerLayout.tsx`.
  */
 
-export { Button, IconButton } from './Button';
-export type { ButtonProps, ButtonSize, ButtonVariant, IconButtonProps } from './Button';
+export { Button, IconButton, LinkButton } from './Button';
+export type {
+  ButtonProps,
+  ButtonSize,
+  ButtonVariant,
+  IconButtonProps,
+  LinkButtonProps,
+} from './Button';
 
 export { Icon, ICONS } from './Icon';
 export type { IconSize } from './Icon';

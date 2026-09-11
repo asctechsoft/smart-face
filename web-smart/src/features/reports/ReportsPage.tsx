@@ -18,9 +18,6 @@ import { PageHeader, SectionTitle } from '@/components/PageHeader';
 import { DataTable } from '@/components/DataTable';
 import { FilterBar, FilterField } from '@/components/FilterBar';
 import { EmployeeCell } from '@/components/EmployeeCell';
-import { StatCard } from '@/components/StatCard';
-import { CardSkeleton } from '@/components/Skeleton';
-import { EmptyState } from '@/components/EmptyState';
 import { ApiErrorState } from '@/components/ApiErrorState';
 import { useAuth } from '@/lib/auth/auth-context';
 import {
@@ -41,6 +38,7 @@ import {
   type OvertimeReport,
   type ViolationRow,
 } from './reports.api';
+import { CardSkeleton, EmptyState, StatCard } from '@/components/ui';
 
 const { RangePicker } = DatePicker;
 
@@ -419,7 +417,7 @@ function LeaveUsageTab() {
       width: 120,
       align: 'right',
       render: (value: number) => (
-        <span style={{ fontWeight: 700, color: 'var(--sf-teal-700)' }}>
+        <span style={{ fontWeight: 700, color: 'var(--sf-blue-700)' }}>
           {formatNumber(value, 1)} ngày
         </span>
       ),
@@ -435,7 +433,7 @@ function LeaveUsageTab() {
             percent={Math.min(value, 100)}
             size="small"
             showInfo={false}
-            strokeColor={value > 90 ? 'var(--sf-warning-700)' : 'var(--sf-teal-700)'}
+            strokeColor={value > 90 ? 'var(--sf-warning-700)' : 'var(--sf-blue-700)'}
             style={{ flex: 1, margin: 0 }}
           />
           <span className="sf-body-sm" style={{ minWidth: 40 }}>

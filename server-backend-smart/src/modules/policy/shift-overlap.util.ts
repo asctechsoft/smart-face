@@ -71,7 +71,9 @@ export function findOverlappingShift<T extends { shift: ShiftWindow; dayOffset: 
   existing: T[],
 ): T | null {
   const target = shiftRange(candidate, 0);
-  return existing.find((row) => rangesOverlap(target, shiftRange(row.shift, row.dayOffset))) ?? null;
+  return (
+    existing.find((row) => rangesOverlap(target, shiftRange(row.shift, row.dayOffset))) ?? null
+  );
 }
 
 /** Một lượt đã xếp, đủ thông tin để so giờ và để gọi tên trong thông báo lỗi. */

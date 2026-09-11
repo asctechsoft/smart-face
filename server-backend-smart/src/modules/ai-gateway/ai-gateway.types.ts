@@ -1,5 +1,5 @@
 /**
- * Hợp đồng với AI Server — docs/08-hop-dong-api.md mục 8.
+ * Hợp đồng với AI Server — docs/15-hop-dong-api.md mục 8.
  *
  * ⚠ NGUYÊN TẮC P3: AI Server chỉ trả SỐ LIỆU, KHÔNG ra quyết định nghiệp vụ.
  * Backend so số liệu này với ngưỡng cấu hình theo từng công ty rồi tự quyết định.

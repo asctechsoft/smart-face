@@ -239,6 +239,26 @@ export function useRejectRequest() {
 }
 
 /**
+ * Yêu cầu nhân viên bổ sung thông tin — thay cho việc từ chối.
+ *
+ * Có mặt vì trước v2.1 người duyệt chỉ có hai nút. Thiếu một tấm ảnh giấy khám
+ * bệnh mà phải bấm "Từ chối" thì nhân viên nhận thông báo đơn bị bác, phải nộp
+ * lại từ đầu, và tỉ lệ từ chối trong báo cáo trở thành vô nghĩa vì lẫn cả những
+ * đơn thực ra chỉ thiếu giấy tờ.
+ *
+ * Đơn về `NEED_MORE_INFO` nhưng bước duyệt hiện tại VẪN chờ — bổ sung xong thì
+ * đơn quay lại đúng người đang hỏi, không chạy lại từ cấp một.
+ */
+export function useRequestMoreInfo() {
+  const invalidate = useInvalidateAfterDecision();
+  return useMutation({
+    mutationFn: ({ id, question }: { id: string; question: string }) =>
+      api.post<LeaveRequest>(`/requests/${id}/need-more-info`, { question }),
+    onSuccess: invalidate,
+  });
+}
+
+/**
  * Duyệt hàng loạt.
  *
  * `BR-APV-05`: mỗi đơn vẫn được kiểm tra riêng về ràng buộc nghiệp vụ (số phép

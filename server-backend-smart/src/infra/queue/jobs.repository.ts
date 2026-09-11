@@ -8,6 +8,7 @@ import {
   Prisma,
   RequestStatus,
 } from '@prisma/client';
+import { periodLockedFilter } from 'src/common/constants/payroll-period.constants';
 import { BaseRepository } from 'src/infra/prisma/base.repository';
 import { PrismaService } from 'src/infra/prisma/prisma.service';
 
@@ -285,7 +286,7 @@ export class JobsRepository extends BaseRepository {
     return this.db().payrollPeriod.findFirst({
       where: {
         companyId,
-        status: 'CLOSED',
+        status: periodLockedFilter(),
         startDate: { lte: workDate },
         endDate: { gte: workDate },
       },

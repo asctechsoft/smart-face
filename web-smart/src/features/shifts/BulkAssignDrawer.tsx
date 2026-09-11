@@ -306,9 +306,9 @@ export function BulkAssignDrawer({
                     borderRadius: 9999,
                     fontSize: 14,
                     cursor: 'pointer',
-                    background: selected ? 'var(--sf-teal-700)' : 'transparent',
+                    background: selected ? 'var(--sf-blue-700)' : 'transparent',
                     color: selected ? '#FFFFFF' : 'var(--sf-on-surface)',
-                    border: `1px solid ${selected ? 'var(--sf-teal-700)' : 'var(--sf-neutral-500)'}`,
+                    border: `1px solid ${selected ? 'var(--sf-blue-700)' : 'var(--sf-neutral-500)'}`,
                     transition: 'background-color 150ms ease-out',
                   }}
                 >

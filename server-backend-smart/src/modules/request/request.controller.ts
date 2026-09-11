@@ -14,7 +14,14 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { SystemRole } from '@prisma/client';
-import { Audit, CurrentTenant, DepartmentScoped, Roles } from 'src/common/decorators';
+import {
+  Audit,
+  CurrentTenant,
+  DepartmentScoped,
+  IfMatch,
+  RequireVersion,
+  Roles,
+} from 'src/common/decorators';
 import { ApiErrors } from 'src/common/decorators/api-standard-responses.decorator';
 import { AppException } from 'src/common/errors';
 import { resolveDepartmentScope } from 'src/common/guards/scope.guard';
@@ -26,6 +33,8 @@ import {
   CancelRequestDto,
   CreateRequestDto,
   CreateRequestOnBehalfDto,
+  NeedMoreInfoDto,
+  ProvideInfoDto,
   RejectRequestDto,
   RequestQueryDto,
   UpdateRequestDto,
@@ -37,7 +46,7 @@ import { RequestService } from './request.service';
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 /**
- * docs/08-hop-dong-api.md mục 5 — API Đơn từ (dùng chung App và Web Quản lý).
+ * docs/15-hop-dong-api.md mục 5 — API Đơn từ (dùng chung App và Web Quản lý).
  *
  * Là controller DUY NHẤT phục vụ cả hai loại client, vì cùng một con người vừa
  * là người nộp đơn vừa có thể là người duyệt đơn của cấp dưới. Tách đôi sẽ phải
@@ -125,10 +134,7 @@ export class RequestController {
       'Trả về đúng những bước duyệt sẽ được sinh ra cho đơn này, kèm người duyệt hệ thống tự suy và danh sách ứng viên thay thế cho từng bước. Luồng duyệt phụ thuộc ĐỘ DÀI đơn (nghỉ 1 ngày chỉ cần trưởng phòng, nghỉ 3 ngày trở lên mới thêm bước HR), nên phải hỏi lại mỗi khi đổi loại đơn hoặc khoảng ngày.',
   })
   @ApiErrors('EMP_NOT_FOUND', 'AUTH_FORBIDDEN', 'REQ_TYPE_NOT_FOUND')
-  approvalPreview(
-    @CurrentTenant() ctx: TenantContext,
-    @Query() query: ApprovalPreviewQueryDto,
-  ) {
+  approvalPreview(@CurrentTenant() ctx: TenantContext, @Query() query: ApprovalPreviewQueryDto) {
     return this.requests.previewApprovalFlow(ctx, query, resolveDepartmentScope(ctx));
   }
 
@@ -161,14 +167,20 @@ export class RequestController {
   }
 
   @Patch('requests/:id')
-  @ApiOperation({ summary: 'Sửa đơn nháp' })
-  @ApiErrors('REQ_NOT_FOUND', 'REQ_INVALID_STATUS', 'AUTH_FORBIDDEN')
+  @RequireVersion()
+  @ApiOperation({
+    summary: 'Sửa đơn nháp',
+    description:
+      'Gửi kèm `If-Match: <rowVersion>` đọc được ở `GET /v1/requests/:id`. Đơn đã bị người khác sửa trong lúc đó thì trả `VERSION_CONFLICT` thay vì ghi đè âm thầm (BR-13 kiểm #5).',
+  })
+  @ApiErrors('REQ_NOT_FOUND', 'REQ_INVALID_STATUS', 'AUTH_FORBIDDEN', 'VERSION_CONFLICT')
   update(
     @CurrentTenant() ctx: TenantContext,
     @Param('id') id: string,
     @Body() dto: UpdateRequestDto,
+    @IfMatch() expectedVersion?: number,
   ) {
-    return this.requests.update(ctx, id, dto);
+    return this.requests.update(ctx, id, dto, expectedVersion);
   }
 
   @Post('requests/:id/submit')
@@ -193,6 +205,39 @@ export class RequestController {
     @Body() dto: CancelRequestDto,
   ) {
     return this.requests.cancel(ctx, id, dto.reason);
+  }
+
+  @Post('requests/:id/need-more-info')
+  @HttpCode(HttpStatus.OK)
+  @Audit({ action: 'REQUEST_NEED_MORE_INFO', targetType: 'LEAVE_REQUEST' })
+  @ApiOperation({
+    summary: 'Yêu cầu nhân viên bổ sung thông tin',
+    description:
+      'Đơn về `NEED_MORE_INFO`, bước duyệt hiện tại VẪN chờ. Bổ sung xong thì đơn quay lại đúng người đang hỏi, không chạy lại luồng từ cấp một. Dùng thay cho việc từ chối một đơn chỉ vì thiếu giấy tờ.',
+  })
+  @ApiErrors('REQ_NOT_FOUND', 'REQ_ALREADY_DECIDED', 'REQ_NOT_YOUR_TURN')
+  needMoreInfo(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: NeedMoreInfoDto,
+  ) {
+    return this.requests.requestMoreInfo(ctx, id, dto.question);
+  }
+
+  @Post('requests/:id/provide-info')
+  @HttpCode(HttpStatus.OK)
+  @Audit({ action: 'REQUEST_INFO_PROVIDED', targetType: 'LEAVE_REQUEST' })
+  @ApiOperation({
+    summary: 'Nhân viên bổ sung xong, đẩy đơn trở lại người duyệt',
+    description: 'Đơn từ `NEED_MORE_INFO` quay về `PENDING` tại đúng bước đang dở.',
+  })
+  @ApiErrors('REQ_NOT_FOUND', 'REQ_INVALID_STATUS', 'AUTH_FORBIDDEN')
+  provideInfo(
+    @CurrentTenant() ctx: TenantContext,
+    @Param('id') id: string,
+    @Body() dto: ProvideInfoDto,
+  ) {
+    return this.requests.provideMoreInfo(ctx, id, dto.note);
   }
 
   @Post('requests/:id/attachments')
@@ -248,7 +293,12 @@ export class RequestController {
     summary: 'Từ chối đơn (bắt buộc lý do)',
     description: 'BR-APV-02: một cấp từ chối là đơn chuyển TỪ CHỐI ngay, các cấp sau không xử lý.',
   })
-  @ApiErrors('REQ_NOT_FOUND', 'REQ_ALREADY_DECIDED', 'REQ_REJECT_REASON_REQUIRED', 'REQ_NOT_YOUR_TURN')
+  @ApiErrors(
+    'REQ_NOT_FOUND',
+    'REQ_ALREADY_DECIDED',
+    'REQ_REJECT_REASON_REQUIRED',
+    'REQ_NOT_YOUR_TURN',
+  )
   reject(
     @CurrentTenant() ctx: TenantContext,
     @Param('id') id: string,

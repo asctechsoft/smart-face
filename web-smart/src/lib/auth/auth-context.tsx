@@ -23,7 +23,8 @@ interface AuthState {
   timezone: string;
   roles: SystemRole[];
   mustChangePassword: boolean;
-  applyTokens: (tokens: SessionTokens) => Promise<void>;
+  /** `remember` chỉ truyền ở màn đăng nhập — xem `tokenStorage.save`. */
+  applyTokens: (tokens: SessionTokens, remember?: boolean) => Promise<void>;
   refreshSession: () => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -88,8 +89,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   const applyTokens = useCallback(
-    async (tokens: SessionTokens) => {
-      tokenStorage.save(tokens);
+    async (tokens: SessionTokens, remember?: boolean) => {
+      tokenStorage.save(tokens, remember);
       await loadSession();
     },
     [loadSession],
