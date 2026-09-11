@@ -3,8 +3,13 @@
  *
  * Chạy: `npm run seed`
  *
+ * ⚠ CHỈ môi trường phát triển. Production dùng `node dist/sync-reference-data`
+ *   (tự chạy khi container api khởi động) để có dữ liệu nền mà KHÔNG kèm tài
+ *   khoản mẫu, rồi tạo quản trị viên đầu tiên bằng scripts/bootstrap-admin.sh.
+ *
  * Tạo:
- *   - Gói dịch vụ mặc định (Trial / Basic / Pro / Enterprise)
+ *   - Dữ liệu nền dùng chung với production: gói Free / Plus / Max, danh mục
+ *     quyền + vai trò hệ thống, bản ghi model AI (src/modules/provisioning/reference-data.ts)
  *   - Tài khoản SYSTEM_ADMIN
  *   - Công ty demo AMOBI + chi nhánh + phòng ban + mã mời
  *   - RequestType + ApprovalFlow mặc định
@@ -21,12 +26,7 @@ import { PrismaClient, ScopeLevel, ShiftType, SystemRole } from '@prisma/client'
 import { cert, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { buildUniqueEmployeeCode } from '../src/common/utils/employee-code.util';
-import {
-  ALL_PERMISSION_CODES,
-  PERMISSION_CATALOG,
-  SYSTEM_ROLE_DEFINITIONS,
-  permissionModule,
-} from '../src/modules/access/permission.constants';
+import { syncReferenceData } from '../src/modules/provisioning/reference-data';
 
 const prisma = new PrismaClient();
 
@@ -113,156 +113,16 @@ const SEED_PASSWORD = 'SmartFaceDev2026';
 async function main(): Promise<void> {
   console.log('▶ Bắt đầu seed dữ liệu SmartFace...');
 
-  // --- 1. Gói dịch vụ --------------------------------------------------------
+  // --- 1. Dữ liệu nền: gói dịch vụ, quyền & vai trò hệ thống, model AI -------
   //
-  // Catalog Free / Plus / Max theo bản thiết kế v2.1 (màn "Chỉnh sửa gói dịch vụ"
-  // của Quản trị nền tảng). Thay cho bộ Trial/Basic/Pro/Enterprise cũ.
-  //
-  // `features` là nguồn sự thật cho feature flag; các cột `max*` là bản sao được
-  // trải phẳng để ràng buộc ở tầng DB và query nhanh. Giới hạn phải được CƯỠNG
-  // CHẾ Ở BACKEND, không phải chỉ ẩn nút trên UI (`FR-ADM-PKG-03`).
-  const plans = [
-    {
-      code: 'FREE',
-      name: 'Free',
-      description: 'Dùng thử: chấm công cơ bản cho nhóm nhỏ.',
-      maxEmployees: 20,
-      maxBranches: 1,
-      maxDepartments: 1,
-      maxShifts: 1,
-      maxAdminAccounts: 1,
-      maxRecognitionsPerMonth: 2_000,
-      storageGb: 5,
-      photoRetentionDays: 30,
-      dataRetentionDays: 30,
-      features: {
-        appAccount: true,
-        leaveApproval: false,
-        advancedScheduling: false,
-        excelExport: false,
-        advancedReport: false,
-        apiIntegration: false,
-        fullAuditLog: false,
-      },
-      pricePerMonth: 0,
-      isDefault: true,
-      sortOrder: 1,
-    },
-    {
-      code: 'PLUS',
-      name: 'Plus',
-      description: 'Doanh nghiệp vừa: đơn từ, phân ca nâng cao, xuất Excel.',
-      maxEmployees: 200,
-      maxBranches: 5,
-      maxDepartments: 20,
-      maxShifts: 10,
-      maxAdminAccounts: 5,
-      maxRecognitionsPerMonth: 50_000,
-      storageGb: 100,
-      photoRetentionDays: 180,
-      dataRetentionDays: 365,
-      features: {
-        appAccount: true,
-        leaveApproval: true,
-        advancedScheduling: true,
-        excelExport: true,
-        advancedReport: true,
-        apiIntegration: false,
-        fullAuditLog: false,
-      },
-      pricePerMonth: 5_000_000,
-      isDefault: false,
-      sortOrder: 2,
-    },
-    {
-      code: 'MAX',
-      name: 'Max',
-      description: 'Không giới hạn quy mô, tích hợp API và audit log đầy đủ.',
-      maxEmployees: null,
-      maxBranches: null,
-      maxDepartments: null,
-      maxShifts: null,
-      maxAdminAccounts: null,
-      maxRecognitionsPerMonth: null,
-      storageGb: 500,
-      photoRetentionDays: 365,
-      dataRetentionDays: 1825,
-      features: {
-        appAccount: true,
-        leaveApproval: true,
-        advancedScheduling: true,
-        excelExport: true,
-        advancedReport: true,
-        apiIntegration: true,
-        fullAuditLog: true,
-      },
-      pricePerMonth: null,
-      isDefault: false,
-      sortOrder: 3,
-    },
-  ];
-
-  for (const plan of plans) {
-    await prisma.subscriptionPlan.upsert({
-      where: { code: plan.code },
-      create: plan,
-      update: plan,
-    });
-  }
+  // Dùng chung với production (`src/sync-reference-data.ts`, chạy mỗi lần
+  // container api khởi động). Seed ghi đè gói dịch vụ để mỗi lần reset là về
+  // đúng catalog chuẩn; production thì không bao giờ ghi đè.
+  const reference = await syncReferenceData(prisma, { overwritePlans: true });
   const demoPlan = await prisma.subscriptionPlan.findUniqueOrThrow({ where: { code: 'PLUS' } });
-  console.log(`  ✓ ${plans.length} gói dịch vụ`);
-
-  // --- 1b. Danh mục quyền & vai trò hệ thống (docs/08 §2 · E-V21.1) ----------
-  //
-  // Idempotent và KHÔNG xoá gì: quyền bị gỡ khỏi code mà vẫn còn dòng trong bảng
-  // chỉ là rác vô hại, còn xoá nhầm là gỡ quyền của người đang dùng thật.
-  for (const code of ALL_PERMISSION_CODES) {
-    await prisma.permission.upsert({
-      where: { code },
-      create: { code, module: permissionModule(code), description: PERMISSION_CATALOG[code] },
-      update: { module: permissionModule(code), description: PERMISSION_CATALOG[code] },
-    });
-  }
-
-  for (const definition of SYSTEM_ROLE_DEFINITIONS) {
-    // `companyId = null` là vai trò dùng chung mọi tenant. Postgres coi mọi NULL
-    // là khác nhau nên `@@unique([companyId, code])` KHÔNG áp cho hàng có null —
-    // phải tự tra trước thay vì dựa vào upsert.
-    const existing = await prisma.role.findFirst({
-      where: { companyId: null, code: definition.code },
-    });
-    const role = existing
-      ? await prisma.role.update({
-          where: { id: existing.id },
-          data: {
-            name: definition.name,
-            description: definition.description,
-            isSystem: true,
-            deletedAt: null,
-          },
-        })
-      : await prisma.role.create({
-          data: {
-            companyId: null,
-            code: definition.code,
-            name: definition.name,
-            description: definition.description,
-            isSystem: true,
-          },
-        });
-
-    const permissions = await prisma.permission.findMany({
-      where: { code: { in: definition.permissions } },
-      select: { id: true },
-    });
-    await prisma.rolePermission.deleteMany({ where: { roleId: role.id } });
-    await prisma.rolePermission.createMany({
-      data: permissions.map((permission) => ({ roleId: role.id, permissionId: permission.id })),
-    });
-  }
-  console.log(
-    `  ✓ ${ALL_PERMISSION_CODES.length} quyền · ${SYSTEM_ROLE_DEFINITIONS.length} vai trò hệ thống`,
-  );
+  console.log(`  ✓ ${reference.plansWritten} gói dịch vụ`);
+  console.log(`  ✓ ${reference.permissions} quyền · ${reference.roles} vai trò hệ thống`);
+  console.log(reference.aiModelCreated ? '  ✓ Model buffalo_l@2.1' : '  ✓ Model AI đã có');
 
   // --- 2. Admin hệ thống -----------------------------------------------------
   //
@@ -863,10 +723,8 @@ async function main(): Promise<void> {
           // Quản lý bị giới hạn ở phòng ban mình phụ trách; các vai trò khác
           // làm việc trên toàn công ty. Đây là chỗ `scopeIds` mang nghĩa thật:
           // để rỗng cho COMPANY nghĩa là "mọi phòng ban", không phải "không có".
-          scopeLevel:
-            sample.accessRole === 'MANAGER' ? ScopeLevel.DEPARTMENT : ScopeLevel.COMPANY,
-          scopeIds:
-            sample.accessRole === 'MANAGER' ? [departments[sample.department]] : [],
+          scopeLevel: sample.accessRole === 'MANAGER' ? ScopeLevel.DEPARTMENT : ScopeLevel.COMPANY,
+          scopeIds: sample.accessRole === 'MANAGER' ? [departments[sample.department]] : [],
           validFrom: new Date('2026-01-01'),
           grantedById: granterId,
           reason: 'Khởi tạo dữ liệu mẫu',
@@ -921,23 +779,6 @@ async function main(): Promise<void> {
     update: {},
   });
   console.log('  ✓ Kỳ lương Tháng 08/2026');
-
-  // --- 13. Phiên bản model AI ------------------------------------------------
-  await prisma.aiModelVersion.upsert({
-    where: { name_version: { name: 'buffalo_l', version: '2.1' } },
-    create: {
-      name: 'buffalo_l',
-      version: '2.1',
-      isActive: true,
-      defaultMatchThreshold: 0.45,
-      defaultLivenessThreshold: 0.7,
-      deployedAt: new Date(),
-      notes:
-        'Giá trị khởi điểm. PHẢI đo FAR/FRR trên dữ liệu thật của khách hàng và hiệu chỉnh lại ngưỡng TRƯỚC khi go-live.',
-    },
-    update: {},
-  });
-  console.log('  ✓ Model buffalo_l@2.1');
 
   console.log('');
   console.log('✅ Seed hoàn tất.');

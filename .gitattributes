@@ -1,0 +1,3 @@
+# Script shell chạy trên VPS Linux: luôn giữ LF. Máy Windows bật core.autocrlf
+# sẽ đổi sang CRLF khi checkout, và bash báo "$'\r': command not found".
+*.sh text eol=lf

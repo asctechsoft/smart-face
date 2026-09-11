@@ -1,0 +1,16 @@
+# Dockerfile tự cài node_modules và tự build dist — bản trên máy chỉ làm build
+# chậm (hàng trăm MB) và, trên Windows, chép đè binary sai hệ điều hành vào image.
+node_modules
+dist
+coverage
+
+# .env production nằm ngay thư mục này trên VPS. Thiếu dòng dưới thì `COPY . .`
+# kéo nó vào layer của stage builder và nó nằm lại trong build cache.
+.env
+.env.*
+!.env.example
+!.env.production.example
+certs
+
+*.log
+.git

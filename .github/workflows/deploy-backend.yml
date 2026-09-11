@@ -1,14 +1,16 @@
-name: Deploy Backend (VPS)
+name: Deploy SmartFace (VPS)
 
-# Tự động deploy server-backend-smart lên VPS mỗi khi nhánh main thay đổi
-# trong thư mục đó. Xem docs/22-huong-dan-deploy-vps.md để biết cách cấu hình
-# VPS lần đầu (mục 2), file .env bắt buộc (mục 3) và các secret cần khai trong
-# GitHub (mục 8).
+# Tự động deploy toàn bộ hệ thống (web + api + worker + ai-server) lên VPS mỗi
+# khi nhánh main thay đổi ở một trong các thư mục bên dưới.
+# Cấu hình VPS lần đầu, file .env và các secret cần khai trong GitHub:
+# docs/23-huong-dan-deploy-cho-nguoi-moi.md.
 on:
   push:
     branches: [main]
     paths:
       - 'server-backend-smart/**'
+      - 'web-smart/**'
+      - 'server-ai-smart/**'
       - '.github/workflows/deploy-backend.yml'
   workflow_dispatch: {}
 
@@ -52,11 +54,28 @@ jobs:
             cd "$DEPLOY_DIR/server-backend-smart"
 
             if [ ! -f .env ]; then
-              echo "Thieu server-backend-smart/.env tren VPS - xem docs/22-huong-dan-deploy-vps.md muc 3, dung deploy." >&2
+              echo "Thieu server-backend-smart/.env tren VPS - xem docs/23-huong-dan-deploy-cho-nguoi-moi.md, dung deploy." >&2
               exit 1
             fi
 
             docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
             docker image prune -f
-            docker compose -f docker-compose.prod.yml ps
+
+            # `up -d` trả về ngay khi container được TẠO, kể cả khi api chết
+            # vài giây sau vì thiếu biến môi trường. Phải chờ /health thật sự
+            # trả 200 thì mới được báo deploy thành công.
+            echo "Cho api san sang (migration + dong bo du lieu nen)..."
+            for i in $(seq 1 40); do
+              if curl -fsS http://127.0.0.1:3000/health > /dev/null 2>&1; then
+                echo "api OK sau $((i * 3)) giay"
+                docker compose -f docker-compose.prod.yml ps
+                exit 0
+              fi
+              sleep 3
+            done
+
+            echo "api KHONG san sang sau 120 giay. Log gan nhat:" >&2
+            docker compose -f docker-compose.prod.yml ps >&2
+            docker compose -f docker-compose.prod.yml logs --tail=80 api >&2
+            exit 1
           EOF

@@ -1,0 +1,14 @@
+node_modules
+dist
+coverage
+.git
+
+# File .env của máy dev KHÔNG được lọt vào bản build production: Vite tự đọc
+# .env / .env.production trong thư mục, và giá trị trong đó sẽ bị nhúng vào
+# bundle. Production chỉ nhận VITE_* qua build ARG.
+.env
+.env.*
+!.env.example
+
+*.tsbuildinfo
+vite.config.ts.timestamp-*

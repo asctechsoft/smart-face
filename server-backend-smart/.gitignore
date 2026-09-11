@@ -2,8 +2,12 @@ node_modules/
 dist/
 coverage/
 .env
-.env.local
-.env.*.local
+# Mọi biến thể của .env (bản sao lưu, .env.production…) đều có thể chứa khoá thật.
+.env.*
+!.env.example
+!.env.production.example
+# Chứng chỉ TLS của nginx trên VPS — có khoá riêng, KHÔNG được lên git.
+certs/
 *.log
 .DS_Store
 .idea/

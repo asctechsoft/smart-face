@@ -1,9 +1,17 @@
 # ============================================================================
-#  Môi trường `production` trên VPS — dùng cùng Dockerfile với dev, khác ở:
-#    - Không expose Postgres/Redis ra host (chỉ nội bộ trong network này).
-#    - Mọi secret đọc từ file `.env` cạnh file này (KHÔNG commit vào git,
-#      tạo một lần trên VPS — xem docs/22-huong-dan-deploy-vps.md mục 3).
-#    - restart: unless-stopped để tự phục hồi khi VPS reboot / container chết.
+#  Môi trường `production` trên VPS — toàn bộ hệ thống trong một file:
+#
+#    Internet ─► Cloudflare ─► web (nginx :80/:443) ─┬─► file tĩnh SPA
+#                                                    └─► api :3000 ─┬─► postgres, redis
+#                                                                   ├─► ai-server :8000
+#                                                    worker ────────┘   Firebase (bên ngoài)
+#
+#  - Chỉ `web` mở cổng ra internet. api chỉ nghe 127.0.0.1 để kiểm tra sức
+#    khoẻ từ chính VPS; postgres, redis, ai-server hoàn toàn nội bộ.
+#  - Mọi secret đọc từ file `.env` cạnh file này (KHÔNG commit vào git). Tạo
+#    một lần trên VPS bằng `bash scripts/init-prod-env.sh` — xem
+#    docs/23-huong-dan-deploy-cho-nguoi-moi.md.
+#  - restart: unless-stopped để tự phục hồi khi VPS reboot / container chết.
 #
 #  Chạy:  docker compose -f docker-compose.prod.yml up -d --build
 # ============================================================================
@@ -15,6 +23,8 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-smartface}
+      # ⚠ Postgres CHỈ đọc biến này lần đầu, khi volume còn trống. Đổi trong
+      #   .env về sau KHÔNG đổi được mật khẩu DB — api sẽ không kết nối được.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD bắt buộc trong .env}
       POSTGRES_DB: ${POSTGRES_DB:-smartface}
     volumes:
@@ -38,6 +48,28 @@ services:
       timeout: 3s
       retries: 5
 
+  ai-server:
+    build:
+      context: ../server-ai-smart
+      args:
+        RUNTIME: cpu
+    container_name: smartface-ai-server
+    restart: unless-stopped
+    # Cấu hình production đặt thẳng ở đây thay vì một file .env thứ hai: khoá
+    # nội bộ lấy từ CHÍNH .env của backend, nên hai bên không bao giờ lệch nhau.
+    environment:
+      ENV: production
+      AI_SERVER_INTERNAL_KEY: ${AI_SERVER_INTERNAL_KEY:?AI_SERVER_INTERNAL_KEY bắt buộc trong .env}
+      ENGINE: insightface
+      MODEL_ROOT: /app/models
+      LIVENESS_MODEL_PATH: /app/models/anti_spoof/MiniFASNetV2.onnx
+      PROVIDERS: CPUExecutionProvider
+    volumes:
+      # Model KHÔNG có trong git (vài trăm MB) — chép lên VPS một lần bằng scp.
+      - ../server-ai-smart/models:/app/models:ro
+    # KHÔNG có `ports:` — AI Server không bao giờ được ra internet.
+    mem_limit: 4g
+
   api:
     build: .
     container_name: smartface-api
@@ -47,6 +79,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ai-server:
+        condition: service_started
     env_file:
       - .env
     environment:
@@ -56,16 +90,28 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      # Ảnh và file báo cáo nằm trên Cloud Storage for Firebase. Không còn dịch
+      AI_SERVER_URL: http://ai-server:8000
+      # Lệnh khởi động gọi npm và Prisma CLI; tắt phần tự hỏi "có bản mới" của
+      # hai công cụ — vừa làm nhiễu log, vừa là một lượt gọi ra internet vô ích.
+      NPM_CONFIG_UPDATE_NOTIFIER: 'false'
+      CHECKPOINT_DISABLE: '1'
+      # Ảnh và file báo cáo nằm trên Cloud Storage for Firebase. Không có dịch
       # vụ lưu trữ nào chạy trên VPS này — dung lượng và sao lưu do Google lo.
       # FIREBASE_* đọc từ `.env` qua `env_file` ở trên.
       WORKER_ENABLED: 'false'
     ports:
-      # ⚠ Chưa có Nginx/TLS phía trước — API đang lộ HTTP thẳng ra internet.
-      #   Cách bịt (đổi thành '127.0.0.1:3000:3000' + thêm service nginx):
-      #   docs/22-huong-dan-deploy-vps.md mục 7.
-      - '3000:3000'
-    command: sh -c "npx prisma migrate deploy && node dist/main"
+      # Chỉ loopback: nginx gọi api qua mạng Docker, cổng này để kiểm tra sức
+      # khoẻ và tạo quản trị viên đầu tiên từ chính VPS. Docker đi vòng qua
+      # ufw, nên nếu bỏ `127.0.0.1:` là API lộ HTTP thuần ra internet.
+      - '127.0.0.1:3000:3000'
+    # 1. Áp migration.
+    # 2. Áp ràng buộc DB mà migration không chứa (bản ghi chấm công bất biến —
+    #    BR-06, ràng buộc tài khoản nền tảng). Hai file SQL viết kiểu chạy lại
+    #    được, nên chạy mỗi lần thay vì trông vào trí nhớ của người deploy.
+    # 3. Đồng bộ dữ liệu nền (quyền, vai trò, gói dịch vụ, model AI).
+    # 4. `exec` để node nhận thẳng SIGTERM từ tini — thiếu nó, sh nuốt tín hiệu
+    #    và `docker compose down` phải đợi hết 10 giây rồi giết cứng.
+    command: sh -c "npx prisma migrate deploy && npm run --silent db:guards && node dist/sync-reference-data && exec node dist/main"
 
   worker:
     build: .
@@ -76,6 +122,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ai-server:
+        condition: service_started
     env_file:
       - .env
     environment:
@@ -84,11 +132,41 @@ services:
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
-      # Ảnh và file báo cáo nằm trên Cloud Storage for Firebase. Không còn dịch
-      # vụ lưu trữ nào chạy trên VPS này — dung lượng và sao lưu do Google lo.
-      # FIREBASE_* đọc từ `.env` qua `env_file` ở trên.
+      AI_SERVER_URL: http://ai-server:8000
       WORKER_ENABLED: 'true'
+    # Worker không phục vụ HTTP nên HEALTHCHECK gọi /health của Dockerfile
+    # không áp được — tắt đi để nó không bị báo "unhealthy" vĩnh viễn.
+    healthcheck:
+      disable: true
     command: node dist/worker
+
+  web:
+    build:
+      context: ../web-smart
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_BASE_URL: /v1
+        VITE_FIREBASE_API_KEY: ${VITE_FIREBASE_API_KEY:?VITE_FIREBASE_API_KEY bắt buộc trong .env}
+        VITE_FIREBASE_AUTH_DOMAIN: ${VITE_FIREBASE_AUTH_DOMAIN:?VITE_FIREBASE_AUTH_DOMAIN bắt buộc trong .env}
+        # Lấy từ FIREBASE_PROJECT_ID của backend chứ không khai riêng: Web và
+        # Backend khác dự án Firebase là không ai đăng nhập được.
+        VITE_FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:?FIREBASE_PROJECT_ID bắt buộc trong .env}
+        VITE_FIREBASE_APP_ID: ${VITE_FIREBASE_APP_ID:-}
+        VITE_DEFAULT_TIMEZONE: Asia/Ho_Chi_Minh
+        VITE_GOOGLE_MAPS_API_KEY: ${VITE_GOOGLE_MAPS_API_KEY:-}
+        VITE_HELP_URL: ${VITE_HELP_URL:-}
+    container_name: smartface-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/cloudflare-only.conf:/etc/nginx/snippets/cloudflare-only.conf:ro
+      # Chứng chỉ Origin của Cloudflare: origin.pem + origin.key (không có trong git).
+      - ./certs:/etc/nginx/certs:ro
 
 volumes:
   postgres-data:

@@ -120,6 +120,11 @@ export class ProvisioningService {
           phone: input.phone,
           fullName: input.fullName,
           firebaseUid,
+          // Bắt buộc. `companyId = null` KHÔNG tự làm ai thành quản trị viên:
+          // `AuthService.resolveCompanyForLogin` từ chối mọi tài khoản không
+          // thuộc công ty nào mà thiếu cờ này, nên thiếu nó thì quản trị viên
+          // đầu tiên tạo xong mà không bao giờ đăng nhập được.
+          isSystemAdmin: true,
           // Người này TỰ đặt mật khẩu nên không có gì để buộc đổi.
           mustChangePassword: false,
         },

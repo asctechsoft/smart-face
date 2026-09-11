@@ -1,14 +1,31 @@
 # 22 — Hướng dẫn deploy lên VPS
 
-> Tài liệu này viết lại theo **trạng thái repo sau khi đã có bộ công cụ deploy** (`docker-compose.prod.yml`, GitHub Actions, `deploy.ps1`).
+> ## ⚠ Cập nhật 2026-09-11 — đọc trước
+>
+> **Muốn deploy: làm theo [23-huong-dan-deploy-cho-nguoi-moi.md](./23-huong-dan-deploy-cho-nguoi-moi.md).** Tài liệu này giữ vai trò giải thích *vì sao*; nhiều khoảng trống nó mô tả đã được lấp trong repo:
+>
+> | Trước | Bây giờ |
+> |---|---|
+> | Frontend, AI Server, nginx/TLS chưa có (§5–§7) | Đều nằm trong `docker-compose.prod.yml`: service `web` (build `web-smart/Dockerfile.prod`, cấu hình ở `server-backend-smart/nginx/`) và `ai-server`. Các đoạn mẫu ở §5–§7 chỉ còn để đọc hiểu — **file thật trong repo mới là chuẩn** |
+> | Cổng 3000 lộ HTTP thuần ra internet | `127.0.0.1:3000:3000` — chỉ gọi được từ chính VPS |
+> | Container api không khởi động được: build ra `dist/src/main.js` trong khi lệnh chạy `node dist/main` | `tsconfig.build.json` loại `prisma/` khỏi bản build → `dist/main.js` |
+> | `npx prisma` tải Prisma CLI **bản mới nhất** từ npm mỗi lần khởi động (§4.1) | `prisma` chuyển sang `dependencies`, cùng phiên bản với `@prisma/client` |
+> | AI Server build hỏng: insightface cần `g++` | `server-ai-smart/Dockerfile` cài g++ tạm lúc `pip install` |
+> | Phải tự chạy `db:guards` sau migration (§4.2) | api tự chạy mỗi lần khởi động (hai file SQL viết kiểu chạy lại được) |
+> | Không có cách tạo dữ liệu nền trên production ngoài **seed dev** — seed tạo tài khoản với mật khẩu công khai (§4.3) | `node dist/sync-reference-data` (tự chạy khi api khởi động) tạo gói dịch vụ, quyền, vai trò, model AI; quản trị viên đầu tiên tạo bằng `scripts/bootstrap-admin.sh`. **Không chạy seed trên production** |
+> | `POST /v1/platform/bootstrap` tạo tài khoản thiếu cờ `isSystemAdmin` → không đăng nhập được | Đã sửa, có unit test |
+> | Tự dán khoá PEM vào `.env` (§3.2–§3.3) | `bash scripts/init-prod-env.sh <ten-mien> <firebase.json>` sinh toàn bộ từ `.env.production.example` |
+> | `TRUSTED_PROXY_HOPS=2` đúng chỉ khi mọi request qua Cloudflare, nhưng không gì bắt buộc điều đó | `nginx/cloudflare-only.conf` chặn mọi IP không phải Cloudflare |
+> | nginx mẫu định tuyến WebSocket ở `/socket.io/` (§7.2) | Gateway khai `path: '/ws'` — cấu hình thật định tuyến `/ws` |
+> | `AI_SERVER_INTERNAL_KEY` phải khai trùng ở hai file `.env` (§6.1) | Compose truyền cùng một biến cho cả api lẫn ai-server; AI Server không cần `.env` riêng |
+> | `deploy.ps1` gửi script CRLF sang bash, health check gọi cổng 3000 từ ngoài | Chuẩn hoá LF, gửi base64, kiểm tra `/health` từ chính VPS |
 >
 > | Thông tin | Giá trị |
 > |---|---|
 > | VPS | `76.13.16.235`, Ubuntu, đăng nhập `root` (theo `deploy.ps1`) |
 > | Thư mục trên VPS | `/opt/smartface` |
 > | Repo | `https://github.com/asctechsoft/smart-face.git`, nhánh `main` |
-> | Đã tự động hoá | **Backend** (API + worker + Postgres + Redis) |
-> | Chưa có | **Frontend**, **AI Server**, **Nginx/TLS** — xem [§5](#5-deploy-frontend-web-smart), [§6](#6-deploy-ai-server), [§7](#7-nginx--https--cloudflare) |
+> | Đã tự động hoá | Toàn bộ: web (nginx), api, worker, ai-server, Postgres, Redis |
 
 ---
 
@@ -370,16 +387,20 @@ docker compose -f docker-compose.prod.yml exec api \
 >
 > `prisma/sql/02_partitioning.sql` **không** nằm trong `db:guards`. Xem [§11](#11-vấn-đề-đã-biết-trong-cấu-hình-hiện-tại).
 
-### 4.3 Seed dữ liệu nền — chỉ lần đầu, trên DB trống
+### 4.3 Dữ liệu nền và quản trị viên đầu tiên
 
-```bash
-docker compose -f docker-compose.prod.yml run --rm \
-  --entrypoint sh api -c "npm install ts-node tsconfig-paths typescript --no-save && npm run seed"
-```
+> ⚠ **KHÔNG chạy `npm run seed` trên production.** Seed tạo công ty demo và 6 tài khoản
+> dùng chung mật khẩu `SmartFaceDev2026` nằm công khai trong `prisma/seed.ts`. Bản trước
+> của mục này hướng dẫn chạy seed — đã gỡ.
 
-> Vì sao rườm rà: `seed` chạy bằng `ts-node`, mà image runtime cài `--omit=dev` nên không có `ts-node`, `typescript` lẫn `tsconfig-paths`. Lệnh trên cài tạm vào container dùng một lần rồi vứt (`--rm`).
->
-> Tài khoản seed và mật khẩu: [21-tai-khoan-test.md](./21-tai-khoan-test.md). **Đổi mật khẩu ngay sau lần đăng nhập đầu tiên.**
+- **Dữ liệu nền** (gói Free/Plus/Max, danh mục quyền, vai trò hệ thống, bản ghi model AI):
+  `node dist/sync-reference-data` chạy tự động mỗi lần container api khởi động. Quyền và
+  vai trò được ghi đè theo code mỗi lần; gói dịch vụ và model AI chỉ tạo khi bảng còn
+  trống, để không xoá mất chỉnh sửa của Quản trị nền tảng.
+- **Quản trị viên đầu tiên**: `bash scripts/bootstrap-admin.sh` trên VPS, **trước** khi bật
+  service `web`. Script gọi `POST /v1/platform/bootstrap` qua `127.0.0.1:3000`, nên không
+  có khoảng hở nào để người lạ chiếm tài khoản trước — xem
+  [23 §F4](./23-huong-dan-deploy-cho-nguoi-moi.md#f4-tạo-tài-khoản-quản-trị-nền-tảng-đầu-tiên).
 
 ### 4.4 Kiểm chứng
 
@@ -663,6 +684,8 @@ server {
     }
 
     # --- WebSocket (Socket.IO) — thông báo realtime đơn cần duyệt ----------
+    # ⚠ Gateway khai `path: '/ws'` (realtime.gateway.ts). Cấu hình thật trong
+    #   server-backend-smart/nginx/default.conf định tuyến `/ws`, không phải dòng dưới.
     location /socket.io/ {
         proxy_pass         http://smartface_api;
         proxy_http_version 1.1;

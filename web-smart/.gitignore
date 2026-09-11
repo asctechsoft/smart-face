@@ -25,3 +25,5 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 tsconfig.tsbuildinfo
+# File tạm Vite để lại khi dev server bị tắt ngang.
+vite.config.ts.timestamp-*

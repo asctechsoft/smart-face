@@ -29,12 +29,19 @@ WORKDIR /app
 
 COPY requirements.txt .
 
-RUN pip install --upgrade pip \
+# insightface 0.7.3 chỉ phát hành mã nguồn (không có wheel Linux) và có phần mở
+# rộng C++ phải biên dịch lúc cài — thiếu g++ là `pip install` chết. Cài g++
+# rồi gỡ NGAY trong cùng một RUN để trình biên dịch không nằm lại trong image.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends g++ \
+    && pip install --upgrade pip \
     && pip install -r requirements.txt \
     && if [ "$RUNTIME" = "gpu" ]; then \
          pip uninstall -y onnxruntime \
          && pip install onnxruntime-gpu==1.20.1 pynvml==11.5.3 ; \
-       fi
+       fi \
+    && apt-get purge -y --auto-remove g++ \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY app ./app
 COPY scripts ./scripts

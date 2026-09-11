@@ -1,4 +1,7 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "prisma/seed.ts"]
+  // `prisma/` phải nằm ngoài bản build. Chỉ cần một file .ts ở đó lọt vào là
+  // tsc đẩy gốc đầu ra lên thư mục dự án: `dist/main.js` thành `dist/src/main.js`,
+  // và `node dist/main` trong Dockerfile/compose chết với "Cannot find module".
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "prisma"]
 }

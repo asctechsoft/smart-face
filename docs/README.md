@@ -72,7 +72,8 @@ Ba trải nghiệm mobile dùng **chung một codebase Flutter**, mở module th
 | [19 — Onboarding & đăng ký khuôn mặt](./19-luong-onboarding-va-dang-ky-khuon-mat.md) | Từ lúc được cấp tài khoản tới lúc chấm công được |
 | [20 — Quy chuẩn Style Guide](./20-quy-chuan-style-guide.md) | Thang màu OKLCH, token, typography, 20 component, chế độ tối. 52/52 cặp màu đạt WCAG AA |
 | [21 — Tài khoản test](./21-tai-khoan-test.md) | 5 tài khoản seed, ánh xạ vai trò ↔ 6 phân hệ, vai trò nào thấy được gì |
-| [22 — Hướng dẫn deploy VPS](./22-huong-dan-deploy-vps.md) | Docker Compose trên Ubuntu sau Cloudflare + **§12 topology đích theo v2.1** |
+| [22 — Hướng dẫn deploy VPS](./22-huong-dan-deploy-vps.md) | Giải thích kỹ thuật: vì sao từng cấu hình như vậy, các chốt bảo mật + **§12 topology đích theo v2.1** |
+| [23 — Deploy cho người mới](./23-huong-dan-deploy-cho-nguoi-moi.md) | **Làm theo từng bước**: vào đâu, bấm gì, gõ lệnh gì, thấy gì là đúng — từ tên miền tới web chạy |
 | [00 — Kiến thức nền tảng](./00-kien-thuc-nen-tang.md) | Nhận diện khuôn mặt, ngưỡng FAR/FRR, liveness, engine tính công, pháp lý VN |
 
 ---
