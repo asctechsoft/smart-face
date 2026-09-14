@@ -74,6 +74,7 @@ Ba trải nghiệm mobile dùng **chung một codebase Flutter**, mở module th
 | [21 — Tài khoản test](./21-tai-khoan-test.md) | 5 tài khoản seed, ánh xạ vai trò ↔ 6 phân hệ, vai trò nào thấy được gì |
 | [22 — Hướng dẫn deploy VPS](./22-huong-dan-deploy-vps.md) | Giải thích kỹ thuật: vì sao từng cấu hình như vậy, các chốt bảo mật + **§12 topology đích theo v2.1** |
 | [23 — Deploy cho người mới](./23-huong-dan-deploy-cho-nguoi-moi.md) | **Làm theo từng bước**: vào đâu, bấm gì, gõ lệnh gì, thấy gì là đúng — từ tên miền tới web chạy |
+| [24 — So sánh với MISA AMIS Chấm công](./24-so-sanh-voi-misa-amis-cham-cong.md) | Đối chiếu luồng nghiệp vụ và UI/UX với AMIS (26 video), 13 lỗi UX tìm được, **hướng thay đổi P0/P1/P2** |
 | [00 — Kiến thức nền tảng](./00-kien-thuc-nen-tang.md) | Nhận diện khuôn mặt, ngưỡng FAR/FRR, liveness, engine tính công, pháp lý VN |
 
 ---
